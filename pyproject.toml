@@ -1,7 +1,7 @@
 [project]
-name = "super-biz-agent"
+name = "aletheia"
 version = "0.1.0"
-description = "Business RAG agent"
+description = "An agentic RAG system for knowledge retrieval and intelligent workflows"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "certifi==2026.7.22",

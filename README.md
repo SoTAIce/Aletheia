@@ -1,6 +1,8 @@
-# Super Biz Agent
+# Aletheia
 
-Super Biz Agent is a Python business assistant project built around RAG, tool calling, and agent workflows. The repository currently contains the core retrieval, reranking, Milvus, MCP, and conversation-memory components; the application entry point is still under development.
+> An agentic RAG system for knowledge retrieval, tool orchestration, and intelligent workflows.
+
+Aletheia is a Python-based AI agent project built around RAG, tool calling, and agent workflows. It combines hybrid retrieval, reranking, Milvus vector storage, MCP tools, and turn-based conversation memory. The application entry point is still under development.
 
 ## Features
 
