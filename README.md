@@ -55,7 +55,6 @@ app/
   tools/       Agent tools
 deploy/
   milvus/      Local Milvus Docker Compose configuration
-tools/         Development and documentation utilities
 ```
 
 ## Development checks
