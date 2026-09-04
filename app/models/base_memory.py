@@ -1,13 +1,12 @@
 from abc import ABC, abstractmethod
 
+
 class BaseMemory(ABC):
-    def __init__(self,
-                 user_id: str,
-                 ) -> None:
+    def __init__(self, user_id: str) -> None:
         self._user_id = user_id
 
     @abstractmethod
-    def add(self, *args, **kwargs):
+    async def add(self, *args, **kwargs) -> None:
         pass
 
     @abstractmethod
@@ -15,5 +14,5 @@ class BaseMemory(ABC):
         pass
 
     @abstractmethod
-    def clear(self, *args, **kwargs):
+    def clear(self, *args, **kwargs) -> None:
         pass
