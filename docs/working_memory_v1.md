@@ -50,6 +50,50 @@ wm.task_state.replan(["Compare reports"])
 - `clear_selected_contexts()` returns the number of selections cleared and keeps
   loaded status and summaries.
 
+## Execution result submission
+
+Use `begin_step()` to start a pending step and receive an immutable
+`ExecutionToken`. A successful runner returns `StepExecutionResult`; submitting
+it records an optional observation, appends a reusable result and completes the
+step as one task update:
+
+```python
+from app.models.working_memory import StepExecutionResult
+
+# After Executor.accept_plan(proposal), using its returned receipt:
+token = wm.begin_step(receipt.next_step.step_id)
+# The runner performs I/O outside WorkingMemory and registers any output resource.
+resource_id = wm.resources.register("tool://output-1", ResourceType.TOOL_RESULT)
+result_id = wm.commit_step_result(StepExecutionResult(
+    token=token,
+    content="Finding supported by the tool output",
+    observation="Tool returned the requested data",
+    source_refs=(resource_id,),
+))
+```
+
+The token binds one execution to its workspace, task, goal revision, plan revision,
+step and task state version. A successful commit consumes it; repeated or late
+submissions raise `StaleExecutionError`. Any task mutation after `begin_step()`
+invalidates submission, even if the active step has not changed. Callers must
+reconcile stale work explicitly (for example, fail the still-active step and
+replan); do not relabel an old result with a new token. An invalid payload or
+missing source can be corrected and resubmitted if task state is unchanged.
+
+All source references are checked before task mutation. TaskState stages the
+observation, result and completion on a shallow copy whose records are immutable,
+then publishes only after every operation succeeds. The successful commit advances
+`state_version` once. This is an in-memory, serialized operation, not a database
+transaction or a lock for concurrent threads. An omitted observation preserves
+the previous one. Source references apply to both the new observation and result.
+
+This API submits successful results only; failures still use `TaskState.add_failure()`.
+It does not complete the overall task, resolve blockers, or execute tools.
+Execution tokens are local to the WorkingMemory instance and are not restored
+from snapshots. Resource registrations may happen during execution and do not
+invalidate a token; resource content/version consistency remains a separate
+extension. Direct child mutation remains supported but bypasses coordination.
+
 ## V1 limits and design clarifications
 
 The properties cannot be reassigned, but their child objects remain mutable.

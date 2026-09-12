@@ -42,6 +42,7 @@ class PlanProposal:
     base_state_version: int
     reason: str | None
     created_at: datetime
+    task_id: str
 
 class Planner:
     def __init__(
@@ -237,7 +238,8 @@ class Planner:
             goal_revision = context.goal_revision,
             base_state_version = context.state_version,
             reason = reason,
-            created_at = datetime.now(timezone.utc)
+            created_at = datetime.now(timezone.utc),
+            task_id = context.task_id,
         )
 
     async def replan(self, context: PlannerContext) -> PlanProposal:
@@ -265,6 +267,7 @@ class Planner:
             base_state_version=context.state_version,
             reason=reason,
             created_at=datetime.now(timezone.utc),
+            task_id=context.task_id,
         )
 
 

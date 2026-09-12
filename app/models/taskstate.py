@@ -1,4 +1,5 @@
 from dataclasses import dataclass, replace
+from copy import copy
 from datetime import UTC, datetime, timezone
 from enum import Enum
 from uuid import uuid4
@@ -335,6 +336,32 @@ class TaskState:
         self._status = TaskStatus.READY
         self._updated_at = now
         self._state_version += 1
+
+    def commit_step_result(
+        self, step_id: str, expected_state_version: int, content: str,
+        observation: str | None = None, source_refs: tuple[str, ...] = (),
+    ) -> str:
+        """Stage a successful result and publish all task changes together.
+
+        Callers serialize access. WorkingMemory additionally checks execution
+        identity and resource existence. No live fields change if staging fails.
+        """
+        if type(expected_state_version) is not int:
+            raise TypeError("expected_state_version must be an integer")
+        if expected_state_version != self._state_version:
+            raise InvalidStateTransitionError("State changed during execution")
+        staged = copy(self)
+        if observation is not None:
+            staged.set_last_observation(observation, source_refs)
+        result_id = staged.add_intermediate_result(content, source_refs)
+        staged.complete_step(step_id, result_summary=content)
+        self._plan = staged._plan
+        self._scratchpad = staged._scratchpad
+        self._active_step_id = staged._active_step_id
+        self._status = staged._status
+        self._updated_at = staged._updated_at
+        self._state_version += 1
+        return result_id
 
     def fail(self, step_id: str, message: str) -> str:
         """Compatibility entry point for recording an active step failure."""

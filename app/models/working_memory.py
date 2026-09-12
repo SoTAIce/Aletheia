@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from collections.abc import Iterator
+from uuid import uuid4
 
 from .resources import ResourceRef, Resources
 from .taskstate import TaskState, TaskStateSnapshot
@@ -9,6 +10,30 @@ from .taskstate import TaskState, TaskStateSnapshot
 
 class ResourceInUseError(RuntimeError):
     """A retained task record still references a resource being removed."""
+
+
+class StaleExecutionError(ValueError):
+    """An execution has expired, already committed, or belongs elsewhere."""
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionToken:
+    execution_id: str
+    task_id: str
+    goal_revision: int
+    plan_revision: int
+    step_id: str
+    state_version: int
+
+
+@dataclass(frozen=True, slots=True)
+class StepExecutionResult:
+    """Successful runner output; source_refs apply to both evidence fields."""
+
+    token: ExecutionToken
+    content: str
+    observation: str | None = None
+    source_refs: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +60,7 @@ class WorkingMemory:
             raise TypeError("resources must be Resources or None")
         self._task_state = task_state
         self._resources = resources if resources is not None else Resources()
+        self._execution_token: ExecutionToken | None = None
         # Reject pre-existing dangling references without modifying either child.
         for refs in self._record_source_refs():
             self._validate_source_refs(refs)
@@ -55,6 +81,51 @@ class WorkingMemory:
             task_state=self._task_state.snapshot(),
             resources=tuple(self._resources.list_all()),
         )
+
+    def begin_step(self, step_id: str) -> ExecutionToken:
+        """Start the next pending step and issue one token for its result."""
+        execution_id = str(uuid4())
+        task = self._task_state
+        task.start_step(step_id)
+        token = ExecutionToken(
+            execution_id=execution_id, task_id=task.task_id,
+            goal_revision=task.goal_revision, plan_revision=task.plan_revision,
+            step_id=task.active_step_id, state_version=task.state_version,
+        )
+        self._execution_token = token
+        return token
+
+    def commit_step_result(self, result: StepExecutionResult) -> str:
+        """Validate then publish evidence and completion; return the result ID.
+
+        Rejected results change neither memory nor the issued token. A successful
+        commit consumes the token. No tool I/O occurs here.
+        """
+        if not isinstance(result, StepExecutionResult):
+            raise TypeError("result must be a StepExecutionResult")
+        token = result.token
+        if not isinstance(token, ExecutionToken):
+            raise TypeError("result.token must be an ExecutionToken")
+        for name in ("goal_revision", "plan_revision", "state_version"):
+            if type(getattr(token, name)) is not int:
+                raise TypeError(f"token.{name} must be an integer")
+        task = self._task_state
+        if (
+            token != self._execution_token
+            or token.task_id != task.task_id
+            or token.goal_revision != task.goal_revision
+            or token.plan_revision != task.plan_revision
+            or token.step_id != task.active_step_id
+            or token.state_version != task.state_version
+        ):
+            raise StaleExecutionError("Execution is no longer current")
+        refs = self._validate_source_refs(result.source_refs)
+        result_id = task.commit_step_result(
+            token.step_id, token.state_version, result.content,
+            observation=result.observation, source_refs=refs,
+        )
+        self._execution_token = None
+        return result_id
 
     def update_goal(self, new_goal: str) -> None:
         """Clear selected context only after a successful goal revision."""
