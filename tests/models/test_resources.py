@@ -116,3 +116,22 @@ def test_empty_resources() -> None:
     assert resources.list_loaded() == []
     assert resources.list_selected() == []
     assert resources.clear_all_selected_contexts() == 0
+
+
+def test_context_version_only_tracks_effective_selection_changes():
+    resources = Resources()
+    rid = resources.register('file', ResourceType.FILE)
+    resources.mark_loaded(rid, 'summary')
+    assert resources.context_version == 0
+    resources.select_context(rid, 'excerpt')
+    assert resources.context_version == 1
+    previous = resources.get(rid)
+    resources.select_context(rid, ' excerpt ')
+    assert resources.get(rid) is previous
+    assert resources.context_version == 1
+    resources.clear_selected_context(rid)
+    assert resources.context_version == 2
+    resources.clear_selected_context(rid)
+    resources.clear_all_selected_contexts()
+    resources.remove(rid)
+    assert resources.context_version == 2

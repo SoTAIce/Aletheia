@@ -42,11 +42,15 @@ def test_lifecycle_versions_and_timestamps():
 def test_blocking_question_requires_resolution_before_completion():
     task = ready()
     question = task.add_open_question('approval?', True)
+    task.replan(['clarify approval'])
     for step in task.plan:
         task.start_step(step.step_id)
         task.complete_step(step.step_id)
     rejected(task, InvalidStateTransitionError, task.complete_task)
     task.resolve_question(question, 'approved')
+    task.replan(['verify delivery'])
+    task.start_step(task.plan[0].step_id)
+    task.complete_step(task.plan[0].step_id)
     task.complete_task()
     assert task.status is TaskStatus.COMPLETED
 

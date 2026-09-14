@@ -27,11 +27,14 @@ receipt = executor.accept_plan(proposal)
 `PlanProposal` 新增必填 `task_id`，由 Planner 从上下文写入，模型不生成它。
 手动构造提案的调用方也需要提供此字段。仅比较目标版本和状态版本无法识别
 不同任务中恰好相同的版本号，因此接收方同时校验这三个字段。
+提案还必须携带 `base_resource_context_version`，用于检测生成计划期间的
+资源摘录变化。上述元数据均来自输入快照，模型输出仍只包含 steps 和 reason。
 
 接收流程：
 
-1. 校验类型、任务归属、目标版本、基础状态版本及步骤内容。
-2. 首次计划通过 `TaskState.set_plan()` 安装；已有计划版本通过 `replan()` 替换。
+1. 校验类型、任务归属、目标版本、基础状态版本、资源上下文版本及步骤内容。
+2. 通过 `WorkingMemory.install_plan()` 安装并绑定资源上下文版本；其内部首次
+   调用 `TaskState.set_plan()`，已有计划版本调用 `replan()`，状态机校验归 TaskState。
 3. 状态机拒绝执行中或终态的计划替换；校验失败不修改内存。
 4. 返回安装后的版本、步骤、下一候选步骤和当前目标阻塞问题。
    安装本身增加状态版本，因此重复接收同一提案会被拒绝。
@@ -49,11 +52,14 @@ receipt = executor.accept_plan(proposal)
 结果。runner 负责实际模型或工具调用，返回观察、结果及来源引用。
 成功输出封装为 `StepExecutionResult`，通过 `WorkingMemory.commit_step_result()`
 统一校验来源和执行标识，写入证据并完成步骤；
-失败则调用 `add_failure()`，返回规划阶段，由调用方决定是否重规划。
+失败则调用 `WorkingMemory.record_failure()`，校验来源后返回规划阶段，
+由调用方决定是否重规划。
 取消、超时和写回期间状态变化需要在该阶段定义处理规则。
 
-所有步骤完成后仍需由调用方验收并调用 `complete_task()`。
+所有步骤完成后仍需由调用方验收并调用 `WorkingMemory.complete_task()`。
 V1 不自动调用工具、重试、重规划或宣布任务完成。
 
-与 WorkingMemory 一致，调用方需串行访问共享状态。状态版本仅覆盖 TaskState，
-不检测资源单独变化；未来涉及工具副作用时，需要增加资源版本或快照一致性检查。
+与 WorkingMemory 一致，调用方需串行访问共享状态。任务状态和选中的资源上下文
+分别进行版本校验；外部文件内容版本、工具副作用与并发事务留待 Runtime。
+约束、固定内容和当前目标的问题变化会要求重新规划，且这些修改只允许在步骤之间
+进行。候选步骤不等于执行授权，具体阻塞依赖仍由调用方处理。

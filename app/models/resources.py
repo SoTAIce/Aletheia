@@ -26,6 +26,12 @@ class ResourceRef:
 class Resources:
     def __init__(self) -> None:
         self._refs: dict[str, ResourceRef] = {}
+        self._context_version = 0
+
+    @property
+    def context_version(self) -> int:
+        """Monotonic version of selected planning context, not external content."""
+        return self._context_version
 
     def register(
         self, ref: str, resource_type: ResourceType, source: str | None = None
@@ -82,6 +88,8 @@ class Resources:
 
     def remove(self, resource_id: str) -> ResourceRef:
         resource = self.get(resource_id)
+        if resource.selected_context is not None:
+            self._context_version += 1
         return self._refs.pop(resource.resource_id)
 
     def mark_loaded(self, resource_id: str, summary: str | None = None) -> None:
@@ -116,11 +124,15 @@ class Resources:
         if not isinstance(context, str) or not context.strip():
             raise ValueError("context must be a non-empty string")
 
+        if resource.selected_context == context.strip():
+            return
+
         self._refs[resource.resource_id] = replace(
             resource,
             selected_context = context.strip(),
             updated_at = datetime.now(timezone.utc),
         )
+        self._context_version += 1
 
     def clear_selected_context(self, resource_id: str) -> None:
         """Clear a resource's selected context, if present."""
@@ -133,6 +145,7 @@ class Resources:
             selected_context = None,
             updated_at = datetime.now(timezone.utc),
         )
+        self._context_version += 1
 
     def clear_all_selected_contexts(self) -> int:
         """Clear selected contexts and return the number of changed resources."""
@@ -144,6 +157,8 @@ class Resources:
                 selected_context = None,
                 updated_at = now,
             )
+        if selected:
+            self._context_version += 1
         return len(selected)
 
     def list_all(self) -> list[ResourceRef]:

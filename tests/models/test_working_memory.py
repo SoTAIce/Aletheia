@@ -135,11 +135,7 @@ def test_removal_protects_all_retained_records(kind):
         task.start_planning()
         task.set_plan(['step'])
         task.start_step(task.plan[0].step_id)
-        task.add_failure('failed')
-        # Failure API currently creates empty refs; simulate imported history.
-        task._scratchpad = replace(task.scratchpad, failure_history=(
-            replace(task.scratchpad.failure_history[0], source_refs=(rid,)),
-        ))
+        wm.record_failure('failed', (rid,))
     before = wm.snapshot()
     with pytest.raises(ResourceInUseError):
         wm.remove_resource(f' {rid} ')

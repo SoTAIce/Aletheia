@@ -3,7 +3,6 @@ from copy import copy
 from datetime import UTC, datetime, timezone
 from enum import Enum
 from uuid import uuid4
-import uuid
 class InvalidStateTransitionError(Exception):
     pass
 
@@ -152,7 +151,7 @@ class TaskState:
         self._task_id = str(uuid4())
         self._user_id = user_id
         self._status = TaskStatus.CREATED
-        self._active_goal = active_goal
+        self._active_goal = active_goal.strip()
         self._goal_revision = 1
         self._plan: tuple[PlanStep, ...] = ()
         self._plan_revision = 0
@@ -213,6 +212,8 @@ class TaskState:
 
     def replan(self, steps: list[str]) -> None:
         """Replace the current plan with a new revision for the active goal."""
+        if self._plan_revision == 0:
+            raise InvalidStateTransitionError("No plan has been installed; use set_plan()")
         if self._status not in (TaskStatus.PLANNING, TaskStatus.READY):
             raise InvalidStateTransitionError("Task must be planning or ready to replan")
         if self._active_step_id is not None:
@@ -488,6 +489,7 @@ class TaskState:
                 "Cannot add a question to a completed or failed task"
             )
 
+        self._check_planning_change()
         now = datetime.now(timezone.utc)
         question = OpenQuestion(
             question_id=str(uuid4()),
@@ -503,6 +505,7 @@ class TaskState:
             self._scratchpad,
             open_questions=(*self._scratchpad.open_questions, question),
         )
+        self._invalidate_plan()
         self._updated_at = now
         self._state_version += 1
         return question.question_id
@@ -531,6 +534,7 @@ class TaskState:
             raise InvalidStateTransitionError(
                 f"Question {question_id} is already resolved"
             )
+        self._check_planning_change()
         now = datetime.now(timezone.utc)
         resolved_question = replace(
             target_question,
@@ -545,13 +549,19 @@ class TaskState:
                 for q in self._scratchpad.open_questions
             )
         )
+        if target_question.goal_revision == self._goal_revision:
+            self._invalidate_plan()
         self._updated_at = now
         self._state_version += 1
 
-    def add_failure(self, message: str) -> str:
+    def add_failure(self, message: str, source_refs: tuple[str, ...] = ()) -> str:
         """Record the active step's failure and return to planning."""
         if not isinstance(message, str) or not message.strip():
             raise ValueError("message must be a non-empty string")
+        if not isinstance(source_refs, tuple) or not all(
+            isinstance(ref, str) for ref in source_refs
+        ):
+            raise TypeError("source_refs must be a tuple of strings")
         if self._status != TaskStatus.RUNNING:
             raise InvalidStateTransitionError(
                 "Task must be running to record a step failure"
@@ -582,7 +592,7 @@ class TaskState:
             goal_revision=target_step.goal_revision,
             plan_revision=target_step.plan_revision,
             retry_count=retry_count,
-            source_refs=(),
+            source_refs=source_refs,
             created_at=now,
         )
         failed_step = replace(
@@ -618,6 +628,7 @@ class TaskState:
                 "Cannot pin context for a completed or failed task"
             )
 
+        self._check_planning_change()
         now = datetime.now(timezone.utc)
 
         pinned_context = PinnedContext(
@@ -628,6 +639,7 @@ class TaskState:
         )
 
         self._pinned_contexts = (*self._pinned_contexts, pinned_context)
+        self._invalidate_plan()
         self._updated_at = now
         self._state_version += 1
 
@@ -642,6 +654,7 @@ class TaskState:
                 "Cannot add a constraint to a completed or failed task"
             )
 
+        self._check_planning_change()
         now = datetime.now(timezone.utc)
         constraint = Constraint(
             constraint_id=str(uuid4()),
@@ -649,9 +662,24 @@ class TaskState:
             created_at=now,
         )
         self._constraints = (*self._constraints, constraint)
+        self._invalidate_plan()
         self._updated_at = now
         self._state_version += 1
         return constraint.constraint_id
+
+    def _check_planning_change(self) -> None:
+        """V1 requirement/question edits are only accepted between steps."""
+        if self._active_step_id is not None:
+            raise InvalidStateTransitionError("Cannot change planning inputs while a step is active")
+
+    def _invalidate_plan(self) -> None:
+        """Retain the plan as evidence but require a replacement before execution.
+
+        The enclosing mutation owns the single state_version increment. Neither
+        the goal nor the installed plan revision changes until explicitly replaced.
+        """
+        if self._plan:
+            self._status = TaskStatus.PLANNING
 
     def complete_task(self) -> None:
        if self._status not in (TaskStatus.READY, TaskStatus.RUNNING):
@@ -678,7 +706,8 @@ class TaskState:
             )
 
        if any(
-            question.blocking and question.resolved_at is None
+            question.goal_revision == self._goal_revision
+            and question.blocking and question.resolved_at is None
             for question in self._scratchpad.open_questions
         ):
         raise InvalidStateTransitionError(

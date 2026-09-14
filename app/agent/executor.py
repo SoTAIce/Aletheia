@@ -4,10 +4,8 @@ from dataclasses import dataclass
 
 from app.agent.planner import PlanProposal
 from app.models.taskstate import (
-    InvalidStateTransitionError,
     OpenQuestion,
     PlanStep,
-    TaskStatus,
 )
 from app.models.working_memory import WorkingMemory
 
@@ -57,6 +55,7 @@ class Executor:
         for name, expected in (
             ("goal_revision", task.goal_revision),
             ("base_state_version", task.state_version),
+            ("base_resource_context_version", self._working_memory.resources.context_version),
         ):
             value = getattr(proposal, name)
             if not isinstance(value, int) or isinstance(value, bool):
@@ -75,14 +74,7 @@ class Executor:
         if len(set(steps)) != len(steps):
             raise ValueError("proposal.steps must not contain duplicates")
 
-        if task.active_step_id is not None:
-            raise InvalidStateTransitionError("Cannot accept a plan during execution")
-        if task.plan_revision == 0:
-            if task.status != TaskStatus.PLANNING:
-                raise InvalidStateTransitionError("Start planning before accepting a plan")
-            task.set_plan(steps)
-        else:
-            task.replan(steps)
+        self._working_memory.install_plan(steps)
 
         snapshot = task.snapshot()
         return PlanAcceptance(

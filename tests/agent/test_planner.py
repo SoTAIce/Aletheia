@@ -18,7 +18,7 @@ def test_build_context_empty_and_invalid_input():
     assert context.task_id == wm.task_state.task_id
     assert context.active_goal == 'goal'
     assert context.current_plan == context.intermediate_results == ()
-    assert context.open_question == context.failure_history == ()
+    assert context.open_questions == context.failure_history == ()
     assert context.resource_contexts == ()
     assert context.last_observation is None
     with pytest.raises(TypeError, match='WorkingMemory'):
@@ -70,7 +70,7 @@ def test_build_context_filters_history_without_mutation():
     assert [r.result_id for r in context.intermediate_results] == [result_id]
     assert context.intermediate_results[0].plan_revision < context.plan_revision
     assert context.last_observation is None
-    assert [q.question_id for q in context.open_question] == [open_id]
+    assert [q.question_id for q in context.open_questions] == [open_id]
     assert [f.message for f in context.failure_history] == ['current failure']
     assert context.resource_contexts == ('evidence',)
     with pytest.raises(FrozenInstanceError):
@@ -145,7 +145,7 @@ def test_prompt_preserves_context_and_output_contract(method):
     assert payload['current_plan'][0]['status'] == 'failed'
     assert payload['constraints'][0]['content'] == '不要修改原始文件'
     assert payload['pinned_contexts'][0]['content'] == '固定内容'
-    assert payload['open_question'][0]['blocking'] is True
+    assert payload['open_questions'][0]['blocking'] is True
     assert payload['last_observation']['content'] == '观察结果'
     assert payload['intermediate_results'][0]['content'] == '已有结论'
     assert payload['failure_history'][0]['message'] == '读取失败'

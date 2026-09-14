@@ -12,7 +12,7 @@ from app.models.working_memory import (
 def executing():
     wm = WorkingMemory(TaskState('user', 'goal'))
     wm.task_state.start_planning()
-    wm.task_state.set_plan(['inspect', 'deliver'])
+    wm.install_plan(['inspect', 'deliver'])
     token = wm.begin_step(wm.task_state.plan[0].step_id)
     return wm, token
 
@@ -74,11 +74,11 @@ def test_wrong_identity_does_not_change_memory(field, value):
     assert wm.snapshot() == before
 
 
-@pytest.mark.parametrize('change', ['constraint', 'replan', 'goal', 'terminal', 'next_step'])
+@pytest.mark.parametrize('change', ['evidence', 'replan', 'goal', 'terminal', 'next_step'])
 def test_late_result_cannot_write_into_new_state(change):
     wm, token = executing()
-    if change == 'constraint':
-        wm.task_state.add_constraint('new constraint')
+    if change == 'evidence':
+        wm.record_observation('new evidence')
     elif change == 'terminal':
         wm.task_state.fail_task('stop')
     elif change == 'next_step':
@@ -88,7 +88,7 @@ def test_late_result_cannot_write_into_new_state(change):
         wm.task_state.add_failure('failed')
         if change == 'goal':
             wm.update_goal('new goal')
-        wm.task_state.replan(['retry'])
+        wm.install_plan(['retry'])
         wm.begin_step(wm.task_state.plan[0].step_id)
     before = wm.snapshot()
     with pytest.raises(StaleExecutionError):
