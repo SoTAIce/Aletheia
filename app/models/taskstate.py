@@ -14,6 +14,7 @@ class TaskStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    BLOCKED = "blocked"
 
 
 class StepStatus(str, Enum):
@@ -22,6 +23,7 @@ class StepStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    BLOCKED = "blocked"
 
 
 @dataclass(frozen=True, slots=True)
@@ -616,6 +618,53 @@ class TaskState:
         self._state_version += 1
         return failure.failure_id
 
+    def block_step(self, message: str, source_refs: tuple[str, ...] = ()) -> str:
+        """Pause the active step with an unresolved question, without success evidence."""
+        if not isinstance(message, str) or not message.strip():
+            raise ValueError("message must be a non-empty string")
+        if not isinstance(source_refs, tuple) or not all(isinstance(ref, str) for ref in source_refs):
+            raise TypeError("source_refs must be a tuple of strings")
+        if self._status is not TaskStatus.RUNNING or self._active_step_id is None:
+            raise InvalidStateTransitionError("An active running step is required")
+        step = next(step for step in self._plan if step.step_id == self._active_step_id)
+        if step.status is not StepStatus.ACTIVE:
+            raise InvalidStateTransitionError("The current step is not active")
+        now = datetime.now(UTC)
+        question = OpenQuestion(
+            str(uuid4()), message.strip(), step.step_id, self._goal_revision,
+            True, now,
+        )
+        self._plan = tuple(
+            replace(item, status=StepStatus.BLOCKED, finished_at=now)
+            if item.step_id == step.step_id else item for item in self._plan
+        )
+        self._scratchpad = replace(
+            self._scratchpad,
+            open_questions=(*self._scratchpad.open_questions, question),
+            last_observation=Observation(
+                str(uuid4()), message.strip(), step.step_id, self._goal_revision,
+                self._plan_revision, source_refs, now,
+            ),
+        )
+        self._active_step_id = None
+        self._status = TaskStatus.BLOCKED
+        self._updated_at = now
+        self._state_version += 1
+        return question.question_id
+
+    def pause_for_questions(self) -> None:
+        """Do not start dependent work while current-goal questions block it."""
+        self._check_planning_change()
+        if self._status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            raise InvalidStateTransitionError("Cannot block a terminal task")
+        if not any(q.blocking and q.resolved_at is None and q.goal_revision == self._goal_revision
+                   for q in self._scratchpad.open_questions):
+            raise InvalidStateTransitionError("No unresolved blocking questions")
+        if self._status is not TaskStatus.BLOCKED:
+            self._status = TaskStatus.BLOCKED
+            self._updated_at = datetime.now(UTC)
+            self._state_version += 1
+
     def pin_content(self, content: str, source: str) -> str:
         if not isinstance(content, str) or not content.strip():
             raise ValueError("content must be a non-empty string")
@@ -678,7 +727,7 @@ class TaskState:
         The enclosing mutation owns the single state_version increment. Neither
         the goal nor the installed plan revision changes until explicitly replaced.
         """
-        if self._plan:
+        if self._plan or self._status is TaskStatus.BLOCKED:
             self._status = TaskStatus.PLANNING
 
     def complete_task(self) -> None:

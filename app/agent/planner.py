@@ -35,6 +35,7 @@ class PlannerContext:
 
     resource_contexts: tuple[str, ...]
     resource_context_version: int
+    resolved_questions: tuple[OpenQuestion, ...] = ()
 
 @dataclass(frozen = True, slots = True)
 class PlanProposal:
@@ -111,6 +112,10 @@ class Planner:
             failure_history=tuple(
                 failure for failure in scratchpad.failure_history
                 if failure.goal_revision == task.goal_revision
+            ),
+            resolved_questions=tuple(
+                question for question in scratchpad.open_questions
+                if question.goal_revision == task.goal_revision and question.resolved_at is not None
             ),
             resource_contexts=tuple(
                 resource.selected_context for resource in snapshot.resources

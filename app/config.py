@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     mcp_cls_url: str = "http://localhost:8003/mcp"
     mcp_monitor_transport: str = "streamable-http"
     mcp_monitor_url: str = "http://localhost:8004/mcp"
+    mcp_filesystem_root: str = ""
+    mcp_filesystem_write_root: str = ""
+    tavily_api_key: str = ""
 
     prometheus_base_url: str = "http://127.0.0.1:9090"
     prometheus_request_timeout: float = 10.0

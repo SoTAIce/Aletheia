@@ -1,4 +1,4 @@
-"""Receive planner proposals; tool execution is a separate, future stage."""
+"""Receive planner proposals; step execution remains a separate component."""
 
 from dataclasses import dataclass
 

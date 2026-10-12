@@ -7,7 +7,7 @@ from textwrap import dedent
 
 from app.agent.step_models import (
     StepExecutionContext, StepRunOutput, SystemMessage, ToolCall, ToolMessage, UserMessage,
-    ModelTurn, ToolResult,
+    ModelTurn, ToolResult, StepOutcome,
 )
 from app.agent.step_runner import StepRunError, StepRunnerContractError, ToolRoundLimitError
 from app.agent.tool_calling_model import ToolCallingModel, ToolCallingModelError
@@ -19,7 +19,8 @@ class ToolCallingStepRunner:
                  model: ToolCallingModel,
                  tool_registry: ToolRegistry,
                  max_tool_rounds: int = 4,
-                 max_total_tool_calls: int = 8):
+                 max_total_tool_calls: int = 8,
+                 *, require_step_outcome: bool = False):
         if not callable(getattr(model, "generate", None)):
             raise TypeError("model must provide generate()")
         if not isinstance(tool_registry, ToolRegistry):
@@ -34,6 +35,9 @@ class ToolCallingStepRunner:
         self._tool_registry = tool_registry
         self._max_tool_rounds = max_tool_rounds
         self._max_total_tool_calls = max_total_tool_calls
+        if not isinstance(require_step_outcome, bool):
+            raise TypeError("require_step_outcome must be a bool")
+        self._require_step_outcome = require_step_outcome
 
     def _build_initial_messages(
         self, context: StepExecutionContext
@@ -73,6 +77,20 @@ class ToolCallingStepRunner:
             or incomplete. Use the language of active_goal.
             The executor owns lifecycle state; you do not modify task state.
         """).strip()
+        if self._require_step_outcome:
+            system += dedent('''
+
+                For the final response only, return exactly one JSON object:
+                {"status": "succeeded|failed|blocked", "content": "step result", "reason": null}
+                Use succeeded only when the current step's required output is achieved.
+                Tool failures may be recovered by subsequent calls, but explaining a failure
+                or reporting missing evidence does not complete the requested work.
+                Use failed for execution failure requiring a different plan; use blocked
+                for missing input requiring clarification. For failed/blocked, reason must
+                be a non-empty explanation (blocked: the question that needs an answer).
+                For succeeded, reason must be null. Never hide failed work as succeeded.
+                Continue to request tools using native tool_calls, not this JSON object.
+            ''')
         # Include all fields, retaining task identity and revision metadata.
         user = json.dumps(
             asdict(context), ensure_ascii=False, indent=2, default=encode_datetime
@@ -105,11 +123,39 @@ class ToolCallingStepRunner:
             if not turn.tool_calls:
                 if not turn.content or not turn.content.strip():
                     raise StepRunnerContractError("Final model response must contain non-empty text")
+                content, outcome, reason = turn.content.strip(), StepOutcome.SUCCEEDED, None
+                if self._require_step_outcome:
+                    try:
+                        def unique_object(pairs):
+                            values = {}
+                            for key, value in pairs:
+                                if key in values:
+                                    raise ValueError(f"duplicate outcome field: {key}")
+                                values[key] = value
+                            return values
+                        payload = json.loads(content, object_pairs_hook=unique_object)
+                        if not isinstance(payload, dict) or set(payload) != {"status", "content", "reason"}:
+                            raise ValueError("expected status, content and reason")
+                        outcome = StepOutcome(payload["status"])
+                        content, reason = payload["content"], payload["reason"]
+                        if not isinstance(content, str) or not content.strip():
+                            raise ValueError("content must be non-empty")
+                        if outcome is StepOutcome.SUCCEEDED:
+                            if reason is not None:
+                                raise ValueError("succeeded reason must be null")
+                        elif not isinstance(reason, str) or not reason.strip():
+                            raise ValueError("failed/blocked reason must be non-empty")
+                    except (ValueError, TypeError) as exc:
+                        raise StepRunError("Invalid final step outcome: " + str(exc), tuple(source_refs)) from exc
                 return StepRunOutput(
-                    content=turn.content.strip(),
+                    content=content.strip(),
+                    observation=json.dumps([asdict(result) for result in all_tool_results], ensure_ascii=False)
+                    if self._require_step_outcome and all_tool_results else None,
                     source_refs=tuple(source_refs),
                     tool_calls=tuple(all_tool_calls),
                     tool_results=tuple(all_tool_results),
+                    outcome=outcome,
+                    reason=reason,
                 )
 
             # Reject the entire batch before executing any of its tools.
@@ -141,8 +187,16 @@ class ToolCallingStepRunner:
             tool_rounds += 1
             seen_call_ids.update(batch_ids)
             for call in turn.tool_calls:
-                # Unexpected tool exceptions and cancellation propagate unchanged.
-                result = await self._tool_registry.invoke(call)
+                # Runtime mode declares tool failures; legacy callers keep propagation.
+                # Cancellation is never converted into a retryable tool failure.
+                try:
+                    result = await self._tool_registry.invoke(call)
+                except Exception as exc:
+                    if not self._require_step_outcome:
+                        raise
+                    raise StepRunError(
+                        f"Tool {call.tool_name} raised {type(exc).__name__}: {exc}", tuple(source_refs)
+                    ) from exc
                 all_tool_calls.append(call)
                 all_tool_results.append(result)
                 for ref in result.source_refs:

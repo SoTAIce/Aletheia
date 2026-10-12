@@ -28,5 +28,9 @@ class ToolRoundLimitError(StepRunError):
     pass
 
 
+class StepBlockedError(StepRunError):
+    """The step needs missing information before dependent work can proceed."""
+
+
 class StepRunnerContractError(TypeError):
     """Runner data violates its interface contract, not a declared step failure."""

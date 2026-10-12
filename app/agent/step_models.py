@@ -1,6 +1,7 @@
 """Shared frozen data models for step runners and execution coordination."""
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Literal, TypeAlias
 
 from app.models.taskstate import (
@@ -31,6 +32,7 @@ class StepExecutionContext:
     open_question: tuple[OpenQuestion, ...]
 
     resource_contexts: tuple[str, ...]
+    resolved_questions: tuple[OpenQuestion, ...] = ()
 
 
 @dataclass(frozen = True, slots = True)
@@ -120,6 +122,12 @@ class ToolResult:
     source_refs: tuple[str, ...] = ()
     error: str | None = None
 
+class StepOutcome(StrEnum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    BLOCKED = "blocked"
+
+
 @dataclass(frozen = True, slots = True)
 class StepRunOutput:
     content: str
@@ -128,6 +136,8 @@ class StepRunOutput:
 
     tool_calls: tuple[ToolCall, ...] = ()
     tool_results: tuple[ToolResult, ...] = ()
+    outcome: StepOutcome = StepOutcome.SUCCEEDED
+    reason: str | None = None
 
 @dataclass(frozen = True, slots = True)
 class StepExecutionReceipt:

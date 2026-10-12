@@ -188,6 +188,10 @@ class WorkingMemory:
         refs = self._validate_source_refs(source_refs)
         return self._task_state.add_failure(message, source_refs=refs)
 
+    def record_blockage(self, message: str, source_refs: tuple[str, ...] = ()) -> str:
+        refs = self._validate_source_refs(source_refs)
+        return self._task_state.block_step(message, source_refs=refs)
+
     def remove_resource(self, resource_id: str) -> ResourceRef:
         """Remove an index entry only if no retained record references it.
 

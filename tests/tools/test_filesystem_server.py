@@ -27,7 +27,10 @@ async def test_filesystem_stdio_registry(tmp_path, writable):
     registry = ToolRegistry()
     async with MCPClient.connect(parameters) as client:
         tools = await client.list_tools()
-        assert {tool.name for tool in tools} == ({"read_file", "write_file"} if writable else {"read_file"})
+        expected = {"read_file", "list_directory"}
+        if writable:
+            expected.add("write_file")
+        assert {tool.name for tool in tools} == expected
         assert all(tool.description for tool in tools)
         for tool in tools:
             registry.register(MCPToolAdapter(client, tool))

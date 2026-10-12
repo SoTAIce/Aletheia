@@ -2,7 +2,7 @@
 
 from dataclasses import replace
 
-from app.agent.step_runner import StepRunner, StepRunError
+from app.agent.step_runner import StepRunner, StepRunError, StepBlockedError
 from app.models.working_memory import WorkingMemory, StepExecutionResult, StaleExecutionError
 from app.models.taskstate import StepStatus, TaskStatus, InvalidStateTransitionError
 from app.agent.step_models import (
@@ -11,6 +11,7 @@ from app.agent.step_models import (
     ToolCall,
     ToolResult,
     StepExecutionReceipt,
+    StepOutcome,
 )
 
 
@@ -85,7 +86,11 @@ class StepExecutor:
             intermediate_results = intermediate_results,
             last_observation = last_observation,
             open_question = open_question,
-            resource_contexts = resource_contexts
+            resource_contexts = resource_contexts,
+            resolved_questions=tuple(
+                question for question in task.scratchpad.open_questions
+                if question.goal_revision == task.goal_revision and question.resolved_at is not None
+            ),
         )
 
     def _validate_runner_output(self, output: StepRunOutput) -> StepRunOutput:
@@ -98,6 +103,13 @@ class StepExecutor:
         """
         if not isinstance(output, StepRunOutput):
             raise TypeError("output must be a StepRunOutput")
+        if not isinstance(output.outcome, StepOutcome):
+            raise TypeError("output.outcome must be a StepOutcome")
+        if output.outcome is StepOutcome.SUCCEEDED:
+            if output.reason is not None:
+                raise ValueError("successful output must not contain a reason")
+        elif not isinstance(output.reason, str) or not output.reason.strip():
+            raise ValueError("failed/blocked output must contain a reason")
 
         def require_text(value: object, field: str) -> None:
             if not isinstance(value, str):
@@ -184,6 +196,14 @@ class StepExecutor:
 
         try:
             output = await self._runner.run(context)
+            normalized_output = self._validate_runner_output(output)
+            if normalized_output.outcome is StepOutcome.BLOCKED:
+                raise StepBlockedError(normalized_output.reason.strip(), normalized_output.source_refs)
+            if normalized_output.outcome is StepOutcome.FAILED:
+                details = normalized_output.reason.strip() + "\n" + normalized_output.content
+                if normalized_output.observation:
+                    details += "\nTool evidence: " + normalized_output.observation
+                raise StepRunError(details, normalized_output.source_refs)
         except StepRunError as exc:
             # The runner awaited external work: the task may have changed meanwhile.
             task = self._working_memory.task_state.snapshot()
@@ -198,10 +218,11 @@ class StepExecutor:
                 raise StaleExecutionError("Failed execution is no longer current") from exc
             # This API validates message and refs before changing task state.
             # Validation errors retain exc as their exception context.
-            self._working_memory.record_failure(exc.message, source_refs=exc.source_refs)
+            if isinstance(exc, StepBlockedError):
+                self._working_memory.record_blockage(exc.message, source_refs=exc.source_refs)
+            else:
+                self._working_memory.record_failure(exc.message, source_refs=exc.source_refs)
             raise
-
-        normalized_output = self._validate_runner_output(output)
 
         result = StepExecutionResult(
             token = token,

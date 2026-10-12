@@ -1,4 +1,4 @@
-"""Start from the project root with python -m app.tools.filesystem.server."""
+﻿"""Start from the project root with python -m app.tools.filesystem.server."""
 
 import argparse
 from pathlib import Path
@@ -54,6 +54,11 @@ def create_server(
                 return f"File written successfully. Read it with read_file(path={read_path!r})."
             return "File written successfully. The destination is outside the configured READ root."
 
+    @mcp.tool()
+    def list_directory(path: str = ".", offset: int = 0, limit: int = 50) -> dict:
+        """List files and directories under the configured READ root."""
+        return file_access.list_directory(path=path, offset=offset, limit=limit)
+
     return mcp
 
 
@@ -78,3 +83,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+

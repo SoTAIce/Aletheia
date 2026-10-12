@@ -2,7 +2,7 @@
 
 > An agentic RAG system for knowledge retrieval, tool orchestration, and intelligent workflows.
 
-Aletheia is a Python-based AI agent project built around RAG, tool calling, and agent workflows. It combines hybrid retrieval, reranking, Milvus vector storage, MCP tools, and turn-based conversation memory. The application entry point is still under development.
+Aletheia is a Python-based AI agent project built around RAG, tool calling, and agent workflows. It combines hybrid retrieval, reranking, Milvus vector storage, MCP tools, and turn-based conversation memory. Run its bounded plan/execute/replan loop with `python -m app.agent "Your goal"`.
 
 ## Features
 
@@ -69,6 +69,61 @@ Run tests after adding or updating them:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest
+```
+
+## Agent runtime
+
+Configure `DASHSCOPE_API_KEY` and `RAG_MODEL` in `.env`. The runtime always registers
+the local time tool and, unless disabled, the existing RAG service. Filesystem MCP
+is enabled by `MCP_FILESYSTEM_ROOT` (or `--filesystem-root`); writing requires the
+additional `MCP_FILESYSTEM_WRITE_ROOT` (or `--write-root`). WebSearch MCP is enabled
+when `TAVILY_API_KEY` is configured. The service reads `.env` through the existing
+settings module and passes the Tavily key to its stdio subprocess.
+
+```powershell
+$env:TAVILY_API_KEY = "your-tavily-api-key"
+.\.venv\Scripts\python.exe -m app.agent "Read README.md and summarize the project's capabilities" --filesystem-root . --no-knowledge
+```
+
+Omit `--no-knowledge` to include RAG when the existing Milvus/embedding/reranker
+services are configured. Runtime defaults: 16 step attempts, 2 replans, 60 seconds
+per planning/execution attempt, 4 tool rounds and 8 calls per step. Failed work
+does not become a completed step. Blocking questions pause the task. CLI exit
+codes are 0 for completed, 1 for failed, and 2 for blocked.
+
+`RagAgentService.query_result()` returns status, successful-step receipts and
+counters; `query()` returns text. `query_stream()` emits the final content and
+terminal status rather than token streaming. See [runtime contracts, memory,
+resuming blocked tasks and limitations](docs/agent_runtime.md).
+
+Run the complete offline regression suite (the workspace temp path avoids host
+temporary-directory permission issues):
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/agent tests/models tests/tools -q --basetemp=tmp/pytest-agent-runtime
+```
+
+## Web search through MCP
+
+Set `TAVILY_API_KEY` in the environment of the process launching the MCP server.
+The server reads this variable directly; it does not load `.env` automatically.
+The agent demo uses the existing DashScope settings from `.env`:
+
+```powershell
+$env:TAVILY_API_KEY = "your-tavily-api-key"
+.\.venv\Scripts\python.exe -m app.agent.mcp_demo.web_search_client "Search for Aletheia MCP documentation"
+```
+
+The demo starts `python -m app.tools.web_search.server` as a stdio subprocess,
+discovers `search_web` with `register_mcp_tools`, and runs `StepExecutor` with
+`ToolCallingStepRunner`. Keep both registration and the entire step execution
+inside `async with MCPClient.connect(...)`; registry adapters use that live client.
+Search results are JSON objects containing `title`, `url`, and `snippet`.
+
+Run the offline integration tests (real stdio MCP; simulated HTTP and model responses):
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/tools/test_web_search_integration.py tests/tools/test_mcp_integration.py tests/agent/test_tool_calling_step_runner.py -q
 ```
 
 ## Local data
