@@ -2,7 +2,8 @@
 
 from dataclasses import replace
 
-from app.agent.step_runner import StepRunner, StepRunError, StepBlockedError
+from app.agent.step_runner import StepRunner, StepRunError, StepBlockedError, StepBusinessError
+from app.agent.step_runner import StepFormatError, StepModelError, StepToolError
 from app.models.working_memory import WorkingMemory, StepExecutionResult, StaleExecutionError
 from app.models.taskstate import StepStatus, TaskStatus, InvalidStateTransitionError
 from app.agent.step_models import (
@@ -203,7 +204,7 @@ class StepExecutor:
                 details = normalized_output.reason.strip() + "\n" + normalized_output.content
                 if normalized_output.observation:
                     details += "\nTool evidence: " + normalized_output.observation
-                raise StepRunError(details, normalized_output.source_refs)
+                raise StepBusinessError(details, normalized_output.source_refs)
         except StepRunError as exc:
             # The runner awaited external work: the task may have changed meanwhile.
             task = self._working_memory.task_state.snapshot()
@@ -221,7 +222,10 @@ class StepExecutor:
             if isinstance(exc, StepBlockedError):
                 self._working_memory.record_blockage(exc.message, source_refs=exc.source_refs)
             else:
-                self._working_memory.record_failure(exc.message, source_refs=exc.source_refs)
+                message = exc.message
+                if isinstance(exc, (StepBusinessError, StepFormatError, StepModelError, StepToolError)):
+                    message = f"{type(exc).__name__}: {message}"
+                self._working_memory.record_failure(message, source_refs=exc.source_refs)
             raise
 
         result = StepExecutionResult(

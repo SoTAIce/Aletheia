@@ -9,7 +9,7 @@ from app.agent.executor import Executor
 from app.agent.planner import Planner
 from app.agent.step_executor import StepExecutor
 from app.agent.step_models import StepExecutionReceipt
-from app.agent.step_runner import StepBlockedError, StepRunError
+from app.agent.step_runner import StepBlockedError, StepRunError, StepFormatError, StepModelError
 from app.agent.tool_calling_model import ToolCallingModel
 from app.agent.tool_calling_step_runner import ToolCallingStepRunner
 from app.models.conversation_memory import (
@@ -18,6 +18,7 @@ from app.models.conversation_memory import (
 from app.models.taskstate import StepStatus, TaskStatus
 from app.models.working_memory import StaleExecutionError, WorkingMemory
 from app.tools.tool_registry import ToolRegistry
+from app.services.context_manager import ContextManager
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,7 @@ class AgentRuntime:
         max_executions: int = 16, max_replans: int = 2,
         step_timeout_seconds: float = 60.0, planning_timeout_seconds: float = 60.0,
         max_tool_rounds: int = 4, max_total_tool_calls: int = 8,
+        context_manager: ContextManager | None = None,
     ) -> None:
         for name, value, minimum in (("max_executions", max_executions, 1), ("max_replans", max_replans, 0)):
             if type(value) is not int or value < minimum:
@@ -55,9 +57,14 @@ class AgentRuntime:
         self._planner = planner
         self._executor = Executor(memory)
         self._registry = registry
-        self._step_executor = StepExecutor(memory, ToolCallingStepRunner(
+        self._context_manager = context_manager or ContextManager()
+        if self._planner._context_manager is None:
+            self._planner._context_manager = self._context_manager
+        self._runner = ToolCallingStepRunner(
             model, registry, max_tool_rounds, max_total_tool_calls, require_step_outcome=True,
-        ))
+            context_manager=self._context_manager,
+        )
+        self._step_executor = StepExecutor(memory, self._runner)
         self._conversation = conversation
         self._max_executions, self._max_replans = max_executions, max_replans
         self._step_timeout, self._planning_timeout = step_timeout_seconds, planning_timeout_seconds
@@ -65,6 +72,10 @@ class AgentRuntime:
         self._steps: list[StepExecutionReceipt] = []
         self._lock = asyncio.Lock()
         self._reported_version: int | None = None
+
+    @property
+    def format_repair_count(self) -> int:
+        return self._planner.format_repair_count + self._runner.format_repair_count
 
     async def run(self) -> AgentRunResult:
         async with self._lock:
@@ -86,16 +97,11 @@ class AgentRuntime:
         task = self.memory.task_state
         if task.status is TaskStatus.CREATED:
             if self._conversation is not None:
-                history = {
-                    "summary": self._conversation.summary,
-                    "messages": [{"role": message.role.value, "content": message.content}
-                                 for message in self._conversation.retrieve_messages(k=3)
-                                 if message.role in (MessageRole.USER, MessageRole.ASSISTANT)],
-                }
-                if history["summary"] or history["messages"]:
-                    task.pin_content(json.dumps(history, ensure_ascii=False)[:12000], "conversation_memory")
+                history = await self._context_manager.prepare_conversation(self._conversation, task.active_goal)
+                task.pin_content(history, "conversation_memory")
             task.pin_content(json.dumps(
-                [asdict(tool) for tool in self._registry.list_definitions()], ensure_ascii=False
+                [{"name": tool.name, "description": tool.description}
+                 for tool in self._registry.list_definitions()], ensure_ascii=False
             ), "available_tools")
             task.start_planning()
 
@@ -136,6 +142,10 @@ class AgentRuntime:
                 self._steps.append(receipt)
             except StepBlockedError as exc:
                 return self._result(exc.message)
+            except (StepFormatError, StepModelError) as exc:
+                # Local format repair is exhausted, or the provider failed.
+                # Replanning would repeat completed tools without fixing either.
+                return self._fail(f"{type(exc).__name__}: {exc.message}")
             except StepRunError:
                 # StepExecutor has recorded the failure and returned to PLANNING.
                 continue
@@ -143,6 +153,8 @@ class AgentRuntime:
                 # Never overwrite evidence or lifecycle belonging to newer work.
                 raise
             except TimeoutError:
+                if self._context_manager.overflow_recovery_interrupted:
+                    return self._fail("Context overflow recovery timed out; completed tools will not be repeated")
                 self.memory.record_failure("Step execution timed out; side effects may already exist")
             except Exception as exc:
                 # Contract/implementation errors are terminal, not retry instructions.

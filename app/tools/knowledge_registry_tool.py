@@ -13,10 +13,11 @@ from app.models.working_memory import WorkingMemory
 
 class KnowledgeRegistryTool:
     def __init__(self, memory: WorkingMemory, conversation: ConversationMemory | None = None,
-                 search=None) -> None:
+                 search=None, *, context_manager=None) -> None:
         self._memory = memory
         self._conversation = conversation
         self._search = search
+        self._context_manager = context_manager
 
     @property
     def definition(self) -> ToolDefinition:
@@ -46,8 +47,28 @@ class KnowledgeRegistryTool:
                 elif message.role is MessageRole.ASSISTANT:
                     history.append(AIMessage(message.content))
         task = self._memory.task_state
-        history.extend(AIMessage(result.content) for result in task.scratchpad.intermediate_results
-                       if result.valid and result.goal_revision == task.goal_revision)
+        if self._context_manager is not None:
+            from app.agent.step_models import UserMessage
+            packet = {
+                "active_goal": query.strip(),
+                "constraints": [asdict(item) for item in task.constraints],
+                "intermediate_results": [asdict(result) for result in task.scratchpad.intermediate_results
+                                         if result.valid and result.goal_revision == task.goal_revision],
+                "pinned_contexts": [],
+            }
+            if self._conversation is not None:
+                packet["pinned_contexts"].append({"source": "conversation_memory", "content":
+                    await self._context_manager.prepare_conversation(self._conversation, query)})
+            projected = self._context_manager.prepare((UserMessage(json.dumps(
+                packet, ensure_ascii=False, default=lambda value: value.isoformat())),), ())
+            # One bounded reference packet also survives the rewrite service's
+            # legacy message-count cap without silently selecting only 3 turns.
+            from app.services.rag_query_rewrite_service import QueryRewriteService
+            history = [HumanMessage(QueryRewriteService.budget_history(
+                self._context_manager, query.strip(), projected[0].content))]
+        else:
+            history.extend(AIMessage(result.content) for result in task.scratchpad.intermediate_results
+                           if result.valid and result.goal_revision == task.goal_revision)
         content, artifact = await search(query.strip(), history[-6:])
         status = artifact["status"]
         if status == "error":

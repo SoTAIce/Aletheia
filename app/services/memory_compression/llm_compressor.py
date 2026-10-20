@@ -61,8 +61,19 @@ class LLMCompressor(ConversationCompressor):
             max_tokens=self._max_output_tokens,
         )
 
-        summary = response.choices[0].message.content
-        if not summary or not summary.strip():
+        choices = getattr(response, "choices", None)
+        if not choices or len(choices) != 1:
+            raise RuntimeError("compression model must return exactly one choice")
+        choice = choices[0]
+        message = getattr(choice, "message", None)
+        if (getattr(choice, "finish_reason", None) != "stop"
+                or getattr(message, "role", None) != "assistant"
+                or getattr(message, "refusal", None)
+                or getattr(message, "tool_calls", None)
+                or getattr(message, "function_call", None)):
+            raise RuntimeError("compression model returned an incomplete or refused summary")
+        summary = getattr(message, "content", None)
+        if not isinstance(summary, str) or not summary.strip():
             raise RuntimeError("compression model returned an empty summary")
         return summary.strip()
 

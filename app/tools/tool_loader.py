@@ -46,6 +46,7 @@ async def open_tool_registry(
     conversation: ConversationMemory | None = None,
     knowledge_search=None,
     include_knowledge: bool = True,
+    context_manager=None,
 ) -> AsyncIterator[ToolRegistry]:
     """Run the entire agent inside this context and in the same asyncio task.
 
@@ -55,7 +56,7 @@ async def open_tool_registry(
     registry = ToolRegistry()
     registry.register(CurrentTimeTool())
     if include_knowledge:
-        registry.register(KnowledgeRegistryTool(memory, conversation, knowledge_search))
+        registry.register(KnowledgeRegistryTool(memory, conversation, knowledge_search, context_manager=context_manager))
     for tool in local_tools:
         registry.register(tool)
     async with AsyncExitStack() as stack:

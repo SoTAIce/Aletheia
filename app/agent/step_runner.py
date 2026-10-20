@@ -32,5 +32,25 @@ class StepBlockedError(StepRunError):
     """The step needs missing information before dependent work can proceed."""
 
 
+class StepFormatError(StepRunError):
+    """Output formatting/validation failed; replanning cannot repair serialization."""
+
+
+class StepToolError(StepRunError):
+    """A tool raised before producing a usable result."""
+
+
+class StepBusinessError(StepRunError):
+    """The model explicitly reported an unsuccessful business outcome."""
+
+
+class StepModelError(StepRunError):
+    """The provider request or response failed; not a new business plan."""
+
+
+class StepTimeoutError(StepModelError):
+    """A provider request timed out; tool side effects may already exist."""
+
+
 class StepRunnerContractError(TypeError):
     """Runner data violates its interface contract, not a declared step failure."""

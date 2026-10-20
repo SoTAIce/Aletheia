@@ -13,6 +13,7 @@ from loguru import logger
 from .base_memory import BaseMemory
 
 if TYPE_CHECKING:
+    from app.services.conversation_archive import ConversationArchive
     from app.services.memory_compression.base import ConversationCompressor
 
 
@@ -43,6 +44,16 @@ class ConversationTurn:
             raise TypeError("conversation turn contains an invalid message type")
 
 
+@dataclass(frozen=True)
+class SummaryEntry:
+    memory_id: str
+    title: str
+    description: str
+    storage_ref: str
+    source_turn_ids: tuple[str, ...]
+    session_id: str
+
+
 class ConversationMemory(BaseMemory):
     def __init__(
         self,
@@ -50,14 +61,25 @@ class ConversationMemory(BaseMemory):
         compressor: ConversationCompressor | None = None,
         max_turns: int = 20,
         compression_token_threshold: int = 6000,
+        *,
+        archive: ConversationArchive | None = None,
+        summary_batch_size: int = 8,
+        summary_token_budget: int = 6000,
     ) -> None:
         if max_turns <= 0:
             raise ValueError("max_turns must be greater than zero")
         if compression_token_threshold <= 0:
             raise ValueError("compression_token_threshold must be greater than zero")
 
+        if summary_batch_size <= 0 or summary_token_budget <= 0:
+            raise ValueError("summary batch size and token budget must be positive")
+        self._summary_batch_size = summary_batch_size
+        self._summary_token_budget = summary_token_budget
+        self._summary_index: tuple[SummaryEntry, ...] = ()
+        self._revision = 0
         super().__init__(user_id)
         self._compressor = compressor
+        self._archive = archive
         self._max_turns = max_turns
         self._compression_token_threshold = compression_token_threshold
 
@@ -72,6 +94,26 @@ class ConversationMemory(BaseMemory):
         return len(self._turns)
 
     @property
+    def archive(self) -> ConversationArchive | None:
+        return self._archive
+
+    async def restore(self) -> None:
+        """Rebuild the recent cache from durable originals, without buffering raw history."""
+        if self._archive is None:
+            return
+        async with self._lock:
+            revision = self._revision
+            turns = await asyncio.to_thread(self._archive.load_turns, self._max_turns)
+            entries = await asyncio.to_thread(self._archive.list_summaries)
+            if revision != self._revision:
+                return
+            self._summary_index = tuple(entries)
+            self._turns = deque(turns)
+            self._compression_buffer.clear()
+            self._compression_buffer_tokens = 0
+            await self._refresh_pending_locked()
+
+    @property
     def is_full(self) -> bool:
         return len(self._turns) >= self._max_turns
 
@@ -82,6 +124,41 @@ class ConversationMemory(BaseMemory):
     @property
     def summary(self) -> str | None:
         return self._summary
+
+    @property
+    def summary_index(self) -> tuple[SummaryEntry, ...]:
+        return self._summary_index
+
+    def find_summaries(self, query: str, limit: int = 3) -> list[SummaryEntry]:
+        import re
+        if not isinstance(query, str) or type(limit) is not int or limit < 0:
+            raise ValueError("invalid summary query or limit")
+        terms = set(re.findall(r"\w+", query.casefold()))
+        scored = [(sum(term in (entry.title + " " + entry.description).casefold()
+                       for term in terms), index, entry)
+                  for index, entry in enumerate(self._summary_index)]
+        return [entry for score, _, entry in sorted(scored, key=lambda item: (item[0], item[1]), reverse=True)
+                if score > 0][:limit]
+
+    async def load_summary(self, memory_id: str) -> str:
+        if self._archive is None or not any(
+            entry.memory_id == memory_id and entry.session_id == self._archive.session_id
+            for entry in self._summary_index
+        ):
+            raise KeyError(memory_id)
+        revision = self._revision
+        body = await asyncio.to_thread(self._archive.read_summary, memory_id)
+        if revision != self._revision:
+            raise KeyError(memory_id)
+        return body
+
+    async def find_turns(self, query: str, limit: int = 3) -> list[dict]:
+        """Find bounded raw-source metadata, including turns too large to summarize."""
+        if self._archive is None:
+            return []
+        revision = self._revision
+        entries = await asyncio.to_thread(self._archive.find_turns, query, limit)
+        return entries if revision == self._revision else []
 
     @property
     def compression_buffer_tokens(self) -> int:
@@ -100,6 +177,26 @@ class ConversationMemory(BaseMemory):
             raise TypeError("turn must be a ConversationTurn")
 
         async with self._lock:
+            if self._archive is not None:
+                # No cache mutation before both durable publication and reload succeed.
+                # Cancellation may leave a completed disk write; a retry/restart
+                # reconstructs insertion order without adding the same ID twice.
+                revision = self._revision
+                await asyncio.to_thread(self._archive.save_turn, turn)
+                turns = await asyncio.to_thread(self._archive.load_turns, self._max_turns)
+                if revision != self._revision:
+                    return
+                self._turns = deque(turns)
+                await self._refresh_pending_locked()
+                if self.should_compress and self._compressor is not None:
+                    await self._compress_archive_locked()
+                return
+
+            for existing in (*self._turns, *self._compression_buffer):
+                if existing.turn_id == turn.turn_id:
+                    if existing != turn:
+                        raise ValueError(f"conversation turn ID conflict: {turn.turn_id}")
+                    return
             if len(self._turns) >= self._max_turns:
                 evict_count = max(1, self._max_turns // 4)
                 self._move_oldest_turns_to_buffer(evict_count)
@@ -163,16 +260,67 @@ class ConversationMemory(BaseMemory):
     async def force_compress(self) -> bool:
         """Compress a non-empty buffer even when it is below the threshold."""
         async with self._lock:
+            if self._archive is not None:
+                await self._refresh_pending_locked()
+                return await self._compress_archive_locked()
             if self._compressor is None or not self._compression_buffer:
                 return False
             return await self._compress_buffer_locked()
 
     def clear(self) -> None:
         """Clear active turns, pending compression data, and the summary."""
+        self._revision += 1
+        self._summary_index = ()
         self._turns.clear()
         self._compression_buffer.clear()
         self._compression_buffer_tokens = 0
         self._summary = None
+
+    async def _refresh_pending_locked(self) -> None:
+        if self._archive is None or self._compressor is None:
+            return
+        covered = {turn_id for entry in self._summary_index for turn_id in entry.source_turn_ids}
+        revision = self._revision
+        turns, tokens = await asyncio.to_thread(
+            self._archive.pending_summary_turns, covered, self._max_turns,
+            self._summary_batch_size, self._summary_token_budget,
+        )
+        if revision != self._revision:
+            return
+        self._compression_buffer = deque(turns)
+        self._compression_buffer_tokens = tokens
+
+    async def _compress_archive_locked(self) -> bool:
+        if self._compressor is None or not self._compression_buffer or self._archive is None:
+            return False
+        revision = self._revision
+        snapshot = tuple(self._compression_buffer)
+        try:
+            body = await self._compressor.compress(previous_summary=None, turns=snapshot)
+            if not isinstance(body, str) or not body.strip():
+                raise ValueError("compressor returned an empty summary")
+            if revision != self._revision:
+                return False
+            entry = await asyncio.to_thread(
+                self._archive.save_summary, [turn.turn_id for turn in snapshot], body.strip(),
+                body.strip().splitlines()[0][:120], body.strip()[:400], committed=False,
+            )
+            if revision != self._revision:
+                return False
+            # No await between the revision check and commit. Only the tiny
+            # commit marker is synced here; body/meta staging ran on a worker.
+            # This briefly blocks the event loop to make clear/cancel atomic
+            # with summary visibility in this single-process implementation.
+            self._archive.commit_summary(entry)
+        except Exception:
+            logger.exception("Stage summary failed; archived originals were retained")
+            return False
+        self._summary_index = (*self._summary_index, entry)
+        self._summary = body.strip()
+        covered = {turn.turn_id for turn in snapshot}
+        self._compression_buffer = deque(turn for turn in self._compression_buffer if turn.turn_id not in covered)
+        self._compression_buffer_tokens = sum(self._estimate_turn_tokens(turn) for turn in self._compression_buffer)
+        return True
 
     def _move_oldest_turns_to_buffer(self, count: int) -> None:
         actual_count = min(count, len(self._turns))
@@ -186,6 +334,7 @@ class ConversationMemory(BaseMemory):
         if self._compressor is None or not self._compression_buffer:
             return False
 
+        revision = self._revision
         snapshot = tuple(self._compression_buffer)
         try:
             new_summary = await self._compressor.compress(
@@ -198,6 +347,8 @@ class ConversationMemory(BaseMemory):
             )
             return False
 
+        if revision != self._revision:
+            return False
         self._summary = new_summary
         self._compression_buffer.clear()
         self._compression_buffer_tokens = 0

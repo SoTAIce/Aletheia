@@ -10,7 +10,10 @@ from app.agent.step_models import (
     ModelTurn, ToolResult, StepOutcome,
 )
 from app.agent.step_runner import StepRunError, StepRunnerContractError, ToolRoundLimitError
+from app.agent.step_runner import StepFormatError, StepToolError, StepModelError, StepTimeoutError
+from app.agent.json_output import JsonFormatError, load_json, unwrap_json_fence, repair_instruction
 from app.agent.tool_calling_model import ToolCallingModel, ToolCallingModelError
+from app.agent.tool_calling_model import ModelTimeoutError
 from app.tools.tool_registry import ToolRegistry
 
 
@@ -20,7 +23,8 @@ class ToolCallingStepRunner:
                  tool_registry: ToolRegistry,
                  max_tool_rounds: int = 4,
                  max_total_tool_calls: int = 8,
-                 *, require_step_outcome: bool = False):
+                 *, require_step_outcome: bool = False, max_format_repairs: int = 2,
+                 context_manager=None):
         if not callable(getattr(model, "generate", None)):
             raise TypeError("model must provide generate()")
         if not isinstance(tool_registry, ToolRegistry):
@@ -32,12 +36,17 @@ class ToolCallingStepRunner:
             if value < 0:
                 raise ValueError(f"{name} must be non-negative")
         self._model = model
+        self._context_manager = context_manager
         self._tool_registry = tool_registry
         self._max_tool_rounds = max_tool_rounds
         self._max_total_tool_calls = max_total_tool_calls
         if not isinstance(require_step_outcome, bool):
             raise TypeError("require_step_outcome must be a bool")
         self._require_step_outcome = require_step_outcome
+        if type(max_format_repairs) is not int or max_format_repairs < 0:
+            raise ValueError("max_format_repairs must be a non-negative integer")
+        self._max_format_repairs = max_format_repairs
+        self.format_repair_count = 0
 
     def _build_initial_messages(
         self, context: StepExecutionContext
@@ -73,6 +82,8 @@ class ToolCallingStepRunner:
             by the runtime. After receiving tool results, decide whether more
             calls are necessary. When sufficient evidence exists, return concise
             final text describing the step result, evidence, and unresolved issues.
+            When the budget is exhausted, no tools will be supplied: finalize from
+            existing evidence and report failed if required evidence is missing.
             Do not output a plan JSON. Do not claim success if the step is blocked
             or incomplete. Use the language of active_goal.
             The executor owns lifecycle state; you do not modify task state.
@@ -90,12 +101,69 @@ class ToolCallingStepRunner:
                 be a non-empty explanation (blocked: the question that needs an answer).
                 For succeeded, reason must be null. Never hide failed work as succeeded.
                 Continue to request tools using native tool_calls, not this JSON object.
+                Encode the entire step result as a JSON string in content. Escape quotes
+                and newlines inside it. Use no Markdown fence or text outside the object.
+                Keep the result concise; preserve useful citations rather than copying
+                entire files or repeating every observation.
             ''')
         # Include all fields, retaining task identity and revision metadata.
         user = json.dumps(
             asdict(context), ensure_ascii=False, indent=2, default=encode_datetime
         )
         return SystemMessage(content=system), UserMessage(content=user)
+
+    async def _generate(self, messages, tools, source_refs):
+        try:
+            if self._context_manager is not None:
+                return await self._context_manager.generate(self._model, tuple(messages), tools)
+            return await self._model.generate(tuple(messages), tools)
+        except ModelTimeoutError as exc:
+            raise StepTimeoutError("Model request timed out", tuple(source_refs)) from exc
+        except ToolCallingModelError as exc:
+            raise StepModelError("Model generation failed", tuple(source_refs)) from exc
+
+    async def _final_outcome(self, turn, messages, source_refs):
+        # Retain the completed calls and replies, and never return to the tool loop.
+        history = list(messages)
+        for attempt in range(self._max_format_repairs + 1):
+            try:
+                payload = load_json(unwrap_json_fence(turn.content or ""))
+            except JsonFormatError as exc:
+                if attempt == self._max_format_repairs:
+                    raise StepFormatError("Invalid final step outcome: " + str(exc), tuple(source_refs)) from exc
+                if turn.content and turn.content.strip():
+                    history.append(turn.to_assistant_message())
+                history.append(SystemMessage(repair_instruction(
+                    '{"status":"succeeded|failed|blocked","content":"string","reason":null or string}',
+                    str(exc),
+                )))
+                self.format_repair_count += 1
+                turn = await self._generate(history, (), source_refs)
+                if (not isinstance(turn, ModelTurn) or not isinstance(turn.tool_calls, tuple)
+                        or turn.tool_calls):
+                    raise StepFormatError("Format repair must return text without tool calls", tuple(source_refs))
+                if turn.content is not None and not isinstance(turn.content, str):
+                    raise StepRunnerContractError("Repair content must be a string or None")
+                continue
+            except (ValueError, TypeError) as exc:
+                # Duplicate keys/non-finite values are ambiguous; do not rewrite them.
+                raise StepFormatError("Invalid final step outcome: " + str(exc), tuple(source_refs)) from exc
+            try:
+                if not isinstance(payload, dict) or set(payload) != {"status", "content", "reason"}:
+                    raise ValueError("expected status, content and reason")
+                outcome = StepOutcome(payload["status"])
+                content, reason = payload["content"], payload["reason"]
+                if not isinstance(content, str) or not content.strip():
+                    raise ValueError("content must be non-empty")
+                if outcome is StepOutcome.SUCCEEDED:
+                    if reason is not None:
+                        raise ValueError("succeeded reason must be null")
+                elif not isinstance(reason, str) or not reason.strip():
+                    raise ValueError("failed/blocked reason must be non-empty")
+                return content, outcome, reason
+            except (ValueError, TypeError) as exc:
+                # Valid JSON with an invalid status contract is not syntax damage.
+                raise StepFormatError("Invalid final step outcome: " + str(exc), tuple(source_refs)) from exc
 
     async def run(self, context: StepExecutionContext) -> StepRunOutput:
         messages = list(self._build_initial_messages(context))
@@ -108,11 +176,10 @@ class ToolCallingStepRunner:
         tool_rounds = 0
 
         while True:
-            try:
-                # A stable container for this request, not the mutable history list.
-                turn = await self._model.generate(tuple(messages), tools)
-            except ToolCallingModelError as exc:
-                raise StepRunError("Model generation failed", tuple(source_refs)) from exc
+            request_tools = tools
+            if tool_rounds >= self._max_tool_rounds or len(all_tool_calls) >= self._max_total_tool_calls:
+                request_tools = ()
+            turn = await self._generate(messages, request_tools, source_refs)
             if not isinstance(turn, ModelTurn):
                 raise StepRunnerContractError("model.generate() must return ModelTurn")
             if turn.content is not None and not isinstance(turn.content, str):
@@ -121,35 +188,18 @@ class ToolCallingStepRunner:
                 raise StepRunnerContractError("ModelTurn.tool_calls must be a tuple")
 
             if not turn.tool_calls:
-                if not turn.content or not turn.content.strip():
+                if not self._require_step_outcome and (not turn.content or not turn.content.strip()):
                     raise StepRunnerContractError("Final model response must contain non-empty text")
-                content, outcome, reason = turn.content.strip(), StepOutcome.SUCCEEDED, None
+                content, outcome, reason = (turn.content or "").strip(), StepOutcome.SUCCEEDED, None
                 if self._require_step_outcome:
-                    try:
-                        def unique_object(pairs):
-                            values = {}
-                            for key, value in pairs:
-                                if key in values:
-                                    raise ValueError(f"duplicate outcome field: {key}")
-                                values[key] = value
-                            return values
-                        payload = json.loads(content, object_pairs_hook=unique_object)
-                        if not isinstance(payload, dict) or set(payload) != {"status", "content", "reason"}:
-                            raise ValueError("expected status, content and reason")
-                        outcome = StepOutcome(payload["status"])
-                        content, reason = payload["content"], payload["reason"]
-                        if not isinstance(content, str) or not content.strip():
-                            raise ValueError("content must be non-empty")
-                        if outcome is StepOutcome.SUCCEEDED:
-                            if reason is not None:
-                                raise ValueError("succeeded reason must be null")
-                        elif not isinstance(reason, str) or not reason.strip():
-                            raise ValueError("failed/blocked reason must be non-empty")
-                    except (ValueError, TypeError) as exc:
-                        raise StepRunError("Invalid final step outcome: " + str(exc), tuple(source_refs)) from exc
+                    content, outcome, reason = await self._final_outcome(turn, messages, source_refs)
+                observations = [asdict(result) for result in all_tool_results]
+                if self._context_manager is not None:
+                    observations = [await self._context_manager.project_tool_result(result)
+                                    for result in all_tool_results]
                 return StepRunOutput(
                     content=content.strip(),
-                    observation=json.dumps([asdict(result) for result in all_tool_results], ensure_ascii=False)
+                    observation=json.dumps(observations, ensure_ascii=False)
                     if self._require_step_outcome and all_tool_results else None,
                     source_refs=tuple(source_refs),
                     tool_calls=tuple(all_tool_calls),
@@ -194,7 +244,7 @@ class ToolCallingStepRunner:
                 except Exception as exc:
                     if not self._require_step_outcome:
                         raise
-                    raise StepRunError(
+                    raise StepToolError(
                         f"Tool {call.tool_name} raised {type(exc).__name__}: {exc}", tuple(source_refs)
                     ) from exc
                 all_tool_calls.append(call)
@@ -202,12 +252,13 @@ class ToolCallingStepRunner:
                 for ref in result.source_refs:
                     if ref not in source_refs:
                         source_refs.append(ref)
+                view = {
+                    "success": result.success, "content": result.content,
+                    "error": result.error, "source_refs": result.source_refs,
+                }
+                if self._context_manager is not None:
+                    view = await self._context_manager.project_tool_result(result)
                 messages.append(ToolMessage(
                     call_id=result.call_id,
-                    content=json.dumps({
-                        "success": result.success,
-                        "content": result.content,
-                        "error": result.error,
-                        "source_refs": result.source_refs,
-                    }, ensure_ascii=False),
+                    content=json.dumps(view, ensure_ascii=False),
                 ))

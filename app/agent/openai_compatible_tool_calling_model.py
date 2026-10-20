@@ -6,7 +6,7 @@ from copy import deepcopy
 from collections.abc import Sequence
 from typing import Any
 
-from openai import APIError, APIResponseValidationError, AsyncOpenAI
+from openai import APIError, APIResponseValidationError, APITimeoutError, AsyncOpenAI
 from openai.types.chat.chat_completion_message_tool_call import (
     ChatCompletionMessageToolCallUnion,
 )
@@ -16,7 +16,8 @@ from app.agent.step_models import (
     AssistantMessage, ModelMessage, ModelTurn, SystemMessage,
     ToolCall, ToolDefinition, ToolMessage, UserMessage,
 )
-from app.agent.tool_calling_model import ModelRequestError, ModelResponseError
+from app.agent.tool_calling_model import ModelRequestError, ModelResponseError, ModelTimeoutError
+from app.agent.tool_calling_model import ModelContextOverflowError
 
 
 class OpenAICompatibleToolCallingModel:
@@ -28,11 +29,17 @@ class OpenAICompatibleToolCallingModel:
         temperature: float | None = None,
         max_output_tokens: int | None = None,
         timeout_seconds: float | None = None,
+        json_mode: bool = False,
+        enable_thinking: bool | None = None,
     ) -> None:
         create = getattr(getattr(getattr(client, "chat", None), "completions", None), "create", None)
         if not callable(create):
             raise TypeError("client must provide chat.completions.create()")
         self._require_text(model, "model")
+        if type(json_mode) is not bool:
+            raise TypeError("json_mode must be a bool")
+        if enable_thinking is not None and type(enable_thinking) is not bool:
+            raise TypeError("enable_thinking must be a bool or None")
         for name, value in (("temperature", temperature), ("timeout_seconds", timeout_seconds)):
             if value is not None:
                 if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -54,6 +61,8 @@ class OpenAICompatibleToolCallingModel:
         self._temperature = temperature
         self._max_output_tokens = max_output_tokens
         self._timeout_seconds = timeout_seconds
+        self._json_mode = json_mode
+        self._enable_thinking = enable_thinking
 
     @staticmethod
     def _require_text(value: object, field: str) -> None:
@@ -75,6 +84,10 @@ class OpenAICompatibleToolCallingModel:
         }
         if provider_tools:
             request_kwargs["tools"] = provider_tools
+        if self._json_mode:
+            request_kwargs["response_format"] = {"type": "json_object"}
+        if self._enable_thinking is not None:
+            request_kwargs["extra_body"] = {"enable_thinking": self._enable_thinking}
 
         if self._temperature is not None:
             request_kwargs["temperature"] = self._temperature
@@ -90,13 +103,24 @@ class OpenAICompatibleToolCallingModel:
             )
         except APIResponseValidationError as exc:
             raise ModelResponseError("provider returned an invalid response") from exc
+        except APITimeoutError as exc:
+            raise ModelTimeoutError("model request timed out") from exc
         except APIError as exc:
+            body = getattr(exc, "body", None)
+            detail = body.get("error", body) if isinstance(body, dict) else {}
+            code = detail.get("code") if isinstance(detail, dict) else None
+            code = code or getattr(exc, "code", None)
+            if getattr(exc, "status_code", None) in (400, 413) and code in {
+                "context_length_exceeded", "context_window_exceeded", "prompt_too_long",
+            }:
+                raise ModelContextOverflowError("provider context length exceeded") from exc
             raise ModelRequestError("model request failed") from exc
 
         return self._parse_response(raw_response)
 
+    @classmethod
     def _build_message_payload(
-        self, messages: Sequence[ModelMessage]
+        cls, messages: Sequence[ModelMessage]
     ) -> list[dict[str, Any]]:
         if isinstance(messages, (str, bytes)) or not isinstance(messages, Sequence):
             raise TypeError("messages must be a sequence of ModelMessage objects")
@@ -116,9 +140,9 @@ class OpenAICompatibleToolCallingModel:
             elif isinstance(message, ToolMessage):
                 if not isinstance(message.content, str):
                     raise TypeError("tool content must be a string")
-                self._require_text(message.call_id, "tool call_id")
+                cls._require_text(message.call_id, "tool call_id")
             else:
-                self._require_text(message.content, "message content")
+                cls._require_text(message.content, "message content")
 
             item: dict[str, Any] = {"role": message.role, "content": message.content}
             if isinstance(message, AssistantMessage) and message.tool_calls:
@@ -126,8 +150,8 @@ class OpenAICompatibleToolCallingModel:
                 for call in message.tool_calls:
                     if not isinstance(call, ToolCall):
                         raise TypeError("assistant tool_calls must contain ToolCall objects")
-                    self._require_text(call.call_id, "call_id")
-                    self._require_text(call.tool_name, "tool_name")
+                    cls._require_text(call.call_id, "call_id")
+                    cls._require_text(call.tool_name, "tool_name")
                     if not isinstance(call.arguments, dict) or not all(isinstance(k, str) for k in call.arguments):
                         raise TypeError("tool arguments must be a dict with string keys")
                     try:
@@ -145,8 +169,9 @@ class OpenAICompatibleToolCallingModel:
             payload.append(item)
         return payload
 
+    @classmethod
     def _build_tool_payload(
-        self, tools: tuple[ToolDefinition, ...]
+        cls, tools: tuple[ToolDefinition, ...]
     ) -> list[dict[str, Any]]:
         """Convert tool definitions without modifying their names or schemas.
 
@@ -161,8 +186,8 @@ class OpenAICompatibleToolCallingModel:
         for index, tool in enumerate(tools):
             if not isinstance(tool, ToolDefinition):
                 raise TypeError(f"tools[{index}] must be a ToolDefinition")
-            self._require_text(tool.name, f"tools[{index}].name")
-            self._require_text(tool.description, f"tools[{index}].description")
+            cls._require_text(tool.name, f"tools[{index}].name")
+            cls._require_text(tool.description, f"tools[{index}].description")
             if tool.name != tool.name.strip():
                 raise ValueError("tool name must not contain surrounding whitespace")
             if tool.name in names:

@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     rag_hybrid_candidate_k: int = Field(default=20, gt=0)
     rag_rrf_k: int = Field(default=60, gt=0)
     rag_model: str = "qwen-max"
+    rag_json_mode: bool = True
+    rag_enable_thinking: bool | None = None
+    rag_model_timeout_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    agent_step_timeout_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
+    agent_planning_timeout_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
     rag_query_rewrite_model: str = "qwen3.8-flash"
     rag_enable_rerank: bool = True
     rag_rerank_top_k: int = Field(default=12, ge=2, le=15)
@@ -49,6 +54,10 @@ class Settings(BaseSettings):
     rag_rerank_cache_dir: str = "data/models/huggingface"
     rag_rerank_timeout_seconds: float = Field(default=10.0, gt=0)
     rag_context_token_budget: int = Field(default=1800, gt=0)
+    conversation_storage_dir: str = ""
+    context_window_tokens: int = Field(default=32768, gt=0)
+    context_output_tokens: int = Field(default=2048, gt=0)
+    context_safety_tokens: int = Field(default=1024, ge=0)
 
     chunk_max_size: int = Field(default=800, gt=0)
     chunk_overlap: int = Field(default=100, ge=0)

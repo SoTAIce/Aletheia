@@ -35,6 +35,12 @@ output/
 logs/
 *.log
 
+# Local test and real-API validation output
+tmp/pytest*/
+tmp/filesystem-agent-*/
+tmp/live-agent-smoke/files/
+tmp/live-agent-smoke/**/*.json
+
 # IDE
 .vscode/
 .idea/
@@ -42,3 +48,6 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Private conversation and tool artifacts
+data/conversations/

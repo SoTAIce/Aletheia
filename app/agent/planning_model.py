@@ -8,6 +8,10 @@ class PlanningModel:
     def __init__(self, model: ToolCallingModel) -> None:
         self._model = model
 
+    @property
+    def context_overflow_managed(self) -> bool:
+        return getattr(self._model, "context_overflow_managed", False) is True
+
     async def generate(self, prompt: str) -> str:
         turn = await self._model.generate((
             SystemMessage("Follow the planning output contract. Return JSON only; do not execute tools."),

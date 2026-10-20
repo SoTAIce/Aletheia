@@ -39,3 +39,11 @@ class ModelRequestError(ToolCallingModelError):
 class ModelResponseError(ToolCallingModelError):
     """The provider returned an unusable response."""
     pass
+
+
+class ModelTimeoutError(ModelRequestError):
+    """The provider request exceeded its deadline."""
+
+
+class ModelContextOverflowError(ModelRequestError):
+    """Provider explicitly rejected the request's context length."""

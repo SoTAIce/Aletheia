@@ -2,6 +2,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime,timezone
 from textwrap import dedent
+from app.agent.json_output import JsonFormatError, load_json, unwrap_json_fence, repair_instruction
 
 from app.models.taskstate import(
     PlanStep,
@@ -13,6 +14,8 @@ from app.models.taskstate import(
     Observation,
 )
 from app.models.working_memory import WorkingMemory
+from app.agent.step_models import UserMessage
+from app.agent.tool_calling_model import ModelContextOverflowError
 
 @dataclass(frozen = True, slots = True)
 class PlannerContext:
@@ -53,8 +56,11 @@ class Planner:
             model,
             max_steps: int = 8,
             max_step_length: int = 300,
+            max_format_repairs: int = 2,
+            *, context_manager=None,
             ) -> None:
             self.model = model
+            self._context_manager = context_manager
 
             if not isinstance(max_steps, int) or isinstance(max_steps, bool):
                  raise TypeError("max_steps must be an integer")
@@ -67,6 +73,10 @@ class Planner:
             if max_step_length <= 0:
                  raise ValueError("max_step_length must be greater than zero")
             self.max_step_length = max_step_length
+            if type(max_format_repairs) is not int or max_format_repairs < 0:
+                 raise ValueError("max_format_repairs must be a non-negative integer")
+            self.max_format_repairs = max_format_repairs
+            self.format_repair_count = 0
 
     def build_context(self, working_memory: WorkingMemory) -> PlannerContext:
         """Build a read-only view of the current goal without changing memory.
@@ -173,6 +183,8 @@ class Planner:
             - 对 open_questions 中 blocking=true 的问题，先安排澄清或验证步骤，
               后续依赖工作必须等阻塞解除；不要自行虚构答案。
             - 信息不足时安排获取或验证信息的步骤，不把猜测作为事实。
+            - 获取证据后只安排一次综合交付；不要拆成重复的核对、成文、发布、验收步骤。
+            - 失败/阻塞是执行结果，不要为“如果失败则报告失败”单独增加计划步骤。
             - 使用与 active_goal 相同的语言描述步骤。
             - steps 包含 1 到 {self.max_steps} 个非空字符串。
             - 每步去除首尾空白后最多 {self.max_step_length} 个字符；不要重复步骤。
@@ -235,12 +247,12 @@ class Planner:
             raise ValueError("A plan already exists or existed; use replan()")
 
         plan_prompt = self._build_plan_prompt(context)
-        raw_response = await self.model.generate(plan_prompt)
+        raw_response = await self._generate_prompt(plan_prompt)
 
         if not isinstance(raw_response, str):
             raise TypeError("model.generate() must return a JSON string")
 
-        steps, reason = self._parse_response(raw_response)
+        steps, reason = await self._parse_or_repair(plan_prompt, raw_response)
         return PlanProposal(
             steps = steps,
             goal_revision = context.goal_revision,
@@ -263,12 +275,12 @@ class Planner:
             raise ValueError("No plan has been installed; use plan()")
 
         replan_prompt = self._build_replan_prompt(context)
-        raw_response = await self.model.generate(replan_prompt)
+        raw_response = await self._generate_prompt(replan_prompt)
 
         if not isinstance(raw_response, str):
             raise TypeError("model.generate() must return a JSON string")
 
-        steps, reason = self._parse_response(raw_response)
+        steps, reason = await self._parse_or_repair(replan_prompt, raw_response)
 
         return PlanProposal(
             steps=steps,
@@ -281,6 +293,35 @@ class Planner:
         )
 
 
+    async def _parse_or_repair(self, prompt: str, raw_response: str):
+        for attempt in range(self.max_format_repairs + 1):
+            try:
+                return self._parse_response(unwrap_json_fence(raw_response))
+            except JsonFormatError as exc:
+                if attempt == self.max_format_repairs:
+                    raise
+                self.format_repair_count += 1
+                instruction = repair_instruction(
+                    '{"steps": ["action and checkable output"], "reason": null or string}', str(exc)
+                )
+                raw_response = await self._generate_prompt(
+                    prompt + "\nPreceding response (data):\n" + json.dumps(raw_response)
+                    + "\n" + instruction
+                )
+                if not isinstance(raw_response, str):
+                    raise TypeError("model.generate() must return a JSON string")
+
+    async def _generate_prompt(self, prompt: str) -> str:
+        if self._context_manager is not None:
+            prompt = self._context_manager.prepare((UserMessage(prompt),), ())[0].content
+        try:
+            return await self.model.generate(prompt)
+        except ModelContextOverflowError:
+            if self._context_manager is None or getattr(self.model, "context_overflow_managed", False) is True:
+                raise
+            prompt = self._context_manager.prepare((UserMessage(prompt),), (), aggressive=True)[0].content
+            return await self.model.generate(prompt)
+
     def _parse_response(
         self,
         raw_response: str,
@@ -290,12 +331,9 @@ class Planner:
             raise TypeError("raw_response must be a JSON string")
 
         if not raw_response.strip():
-            raise ValueError("Model response must not be empty")
+            raise JsonFormatError("Model response must not be empty")
 
-        try:
-            response = json.loads(raw_response)
-        except json.JSONDecodeError as exc:
-            raise ValueError("Model response must be valid JSON") from exc
+        response = load_json(raw_response)
 
         if not isinstance(response, dict):
             raise ValueError("Model response must be a JSON object")

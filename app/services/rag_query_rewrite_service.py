@@ -58,17 +58,9 @@ class QueryRewriteService:
             return QueryRewriteResult.model_validate(parsed)
         raise TypeError("unsupported structured rewrite output")
 
-    async def rewrite(
-        self,
-        question: str,
-        chat_history: Sequence[BaseMessage | str] | None = None,
-    ) -> QueryRewriteResult:
-        original = (question or "").strip()
-        if not original:
-            return QueryRewriteResult()
-
-        history = self._history_text(chat_history)
-        prompt = [
+    @staticmethod
+    def build_prompt(original: str, history: str):
+        return [
             SystemMessage(
                 content=(
                     "Rewrite the user's question into at most two distinct search queries. "
@@ -84,6 +76,36 @@ class QueryRewriteService:
                 content=f"Recent chat history:\n{history or '(none)'}\n\nQuestion:\n{original}"
             ),
         ]
+
+    @classmethod
+    def budget_history(cls, manager, question: str, packet: str) -> str:
+        """Project a history packet against the complete rewrite request estimate."""
+        from app.agent.step_models import UserMessage, SystemMessage as AgentSystem, ToolDefinition
+        from app.services.context_manager import ContextBudgetError
+        schema = (ToolDefinition('QueryRewriteResult', QueryRewriteResult.__doc__ or 'Structured query rewrite result',
+                                 QueryRewriteResult.model_json_schema()),)
+        message = UserMessage(packet)
+        while True:
+            prompt = cls.build_prompt(question, 'human: ' + message.content)
+            request = (AgentSystem(prompt[0].content), UserMessage(prompt[1].content))
+            if manager.count_request(request, schema) <= manager.window_tokens:
+                return message.content
+            smaller = manager._drop_oldest_turn(message)
+            if smaller is None:
+                raise ContextBudgetError('Required RAG rewrite context exceeds configured token budget')
+            message = smaller
+
+    async def rewrite(
+        self,
+        question: str,
+        chat_history: Sequence[BaseMessage | str] | None = None,
+    ) -> QueryRewriteResult:
+        original = (question or "").strip()
+        if not original:
+            return QueryRewriteResult()
+
+        history = self._history_text(chat_history)
+        prompt = self.build_prompt(original, history)
         try:
             structured_llm = self.llm.with_structured_output(QueryRewriteResult)
             raw = await asyncio.wait_for(
