@@ -22,6 +22,10 @@ class StepRunError(RuntimeError):
         self.message = message
         self.source_refs = source_refs
 
+
+class StepRoutingError(StepRunError):
+    """Runner configuration/selection failed; replanning cannot repair it."""
+
 class ToolRoundLimitError(StepRunError):
     """The tool-calling loop exceeded its allowed number of rounds."""
 

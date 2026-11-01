@@ -1,9 +1,11 @@
 """Coordinate single-step execution and declared runner failures."""
 
 from dataclasses import replace
+import asyncio
 
 from app.agent.step_runner import StepRunner, StepRunError, StepBlockedError, StepBusinessError
 from app.agent.step_runner import StepFormatError, StepModelError, StepToolError
+from app.agent.step_runner import StepRoutingError
 from app.models.working_memory import WorkingMemory, StepExecutionResult, StaleExecutionError
 from app.models.taskstate import StepStatus, TaskStatus, InvalidStateTransitionError
 from app.agent.step_models import (
@@ -205,17 +207,13 @@ class StepExecutor:
                 if normalized_output.observation:
                     details += "\nTool evidence: " + normalized_output.observation
                 raise StepBusinessError(details, normalized_output.source_refs)
+        except asyncio.CancelledError as exc:
+            if not self._execution_current(token):
+                raise StaleExecutionError('Cancelled execution is no longer current') from exc
+            raise
         except StepRunError as exc:
             # The runner awaited external work: the task may have changed meanwhile.
-            task = self._working_memory.task_state.snapshot()
-            if (
-                task.task_id != token.task_id
-                or task.goal_revision != token.goal_revision
-                or task.plan_revision != token.plan_revision
-                or task.active_step_id != token.step_id
-                or task.state_version != token.state_version
-                or task.status is not TaskStatus.RUNNING
-            ):
+            if not self._execution_current(token):
                 raise StaleExecutionError("Failed execution is no longer current") from exc
             # This API validates message and refs before changing task state.
             # Validation errors retain exc as their exception context.
@@ -223,9 +221,15 @@ class StepExecutor:
                 self._working_memory.record_blockage(exc.message, source_refs=exc.source_refs)
             else:
                 message = exc.message
-                if isinstance(exc, (StepBusinessError, StepFormatError, StepModelError, StepToolError)):
+                if isinstance(exc, (StepBusinessError, StepFormatError, StepModelError, StepToolError, StepRoutingError)):
                     message = f"{type(exc).__name__}: {message}"
                 self._working_memory.record_failure(message, source_refs=exc.source_refs)
+            raise
+        except Exception as exc:
+            # Invalid output/implementation exceptions are also stale results
+            # when another execution now owns the workspace.
+            if not self._execution_current(token):
+                raise StaleExecutionError('Invalid execution is no longer current') from exc
             raise
 
         result = StepExecutionResult(
@@ -258,3 +262,9 @@ class StepExecutor:
             tool_calls=normalized_output.tool_calls,
             tool_results=normalized_output.tool_results,
         )
+
+    def _execution_current(self, token) -> bool:
+        task = self._working_memory.task_state.snapshot()
+        return (task.task_id == token.task_id and task.goal_revision == token.goal_revision
+                and task.plan_revision == token.plan_revision and task.active_step_id == token.step_id
+                and task.state_version == token.state_version and task.status is TaskStatus.RUNNING)

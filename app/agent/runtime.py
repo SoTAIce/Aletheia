@@ -9,9 +9,11 @@ from app.agent.executor import Executor
 from app.agent.planner import Planner
 from app.agent.step_executor import StepExecutor
 from app.agent.step_models import StepExecutionReceipt
-from app.agent.step_runner import StepBlockedError, StepRunError, StepFormatError, StepModelError
+from app.agent.step_runner import StepBlockedError, StepRunError, StepFormatError, StepModelError, StepRoutingError
 from app.agent.tool_calling_model import ToolCallingModel
-from app.agent.tool_calling_step_runner import ToolCallingStepRunner
+from app.agent.runner_registry import RunnerRegistry, RunnerDependencies, RunnerLimits, default_runner_registry
+from app.agent.runner_router import RoutingPolicy, RequirementsProvider
+from app.agent.routing_step_runner import RoutingStepRunner, RoutingEvent
 from app.models.conversation_memory import (
     ConversationMemory, ConversationMessage, ConversationTurn, MessageRole,
 )
@@ -45,6 +47,8 @@ class AgentRuntime:
         step_timeout_seconds: float = 60.0, planning_timeout_seconds: float = 60.0,
         max_tool_rounds: int = 4, max_total_tool_calls: int = 8,
         context_manager: ContextManager | None = None,
+        runner_registry: RunnerRegistry | None = None, routing_policy: RoutingPolicy | None = None,
+        runner_requirements: RequirementsProvider | None = None,
     ) -> None:
         for name, value, minimum in (("max_executions", max_executions, 1), ("max_replans", max_replans, 0)):
             if type(value) is not int or value < minimum:
@@ -60,11 +64,13 @@ class AgentRuntime:
         self._context_manager = context_manager or ContextManager()
         if self._planner._context_manager is None:
             self._planner._context_manager = self._context_manager
-        self._runner = ToolCallingStepRunner(
-            model, registry, max_tool_rounds, max_total_tool_calls, require_step_outcome=True,
-            context_manager=self._context_manager,
-        )
-        self._step_executor = StepExecutor(memory, self._runner)
+        if runner_registry is not None and not isinstance(runner_registry, RunnerRegistry):
+            raise TypeError('runner_registry must be RunnerRegistry')
+        self._runner_limits = RunnerLimits(max_tool_rounds, max_total_tool_calls)
+        self._runner_registry = (runner_registry if runner_registry is not None else default_runner_registry()).snapshot()
+        self._routing_policy, self._runner_requirements = routing_policy, runner_requirements
+        self._routing_events: list[RoutingEvent] = []
+        self._runner, self._step_executor = self._assemble_runner(model, registry, self._context_manager)
         self._conversation = conversation
         self._max_executions, self._max_replans = max_executions, max_replans
         self._step_timeout, self._planning_timeout = step_timeout_seconds, planning_timeout_seconds
@@ -72,6 +78,30 @@ class AgentRuntime:
         self._steps: list[StepExecutionReceipt] = []
         self._lock = asyncio.Lock()
         self._reported_version: int | None = None
+
+    def _assemble_runner(self, model, registry, context_manager):
+        """The sole construction path for both initial and resumed bindings."""
+        dependencies = RunnerDependencies(model, registry, context_manager, self._runner_limits)
+        runner = RoutingStepRunner(self._runner_registry.bind(dependencies), routing_policy=self._routing_policy,
+                                   requirements_provider=self._runner_requirements, events=self._routing_events)
+        return runner, StepExecutor(self.memory, runner)
+
+    @property
+    def routing_decisions(self) -> tuple[RoutingEvent, ...]:
+        return tuple(self._routing_events)
+
+    def rebind(self, planner: Planner, model: ToolCallingModel, registry: ToolRegistry, *,
+               context_manager: ContextManager) -> None:
+        """Refresh request-scoped clients while retaining task state and limits."""
+        if self._lock.locked() or self.memory.task_state.status is TaskStatus.RUNNING:
+            raise RuntimeError('cannot rebind a running task')
+        runner, step_executor = self._assemble_runner(model, registry, context_manager)
+        if planner._context_manager is None:
+            planner._context_manager = context_manager
+        self._runner.invalidate()
+        self._planner, self._registry, self._context_manager = planner, registry, context_manager
+        self._runner = runner
+        self._step_executor = step_executor
 
     @property
     def format_repair_count(self) -> int:
@@ -142,7 +172,7 @@ class AgentRuntime:
                 self._steps.append(receipt)
             except StepBlockedError as exc:
                 return self._result(exc.message)
-            except (StepFormatError, StepModelError) as exc:
+            except (StepFormatError, StepModelError, StepRoutingError) as exc:
                 # Local format repair is exhausted, or the provider failed.
                 # Replanning would repeat completed tools without fixing either.
                 return self._fail(f"{type(exc).__name__}: {exc.message}")

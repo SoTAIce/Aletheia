@@ -12,6 +12,8 @@ from app.agent.openai_compatible_tool_calling_model import OpenAICompatibleToolC
 from app.agent.planner import Planner
 from app.agent.planning_model import PlanningModel
 from app.agent.runtime import AgentRunResult, AgentRuntime
+from app.agent.runner_registry import RunnerRegistry
+from app.agent.runner_router import RoutingPolicy, RequirementsProvider
 from app.config import config
 from app.models.conversation_memory import ConversationMemory
 from app.models.taskstate import TaskState, TaskStatus
@@ -36,12 +38,16 @@ class RagAgentService:
         max_executions: int = 16, max_replans: int = 2,
         step_timeout_seconds: float | None = None, planning_timeout_seconds: float | None = None,
         memory_directory=None, conversation_compressor=None,
+        runner_registry: RunnerRegistry | None = None, routing_policy: RoutingPolicy | None = None,
+        runner_requirements: RequirementsProvider | None = None,
     ) -> None:
         self.streaming = streaming
         self.model = model
         self._memory_directory = config.conversation_storage_dir if memory_directory is None else memory_directory
         self._conversation_compressor = conversation_compressor
         self._planner_model = planner_model
+        self._runner_options = dict(runner_registry=runner_registry, routing_policy=routing_policy,
+                                    runner_requirements=runner_requirements)
         self._mcp_servers = tuple(mcp_servers) if mcp_servers is not None else local_mcp_servers(
             filesystem_root=config.mcp_filesystem_root or None,
             write_root=config.mcp_filesystem_write_root or None,
@@ -106,7 +112,7 @@ class RagAgentService:
                 ) as registry:
                     runtime = AgentRuntime(
                         Planner(planner_model, context_manager=context_manager), model, memory, registry,
-                        conversation=conversation, **self._limits,
+                        conversation=conversation, **self._limits, **self._runner_options,
                         context_manager=context_manager,
                     )
                     return await runtime.run()
