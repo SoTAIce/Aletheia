@@ -1,0 +1,281 @@
+{
+  "features": [
+    {
+      "id": "conv-001",
+      "name": "Archive metadata reuse",
+      "description": "Avoid reparsing unchanged historical JSON on each save; detect metadata changes and preserve full audit.",
+      "dependencies": [],
+      "status": "done",
+      "evidence": "Stage1 scoped 52 passed/1 skipped; no new full-suite failures vs original source replay. tmp/conversation-bench-stage1-serial.json, docs/conversation_memory_io_results.md.",
+      "evidence_kind": "historical_report",
+      "verification": {
+        "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp tmp/pytest-restored-UNIQUE",
+        "requires": "Restore tests from the documented backup; choose a new UNIQUE path. This is not runnable as a full regression in the cleaned checkout.",
+        "scope": "Fresh regression after restoration; real model/MCP/DB validation remains separate.",
+        "evidence_is_historical": true
+      }
+    },
+    {
+      "id": "conv-002",
+      "name": "Bounded add reads",
+      "description": "Read only recent bodies for bounded loads; combine save/reload under one worker lock; pending summaries use validated token metadata.",
+      "dependencies": [
+        "conv-001"
+      ],
+      "status": "done",
+      "evidence": "Final focused 66 passed/1 skipped, full 7 existing failures/909 passed/2 skipped; baseline 7 identical failures/895 passed/2 skipped. Runtime benchmark 500 add 330.371 -> 29.994 ms, 1003 ->20 body reads. Independent review clear.",
+      "evidence_kind": "historical_report",
+      "verification": {
+        "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp tmp/pytest-restored-UNIQUE",
+        "requires": "Restore tests from the documented backup; choose a new UNIQUE path. This is not runnable as a full regression in the cleaned checkout.",
+        "scope": "Fresh regression after restoration; real model/MCP/DB validation remains separate.",
+        "evidence_is_historical": true
+      }
+    },
+    {
+      "id": "conv-003",
+      "name": "Three-tier design",
+      "description": "Document hot/warm/cold proposal, ownership, limits and stop conditions without implementing a new cache.",
+      "dependencies": [
+        "conv-002"
+      ],
+      "status": "done",
+      "evidence": "docs/conversation_memory_tiers.md: bounded warm tier proposal with invalidation/memory/latency gates; design only, recommendation defer warm body caching.",
+      "evidence_kind": "historical_report",
+      "verification": {
+        "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp tmp/pytest-restored-UNIQUE",
+        "requires": "Restore tests from the documented backup; choose a new UNIQUE path. This is not runnable as a full regression in the cleaned checkout.",
+        "scope": "Fresh regression after restoration; real model/MCP/DB validation remains separate.",
+        "evidence_is_historical": true
+      }
+    },
+    {
+      "id": "turn-001",
+      "name": "Durable turn lifecycle and task association",
+      "description": "Persist input before execution, record outcomes, explicit blocked resume and request-id dedup; retain v1 archive restore.",
+      "dependencies": [
+        "conv-002"
+      ],
+      "status": "done",
+      "evidence": "26 lifecycle tests passed; focused120 passed/1skip; full942 passed/2skip. Independent review clear. docs/conversation_turn_lifecycle.md; baseline tmp/turn-lifecycle-baseline-20261027. No summary/performance changes or commits.",
+      "evidence_kind": "historical_report",
+      "verification": {
+        "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp tmp/pytest-restored-UNIQUE",
+        "requires": "Restore tests from the documented backup; choose a new UNIQUE path. This is not runnable as a full regression in the cleaned checkout.",
+        "scope": "Fresh regression after restoration; real model/MCP/DB validation remains separate.",
+        "evidence_is_historical": true
+      }
+    },
+    {
+      "id": "summary-001",
+      "name": "Task-aware stage summaries and bounded background generation",
+      "description": "Exclude RECEIVED, group task sources, preserve provenance and legacy summaries; snapshot generation, bounded scheduling/retry/shutdown and explicit CLI assembly.",
+      "dependencies": [
+        "turn-001"
+      ],
+      "status": "done",
+      "evidence": "17 new tests independently passed; full959 passed/2skip. docs/conversation_summary_background.md; snapshot tmp/summary-background-baseline-20261030. P2 context body selection deferred; real semantic quality unverified.",
+      "evidence_kind": "historical_report",
+      "verification": {
+        "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp tmp/pytest-restored-UNIQUE",
+        "requires": "Restore tests from the documented backup; choose a new UNIQUE path. This is not runnable as a full regression in the cleaned checkout.",
+        "scope": "Fresh regression after restoration; real model/MCP/DB validation remains separate.",
+        "evidence_is_historical": true
+      }
+    },
+    {
+      "id": "summary-002",
+      "name": "Automatic summary-body context and live validation",
+      "description": "Bounded relevant bodies/provenance in Planner and Runner context, multilingual lexical discovery and whole-body budget reduction; synthetic real-model verification.",
+      "dependencies": [
+        "summary-001"
+      ],
+      "status": "done",
+      "evidence": "13 new tests; full982 passed/2skip. Final live6/6 correct last steps,5/6 strict final JSON; controls0/6 fully correct with tools disabled. Local weights missing; remote explicitly injected. One English summary violates source-language convention. docs/conversation_summary_context.md.",
+      "evidence_kind": "historical_report",
+      "verification": {
+        "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp tmp/pytest-restored-UNIQUE",
+        "requires": "Restore tests from the documented backup; choose a new UNIQUE path. This is not runnable as a full regression in the cleaned checkout.",
+        "scope": "Fresh regression after restoration; real model/MCP/DB validation remains separate.",
+        "evidence_is_historical": true
+      }
+    },
+    {
+      "id": "runner-001",
+      "name": "Registered capability-routed Runner infrastructure",
+      "stability": "frozen",
+      "frozen_commit": "adea10e",
+      "next_stage": "AgentTeamRunner V1 opt-in integration complete using unchanged registry/router contracts; single execution remains default. See team-v1-001.",
+      "description": "Frozen registered capability-routed Runner infrastructure; initially one production Runner, subsequently extended by opt-in AgentTeamRunner without replacing registry/router contracts.",
+      "dependencies": [],
+      "status": "done",
+      "evidence": "42 workspace Runner tests/full1024 pass2skip. Isolated commit adea10e:41 new/539 total pass1skip; real model+real filesystem MCP all3 scenarios pass (multi tools,pause/reconnect,replan), report tmp/live-multi-runner-3372c1ae/report.json. Prior Memory/Turn changes remain uncommitted; no push.",
+      "evidence_kind": "historical_report",
+      "verification": {
+        "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp tmp/pytest-restored-UNIQUE",
+        "requires": "Restore tests from the documented backup; choose a new UNIQUE path. This is not runnable as a full regression in the cleaned checkout.",
+        "scope": "Fresh regression after restoration; real model/MCP/DB validation remains separate.",
+        "evidence_is_historical": true
+      }
+    },
+    {
+      "id": "team-poc-001",
+      "name": "Independent Session continuity and mid-run Lead coordination PoC",
+      "dependencies": [
+        "runner-001"
+      ],
+      "status": "partial",
+      "resolution": "Historical single-cycle live delivery failures preserved; successor team-poc-002 implements host-owned contracts and validates multi-round review/rework without regrading old trials.",
+      "evidence": "PoC implementation complete:22 deterministic tests including real MCP normal/cancel; full1046pass2skip. Live continuity3/3 connected trials; post-fix dynamic Lead revise/helper/Worker resume observed twice, but strict helper JSON acceptance failed in both; no full dynamic live pass. docs/team_session_poc.md. No production Runner integration or protected-source modifications.",
+      "evidence_kind": "historical_report",
+      "disposition": "Historical partial live delivery; successor team-poc-002 resolved contract work. Not an active task.",
+      "description": "Historical independent Session continuity and one-cycle mid-run coordination proof of concept; strict live output failures retained.",
+      "verification": {
+        "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp tmp/pytest-restored-UNIQUE",
+        "requires": "Restore tests from the documented backup; choose a new UNIQUE path. This is not runnable as a full regression in the cleaned checkout.",
+        "scope": "Fresh regression after restoration; real model/MCP/DB validation remains separate.",
+        "evidence_is_historical": true
+      }
+    },
+    {
+      "id": "team-poc-002",
+      "name": "Host-owned output contracts and bounded same-team review/rework",
+      "closeout": "2026-11-02: fresh scoped39pass/full1063pass2skip25.54s; protected core unchanged; previous strict live reports re-read, no new API calls. All authorized PoC plan steps complete; production integration deferred.",
+      "dependencies": [
+        "runner-001"
+      ],
+      "status": "done",
+      "evidence": "39 scoped tests (17 new+22 prior), independent39pass; full1063pass2skip. Real configured model+MCP:06ad674e feedback/rework strict PASS28calls; final-source1275968c rework PASS15calls. Directed multi-feedback and explicitly seeded negative-control rework, not autonomous decomposition or a success-rate benchmark. docs/team_contract_review_poc.md. No production Runner/core modifications.",
+      "evidence_kind": "historical_report",
+      "description": "Host-owned contracts and finite multi-round review/rework proof of concept, preceding production integration.",
+      "verification": {
+        "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp tmp/pytest-restored-UNIQUE",
+        "requires": "Restore tests from the documented backup; choose a new UNIQUE path. This is not runnable as a full regression in the cleaned checkout.",
+        "scope": "Fresh regression after restoration; real model/MCP/DB validation remains separate.",
+        "evidence_is_historical": true
+      }
+    },
+    {
+      "id": "team-v1-001",
+      "name": "Opt-in independently led AgentTeamRunner V1",
+      "stability": "frozen",
+      "frozen_commit": "9138ac1e7e5a5fbc4d31a7503bec325fc8a3f683",
+      "freeze_evidence": "2026-11-03:user-authorized independent local commit67files, required Turn/archive/summary dependencies included; unfinished long-term injection and user-only annotations excluded. Working1093pass2skip23.92s, exact independent candidate1093pass2skip24.87s. All prior working bytes preserved; no push. docs/agent_team_v1_freeze.md.",
+      "reviewer_reliability": "2026-11-03: typed output-limit metadata, Reviewer-only bounded submit-only repair, REVIEW feedback schema+validation max2000chars, safe bounded nested diagnostics/logging.7newtests/scoped167pass/independent105pass/full1093pass2skip. Live4c154c6d completed153.12s15calls6reads with actual overlength-feedback rejection+repair and v2approval; no provider length, so truncation recovery deterministic only. Finding quality still imperfect. See real-review report.",
+      "command_recovery": "2026-11-03: explicit pre-execution role/version/approval command rejections return to Lead within existing budgets;4RED->GREEN, scoped62pass/full1086pass2skip. Live7704ddee verifies Reviewer execution/coordination/Lead command correction without Worker replay, but ends failed after4096-token Reviewer response. No final Team quality gain; see real-review report follow-up.",
+      "actual_use": "2026-11-03 real code-review attempts did not demonstrate quality gain: Team failed before Reviewer execution; ordinary reports completed with false/unsupported findings. JSON-mode transport precondition fixed; full1082pass2skip. See docs/agent_team_real_review_2026-11-03.md. Controlled synthetic V1 successes below are not real-task reliability evidence.",
+      "dependencies": [
+        "runner-001",
+        "team-poc-002"
+      ],
+      "status": "done",
+      "evidence": "Independent production Runner/Coordinator and promoted resumable Session/contracts; dynamic create/assign/feedback/review/rework, trusted permissions/shared limits, private RAG evidence import, explicit same-process user pause/rebind.18new+39prior=57pass; independent57pass; full1081pass2skip24.56s. Real complete/pause76f31678, seeded rework67716f0d, hardened pause621cd4b3 allPASS; initial Planner length failure45da5dae retained.64 actual calls. docs/agent_team_v1.md. Existing ToolCallingStepRunner/registry/router unchanged; no commits/pushes.",
+      "real_task_comparison": "Completed 2026-11-04: three predeclared pairs,42 actual requests,no reruns; strict delivery ordinary2/3 versus Team0/3. Reviewer character-limit repair and JSON protocol failures; no provider length truncation, no same-member excess reads,11 MCP scopes closed. No factual superiority claim. docs/agent_team_task_comparison_2026-11-03.md; tmp/team-task-comparison-1edb2b76/report.json.",
+      "evidence_kind": "historical_report",
+      "description": "Opt-in production AgentTeamRunner with independent Lead, deterministic sequential Coordinator, isolated Sessions, strict output contracts and shared budgets; completion does not imply a real-task quality advantage.",
+      "verification": {
+        "command": ".venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp tmp/pytest-restored-UNIQUE",
+        "requires": "Restore tests from the documented backup; choose a new UNIQUE path. This is not runnable as a full regression in the cleaned checkout.",
+        "scope": "Fresh regression after restoration; real model/MCP/DB validation remains separate.",
+        "evidence_is_historical": true
+      }
+    },
+    {
+      "id": "longterm-integration-001",
+      "name": "Optional long-term recall integration",
+      "description": "Uncommitted service identity/recall and context projection exist; dependency assembly and end-to-end acceptance are incomplete. No default CLI construction or explicit remember service endpoint is claimed.",
+      "status": "partial",
+      "dependencies": [
+        "summary-002"
+      ],
+      "acceptance": [
+        "Restore or explicitly add scoped behavioral tests before changing this feature.",
+        "Verify user/session isolation, optional recall degradation and context budget using actual current code.",
+        "Verify initialized dependency assembly before real service claims; explicit write is a separate scope."
+      ],
+      "evidence": "Current app/services/rag_agent_service.py and context_manager.py; docs/PROJECT_HANDOVER.md section 6. Source inspection only in this task.",
+      "evidence_kind": "current_source_inspection",
+      "verification": {
+        "command": null,
+        "reason": "Scoped integration tests/acceptance must be restored or explicitly added; existing historical suite alone does not certify unfinished recall injection."
+      }
+    },
+    {
+      "id": "harness-001",
+      "name": "Evidence-based harness and Claude handoff",
+      "description": "Consolidate retained docs into one handoff, repair shared agent instructions and state, and add a read-only Windows health gate.",
+      "status": "done",
+      "dependencies": [],
+      "acceptance": [
+        "All pre-existing docs and application bytes preserved.",
+        "All original documentation topics indexed in DOCUMENT_INDEX.md.",
+        "AGENTS/CLAUDE route to one current handoff with historical/live/static evidence separated.",
+        "Read-only init.ps1 and link/state/protection checks pass without API calls."
+      ],
+      "evidence": "2026-11-04: read-only init.ps1 PASS (91 source syntax + CLI help); 125 protected files unchanged; original 31 docs indexed; 87 relative links valid; HEAD unchanged; independent read-only review complete with per-Session revision-limit wording corrected. See docs/harness/validation-2026-11-04.md. No behavioral regression, API/DB/MCP calls or commit.",
+      "evidence_kind": "current_documentation",
+      "verification": {
+        "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1",
+        "scope": "Static/import only; documentation accuracy, links and protection require the separate final audit.",
+        "record": "docs/harness/validation-2026-11-04.md"
+      }
+    },
+    {
+      "id": "harness-002",
+      "name": "Course conformance audit and missing harness artifacts",
+      "description": "Audit the repository against Learn Harness Engineering and add the missing decision record, clean-state checklist, evaluator rubric, quality document and template-aligned progress/handoff.",
+      "status": "done",
+      "dependencies": [
+        "harness-001"
+      ],
+      "acceptance": [
+        "Every course requirement mapped to conforming / fixed / remaining gap in docs/harness/conformance-audit-2026-11-04.md.",
+        "DECISIONS.md, clean-state checklist, evaluator rubric and quality document exist and are indexed.",
+        "progress.md and session-handoff.md follow the template fields (Current Verified State, Commands, do-not-touch).",
+        "init.ps1 passes and prints standard start/verify paths without running them; app and original docs unchanged.",
+        "Course 'All tests pass' and 'Everything committed' closed with user authorization: tests/test_harness_smoke.py passes in init.ps1; harness files committed locally; remaining user deltas recorded in a verifiable manifest."
+      ],
+      "evidence": "2026-11-04: init.ps1 PASS exit 0 (91 source syntax + CLI help + management files + pytest tests/ 2 passed); harness files, docs and minimal test committed locally with user authorization (not pushed); baseline check base ancestor OK / drift none / uncommitted-outside-manifest none (docs/harness/baseline.md); protected app/original docs/README/.env.example/pyproject.toml SHA-256 unchanged; all relative links in active management docs valid; no API/DB/MCP calls. Limit: test coverage is narrow (WorkingMemory only); 1093 historical tests not restored.",
+      "evidence_kind": "current_documentation",
+      "verification": {
+        "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1",
+        "scope": "Static/import + pytest tests/ + management files; baseline/link/hash checks run separately.",
+        "record": "docs/harness/conformance-audit-2026-11-04.md"
+      }
+    }
+  ],
+  "cleanup_2026_11_04": {
+    "status": "partial",
+    "record": "docs/project_cleanup.md",
+    "retained": "All docs and runtime source",
+    "limitation": "10 permission-blocked tmp fixture directories remain",
+    "baseline": "1093 passed, 2 skipped before test removal"
+  },
+  "schema_version": 2,
+  "updated_at": "2026-11-04",
+  "active_feature": null,
+  "verification_context": {
+    "tests_present": true,
+    "last_full_regression": "Historical before cleanup: 1093 passed, 2 skipped; NOT a fresh result. Current suite: tests/test_harness_smoke.py only.",
+    "current_gate": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1",
+    "current_scope": "static/import + pytest tests/ (WorkingMemory, 2 tests) + documentation/state/baseline verification; no API/DB/MCP validation",
+    "record": "docs/harness/conformance-audit-2026-11-04.md",
+    "current_result": "PASS static/import + pytest 2 passed; baseline verified (docs/harness/baseline.md)."
+  },
+  "backlog": [
+    {
+      "id": "team-delivery-reliability",
+      "authorized": false,
+      "priority": 1,
+      "next_action": "Define separately scoped repair for Reviewer feedback/JSON delivery on fixed real tasks; restore test protocol first.",
+      "source": "docs/agent_team_task_comparison_2026-11-03.md"
+    },
+    {
+      "id": "longterm-acceptance",
+      "authorized": false,
+      "priority": 2,
+      "next_action": "Verify and finish optional read-only long-term integration; do not automatically add autonomous writes.",
+      "source": "docs/superpowers/plans/2026-10-21-longterm-agent-integration.md"
+    }
+  ]
+}

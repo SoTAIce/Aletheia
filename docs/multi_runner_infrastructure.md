@@ -1,6 +1,8 @@
 # Multi-Runner infrastructure, phase1
 
-Implemented2026-10-31. This isolated commit is based on HEAD41ce1fc and excludes separately uncommitted Memory/Turn/summary features. See multi_runner_live_validation.md for actual commit-tree verification. Only ToolCallingStepRunner is registered in production. No LLM router, second production Runner, new framework/dependency, plan schema or archive/result schema change.
+Follow-up: user-authorized isolated commit adea10e was created after real model/filesystem-MCP validation. See docs/multi_runner_live_validation.md. The actual HEAD-based commit has41 new Runner tests/539total passed1skip; the complete working tree retains its separate uncommitted Turn/Memory work and42 Runner tests/1024total passed2skip. Earlier no-API/no-commit implementation evidence below is historical.
+
+Implemented2026-10-31. Only ToolCallingStepRunner is registered in production. No LLM router, second production Runner, new framework/dependency, plan schema or archive/result schema change.
 
 ## Execution path
 
@@ -47,7 +49,7 @@ Runtime init and rebind both call _assemble_runner(). Rebind builds everything f
 - Existing tool/business/model/format/blocked errors retain their handling. Runner exceptions propagate through the dispatcher without trying another Runner.
 - Binding invalidation rejects late success and failure. Cancellation requests remain cancellation even if a Runner accidentally suppresses CancelledError then returns/raises; cancelled output cannot commit.
 - StepExecutor checks execution ownership for declared failures, cancellation, unexpected exceptions and invalid returned data. WorkingMemory's existing token check still owns successful commits.
-- Runtime rejects stale execution without failing newer task state. This HEAD-based service naturally propagates the stale exception. Additional failed-Turn bookkeeping belongs to the separate uncommitted lifecycle feature and is not included in this commit.
+- Runtime and service stale-error cleanup no longer fails newer task state. Service records only the superseded interaction's failed Turn, preserving original input and leaving the newer task snapshot unchanged.
 - Existing timeout behavior/replan ceilings remain. Cancellation is cooperative: there is no rollback of tool side effects, forced termination guarantee for hostile coroutines, or safety boundary against application code deliberately mutating private internals/clearing cancellation state.
 
 Runtime.routing_decisions returns immutable diagnostic events containing task/step/goal/plan identity, selected Runner, trusted required capabilities and selection reason. Events survive rebind within the live task but are not a new durable execution checkpoint and do not alter StepExecutionReceipt/AgentRunResult/archive schemas.
@@ -77,16 +79,17 @@ No Planner change is required for registration or custom program routing. Planne
 
 New production:app/agent/runner_registry.py, runner_router.py, routing_step_runner.py.
 Modified production:app/agent/runtime.py, step_runner.py, step_executor.py, app/services/rag_agent_service.py.
-New tests:tests/agent/test_runner_registry.py, test_runner_routing.py, test_runtime_routing.py. The isolated tree includes41 Runner tests; the full workspace has an additional test of its newer service Turn lifecycle.
+New tests:tests/agent/test_runner_registry.py, test_runner_routing.py, test_runtime_routing.py.
 Baseline snapshot:tmp/multi-runner-baseline-20261031. Existing user Planner/ToolCallingStepRunner/Memory changes were preserved.
 
 ## Verification evidence
 
-- Independent commit tree:539 passed,1 skipped, including41 new Runner tests. Fresh independent review repeated41 tests and found no Critical/Important issues.
-- Full working tree with other uncommitted features:1024 passed,2 skipped. Those features/tests are not implicitly included here.
-- Real model and real filesystem MCP:all3 final commit-tree scenarios passed (multi-tool write/readback, pause/close/reopen/rebind, actual missing-file Replan). See multi_runner_live_validation.md for initial failure, test-only fail-fast hook and raw report locations.
-- Direct-vs-routed default execution asserts identical model-message arguments and StepRunOutput. Existing offline MCP/context tests pass in both trees.
-- Source compilation and scoped whitespace checks passed; no model/.env/dependency changes or pushes. The user explicitly authorized the isolated local commit after live validation.
+- Startup harness59 passed/1skip; fresh full baseline982 passed/2skip.
+- Registry/dispatch RED23 missing-module failures, then23 passed. Runtime integration RED10 failures, then broad123 passed after valid TaskState supersession setup.
+- Independent review found stale generic-output errors and service cleanup overwriting newer task state. Three additional regressions reproduced the problems, then passed after minimal ownership guards. No TaskState/WorkingMemory transition changes.
+- Final new42 tests passed (independently repeated42 passed). Broad intermediate127 passed. Default direct-vs-routed test asserts identical model message arguments and StepRunOutput, not just task completion.
+- Final full1024 passed,2 skipped in23.31s (tmp/pytest-runner-final-full). Existing real stdio MCP tests, pause/resume, context recovery and Turn/archive tests remain covered.
+- Source compilation and scoped git diff --check passed. No real model APIs, dependency installation, default-model/.env changes, commits or pushes.
 
 ```powershell
 .venv/Scripts/python.exe -m pytest tests/agent/test_runner_registry.py tests/agent/test_runner_routing.py tests/agent/test_runtime_routing.py -q --basetemp tmp/pytest-runner-check-UNIQUE
