@@ -152,7 +152,7 @@ BLOCKED 只结束这次交互。保持同一个服务实例，使用 `resume_tas
 三个契约必须分开：宿主最终结果和语义验收不可被 Lead 覆盖；Lead 可组织内部任务；成员必须通过 submit_result 协议。默认宿主最终 JSON 为 `{"answer":"非空文本"}`，这只校验形状，不证明事实。
 
 权限是宿主允许工具、实际工具和 Lead 请求的交集。成员拥有私有 WorkingMemory/ContextManager；不把父会话或长期记忆全量广播。
-默认限制：最多 4 成员、32 commands/actions、48 模型调用、32 业务工具、每个非 Lead Session 版本上限 12、180s 团队时间和共享估算 token 预算；Lead 使用 actions 上限，12 不是全团队共享修改次数。父 Runtime/Step 超时仍生效，不能只调 TeamOptions 后忽略外层期限。
+默认限制（`models.py:63-69`，由 tests/test_team_contracts.py 固化）：最多 4 成员、32 commands/actions、48 模型调用、32 业务工具、每个非 Lead Session 最多 12 次修订（版本号 1→13）、180s 团队时间、共享估算 token 预算 500,000；Lead 使用 actions 上限，12 不是全团队共享修改次数。每个 Session 另有模型 48 / 工具 96 / 单次 180s 的上限，团队级上限先触发；被拒的 Lead 命令也消耗预算；没有 Reviewer approve 就不能 finish。详见 [Team 一致性审查](harness/team-audit-2026-11-04.md)。父 Runtime/Step 超时仍生效，不能只调 TeamOptions 后忽略外层期限。
 工具连接按成员运行边界关闭；暂停后恢复同一 Session 历史/计数，版本绑定审查失效后必须重审；父任务失效保护与 StepExecutor 提交门仍在外层。
 
 Reviewer 反馈上限 2000 字符；过长或明确 provider length 可用有限 submit-only 修复，不能再次执行业务工具。安全诊断保留有界嵌套异常类型和 token 数，不能记录原始响应/私有错误。

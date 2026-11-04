@@ -3,7 +3,7 @@
 更新：2026-11-04。课程模板按领域和架构层评 A–D。评级依据是仓库内已有证据，不代表新测量；每次周期性清理时复核。
 
 评级含义：**A** 当前有 fresh 验证且边界清晰；**B** 有历史验证、文档清楚；**C** 部分实现或只有受控验证；**D** 缺验证或缺接入。
-全局事实：原 tests/ 已删除，当前只有 WorkingMemory 的 2 个最小测试，所以“当前测试稳定性”除主链（C）外都是 **D**。下表“验证状态”反映的是历史证据。
+全局事实：原 tests/ 已删除，当前仓库内只有 WorkingMemory 2 个和 Team 契约 8 个测试，所以“当前测试稳定性”除主链和 Team（C）外都是 **D**。Team 另有 68 个历史测试可从 git 取出、在 TEMP 中运行（[审查](team-audit-2026-11-04.md)）。下表“验证状态”反映的是历史证据。
 
 ## 产品领域
 
@@ -11,7 +11,7 @@
 | --- | --- | --- | --- | --- | --- |
 | Plan–Execute–Replan 主链 | B | A | C | 只有 WorkingMemory 最小测试 | [agent_runtime.md](../agent_runtime.md), [working_memory_v1.md](../working_memory_v1.md) |
 | Multi-Runner 路由 | B | A | D | Replan 真实验收用了 fail-fast 钩子 | [multi_runner_live_validation.md](../multi_runner_live_validation.md) |
-| Agent Team V1 | C | B | D | 真实任务 0/3 严格交付；Reviewer 长反馈和 JSON 是瓶颈 | [agent_team_task_comparison_2026-11-03.md](../agent_team_task_comparison_2026-11-03.md) |
+| Agent Team V1 | C | A | C | 真实任务 0/3 严格交付；Reviewer 长反馈和 JSON 是瓶颈 | [agent_team_task_comparison_2026-11-03.md](../agent_team_task_comparison_2026-11-03.md) |
 | 会话归档 / Turn 生命周期 | B | A | D | 不能跨进程恢复执行 | [conversation_turn_lifecycle.md](../conversation_turn_lifecycle.md) |
 | 摘要与 Context 投影 | B | B | D | 摘要语义依赖模型；本地 Ollama 权重健康未重测 | [conversation_summary_context.md](../conversation_summary_context.md) |
 | 长期记忆 | C | B | D | 未提交的接入代码未验收；跨库迟到写；CLI 未装配 | [PROJECT_HANDOVER §6](../PROJECT_HANDOVER.md) |

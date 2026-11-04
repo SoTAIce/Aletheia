@@ -242,6 +242,29 @@
         "scope": "Static/import + pytest tests/ + management files; baseline/link/hash checks run separately.",
         "record": "docs/harness/conformance-audit-2026-11-04.md"
       }
+    },
+    {
+      "id": "team-audit-001",
+      "name": "Agent Team V1 doc-code consistency audit",
+      "description": "Read app/agent/agent_team_runner.py and app/agent/team/, verify the documented Team mechanism, defaults and boundaries against code, and run the historical Team tests from git in an isolated TEMP checkout.",
+      "status": "done",
+      "dependencies": [
+        "team-v1-001",
+        "harness-002"
+      ],
+      "acceptance": [
+        "Each documented Team claim (structure, contracts, permissions, defaults, limits) marked consistent / inconsistent with file:line evidence.",
+        "Historical Team tests from commit 9138ac1 run against current code in TEMP; results recorded including failures.",
+        "Durable doc-code contract tests added under tests/ and passing in init.ps1.",
+        "No app/ source change; TEMP test artifacts removed after the run."
+      ],
+      "evidence": "2026-11-04: Team source unchanged since 9138ac1. Historical Team tests from git 9138ac1 (test_team_v1/reliability/contract_review/session_poc) 68 passed and routing tests 42 passed in an isolated TEMP dir against the current working tree; TEMP dir deleted and verified absent. New tests/test_team_contracts.py 8 passed; init.ps1 PASS (10 passed, basetemp auto-removed). 16 documented claims checked: 15 consistent, 1 imprecise (revision cap = 12 revisions, versions 1..13) corrected in PROJECT_HANDOVER section 7 plus 4 undocumented details added. No app/ change, no model/MCP/DB calls. Record: docs/harness/team-audit-2026-11-04.md",
+      "evidence_kind": "current_documentation",
+      "verification": {
+        "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1",
+        "scope": "Deterministic tests only; no live model/MCP/DB.",
+        "record": "docs/harness/team-audit-2026-11-04.md"
+      }
     }
   ],
   "cleanup_2026_11_04": {

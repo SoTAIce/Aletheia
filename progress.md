@@ -6,7 +6,7 @@
 
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **Standard verification path**：init.ps1（static/import + pytest `tests/`，当前 2 passed）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
+- **Standard verification path**：init.ps1（static/import + pytest `tests/`，当前 10 passed）；历史 Team 测试按 DECISIONS D-011 从 git 取到 TEMP 运行；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
 - **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
 
@@ -18,6 +18,16 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-04 — team-audit-001：Agent Team V1 文档—代码一致性审查
+
+- **Goal**：读 Team 源码，核对文档，按 harness 管理，测完及时清理。
+- **Completed**：逐条核对 16 条声明（15 条一致，1 条表述不精确已更正，4 处未写明的细节已补充）；新增 tests/test_team_contracts.py；init.ps1 自动清理 basetemp；DECISIONS D-011；更新总交接 §7、质量文档、清单、索引。
+- **Verification run**：历史 Team 测试 68 passed、路由测试 42 passed（git 9138ac1 → TEMP，已删除）；init.ps1 PASS，pytest 10 passed。
+- **Evidence recorded**：[team-audit-2026-11-04.md](docs/harness/team-audit-2026-11-04.md)，feature_list.json → team-audit-001
+- **Commits**：无（等待用户确认）
+- **Known risks**：Team 真实交付质量没有改善（0/3）；仓库内的 Team 测试只覆盖契约层
+- **Next best action**：确认是否提交；如果授权，开始 team-delivery-reliability 的第一个子项
 
 ### 2026-11-04 — harness-002：课程合规审查与文档补全
 

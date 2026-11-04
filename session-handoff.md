@@ -1,58 +1,67 @@
-# Current Session Handoff — 2026-11-04（harness-002）
+# Current Session Handoff — 2026-11-04（team-audit-001）
 
 格式按课程模板：Currently verified / Changes / Still broken or unverified / Next best action / Commands。
 
 ## 当前任务 / Scope
 
-用户要求：对照 [Learn Harness Engineering](https://walkinglabs.github.io/learn-harness-engineering/en/) 检查项目能否与 Claude 交接，并按课程补全不合规的文档。
-范围：只改管理文档和 init.ps1，并按用户授权新增最小测试、在本地提交 harness 文件；不改 `app/`、原始专题报告、配置、依赖；不恢复旧测试；不调用模型/DB/MCP；不推送。
-状态：harness-002 已完成，active_feature=null，等待用户指定下一项任务。
+**已完成：team-audit-001**（用户 2026-11-04 授权：读 Team 源码、核对文档，按 harness 管理，测完及时清理）。active_feature=null，等待下一项任务。
+
+```text
+Feature: team-audit-001
+Scope: app/agent/agent_team_runner.py, app/agent/team/*; 对照 docs/agent_team_v1.md、PROJECT_HANDOVER §7
+Exclusions: 不改 app/ 源码；不调用模型/MCP/DB；不恢复旧 tests 到仓库；不推送
+Verification: 旧 Team 测试（取自 git 9138ac1）在 TEMP 中运行；新增文档契约测试进入 tests/ 并由 init.ps1 运行
+Authorization: 只读源码 + 确定性测试；提交需另行确认
+Done when: 每条文档声明都有 一致/不一致 + 文件:行号 证据；TEMP 产物已删除；状态文件已更新
+```
+
+上一项 harness-002 已完成（提交 708a70f）。
 
 ## Currently verified
 
-- `init.ps1` 通过：91 个 app Python 文件语法通过，CLI `--help` 正常，新增管理文件齐全；pytest 套件 `tests/test_harness_smoke.py` 2 passed（plan → commit → 完成；已消费 token 被拒且状态不变）。
-- [基线](docs/harness/baseline.md)：已提交的 harness 文件 + 用户差异哈希清单；核对结果 base ancestor OK / drift none / uncommitted-outside-manifest none。
-- HEAD 是本轮的 harness 提交（`docs(harness): ...`），父提交 `9138ac1` 为 Agent Team V1 冻结点；未推送，远端同步状态未核实。
-- 受保护文件（app 源码、原始 docs、README、.env.example、pyproject.toml）哈希与本轮开始时一致，详见 [合规审查](docs/harness/conformance-audit-2026-11-04.md)。
-- 历史事实（未重新测量）：真实对照中普通模式 2/3、Team 0/3；清理前 1093 passed / 2 skipped。
+- Team 结论：16 条文档声明中 15 条与代码一致，1 条表述不精确（修订上限）已更正；没有发现代码缺陷。详见 [Team 一致性审查](docs/harness/team-audit-2026-11-04.md)。
+- 历史 Team 测试（git `9138ac1`）**68 passed**、路由测试 **42 passed**：在 TEMP 隔离目录中针对当前工作区代码运行，目录已删除并确认不存在。
+- `init.ps1` 通过：91 个源码文件语法、CLI help、管理文件、pytest **10 passed**（WorkingMemory 2 个 + Team 契约 8 个），basetemp 自动删除。
+- HEAD `708a70f`（harness 提交），父提交 `9138ac1` 为 Team V1 冻结点；未推送。
+- 历史事实（未重新测量）：真实对照中普通模式 2/3、Team 0/3。
 
 ## Changes this session
 
-- 新增 [合规审查](docs/harness/conformance-audit-2026-11-04.md)：逐项对照课程，给出结论与缺口。
-- 新增 [DECISIONS.md](docs/DECISIONS.md)、[clean-state 清单](docs/harness/clean-state-checklist.md)、[evaluator-rubric](docs/harness/evaluator-rubric.md)、[质量文档](docs/harness/quality-document.md)。
-- 按模板重排 [progress.md](progress.md) 和本文件；更新 AGENTS.md 的启动/收尾步骤、Harness 手册（状态映射、任务契约）、文档索引。
-- 新增最小测试 `tests/test_harness_smoke.py`（用户授权）；init.ps1 增加管理文件存在性检查，运行 pytest，并打印标准启动/验证路径（启动命令只打印不运行）。
-- 按用户授权把 harness 管理文件和 docs 在本地提交（不推送）；用户的源码改动、README 和删除项按用户选择留在工作区。
-- 新增 [baseline.md](docs/harness/baseline.md) 和 [基线清单](docs/harness/history/baseline-2026-11-04.json)。
-- feature_list.json：新增 harness-002。
+- 新增 [tests/test_team_contracts.py](tests/test_team_contracts.py)：固化默认上限、只读工具、宿主契约、2000 字反馈上限、未知命令拒绝、12 次修订、所有权守卫、工具交集。
+- 新增 [Team 一致性审查](docs/harness/team-audit-2026-11-04.md)；更正 [PROJECT_HANDOVER §7](docs/PROJECT_HANDOVER.md) 的修订上限表述，并补充 4 处未写明的细节。
+- DECISIONS 新增 D-011（历史测试从 git 取到 TEMP 运行，测完删除）；clean-state 清单补充 TEMP 清理要求；质量文档把 Team 的测试稳定性 D→C、可读性 B→A。
+- init.ps1：pytest 结束后用 `\\?\` 前缀自动删除 basetemp（可处理超长路径）。
+- feature_list.json：新增 team-audit-001（done）。
 
 ## Still broken or unverified
 
-- **覆盖面很窄**：只有 2 个 WorkingMemory 测试；原 1093 个测试仍在不可访问的备份中。行为改动前必须先恢复对应测试，或补充测试。
-- **工作区仍有用户差异**：长期记忆接入源码（未验收）、README、旧 tests/scripts 删除项，按用户选择暂不提交，记录在 [基线清单](docs/harness/history/baseline-2026-11-04.json) 中。剩余批次：② 源码（先验收）；③ 删除项。
-- 外部备份 `C:\Users\48174\AppData\Local\Temp\Aletheia-cleanup-jjfezytd\removed.zip`：本会话访问被拒（Access denied），**无法确认是否还在**；TEMP 不是长期存储。
-- `tmp/pytest-harness-*` 有 10 个权限残留目录（已被 gitignore），没有改 ACL。
-- 长期记忆接入（longterm-integration-001）只是部分完成，未验收。
+- **本轮改动未提交**（等待用户确认）：tests/test_team_contracts.py、init.ps1 和上面列出的文档。
+- **Team 交付质量没有改善**：本轮只做核对；真实任务严格交付仍是 Team 0/3。
+- **工作区仍有用户差异**：长期记忆源码（未验收）、README、旧 tests/scripts 删除项，记录在 [基线清单](docs/harness/history/baseline-2026-11-04.json) 中。
+- 外部备份目录 `C:\Users\48174\AppData\Local\Temp\Aletheia-cleanup-jjfezytd` 仍在，但本会话读取 `removed.zip` 被拒；已跟踪的旧测试可直接从 git 历史取出（D-011）。
+- TEMP 里还有之前清理留下的 `aletheia-cleanup-check-*` 和 `aletheia-cleanup-current.txt`，不是本轮产生的，没有处理。
+- `tmp/pytest-harness-*` 有 10 个权限残留目录（已被 gitignore）。
 
 ## Next best action
 
-1. 启动时运行 init.ps1 和基线核对命令（[baseline.md](docs/harness/baseline.md)），确认工作区与交接时一致。可选（需用户授权）：提交剩余批次；把备份移到长期存储后恢复旧 tests。
-2. 之后按 backlog 优先级：team-delivery-reliability → longterm-acceptance。开工前先拆成单会话可完成的条目，并写好任务契约（手册模板）。
+1. 由用户决定是否提交本轮改动（只涉及 tests/、init.ps1 和 harness 文档）。
+2. 如果授权 `team-delivery-reliability`：先按 D-011 用 68 个历史 Team 测试和 8 个契约测试做回归保护，再拆成单会话可完成的条目（例如先只处理 Reviewer 反馈超长导致修复耗尽的问题），并写好任务契约。
 
-**不要碰**：工作区里用户未提交的 `app/` 改动；原始 docs 报告的正文（只在索引/总交接中纠正）；`.env`、模型默认值、依赖；冻结提交（不 amend、不重复提交）；任何旧的付费验证脚本。
+**不要碰**：用户未提交的 `app/` 改动；原始 docs 报告正文；`.env`、模型默认值、依赖；冻结提交；旧的付费验证脚本（`scripts/validate_agent_team_live.py` 会调用真实模型）。
 
 ## Commands
 
 ```powershell
-# startup / 健康检查（只读）
+# startup / 健康检查（含 pytest，basetemp 自动清理）
 git status --short; git log -1 --oneline
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1
-# verification（init.ps1 已包含；单独运行时 basetemp 用新的 TEMP 目录）
-.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp $env:TEMP/aletheia-pytest-UNIQUE
+# 历史 Team 测试（D-011；测完删除 $run）
+$run = Join-Path ([IO.Path]::GetTempPath()) ('aletheia-team-' + [guid]::NewGuid().ToString('N')); New-Item -ItemType Directory $run | Out-Null
+git archive -o "$run/src.tar" 9138ac1 tests/agent; tar -x -f "$run/src.tar" -C $run
+.venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider -c pyproject.toml --rootdir $run --basetemp "$run/bt" "$run/tests/agent/test_team_v1.py" "$run/tests/agent/test_team_reliability.py" "$run/tests/agent/test_team_contract_review.py" "$run/tests/agent/test_team_session_poc.py"
+Remove-Item -LiteralPath ('\\?\' + $run) -Recurse -Force; Test-Path -LiteralPath $run   # 应为 False
 # run（需真实模型/MCP，须获本轮授权）
-.venv/Scripts/python.exe -m app.agent 'Read README.md and summarize it' --filesystem-root . --no-knowledge
-# debug：CLI 参数与导入
-.venv/Scripts/python.exe -B -m app.agent --help
+.venv/Scripts/python.exe -m app.agent 'Review the supplied files' --execution-mode team --filesystem-root . --no-knowledge
 ```
 
-上一轮交接（harness-001）的内容已归入 progress.md 的会话记录；更早的管理状态见 [历史存档](docs/harness/history/2026-11-04-state-before.json)。
+更早的会话记录见 progress.md；更早的管理状态见 [历史存档](docs/harness/history/2026-11-04-state-before.json)。

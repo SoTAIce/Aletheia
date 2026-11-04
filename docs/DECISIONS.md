@@ -82,3 +82,12 @@
 - 被否方案：三批全部提交（源码尚未验收）；不提交、只保留清单。
 - 约束：init.ps1 要求 tests/ 存在并通过；后续行为改动要补充对应测试。
 - 来源：本会话用户回答；[baseline.md](harness/baseline.md)
+
+## D-011 2026-11-04 历史测试从 git 取到 TEMP 运行，不恢复进仓库
+
+- 决策：需要回归证据时，用 `git archive -o <TEMP>/src.tar 9138ac1 tests/agent` 解压到 TEMP 新目录运行，测完立即删除（长路径用 `\?\` 前缀）；需要长期保留的结论写成 tests/ 下的小型契约测试。
+- 理由：用户精简了 tests/；已跟踪的旧测试仍在 git 历史中，不需要依赖不可访问的 TEMP 备份。
+- 被否方案：把旧 tests/ 整体恢复进仓库（违背用户的精简决定）；只做文档核对而不跑测试。
+- 约束：PowerShell 管道会破坏二进制数据，必须用 `-o` 输出文件；运行时用仓库 pyproject 的 pytest 配置（`-c pyproject.toml`）。
+- 注意：部分测试会启动 filesystem MCP 子进程，MCP stdio 客户端不会把 `PYTHONDONTWRITEBYTECODE` 传给子进程，所以会在 `app/tools/` 下生成 `__pycache__`。测完要删除（`find app -name __pycache__`）。
+- 来源：[Team 一致性审查](harness/team-audit-2026-11-04.md)

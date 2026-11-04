@@ -49,8 +49,16 @@ print(f'Management state valid; syntax PASS: {len(sources)} Python files')
     # Deterministic test suite (tests/ is in-memory only; see tests/test_harness_smoke.py).
     if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'tests'))) { throw 'tests/ missing' }
     $baseTemp = Join-Path ([IO.Path]::GetTempPath()) ('aletheia-pytest-' + [guid]::NewGuid().ToString('N'))
-    & $python -B -m pytest -q -p no:cacheprovider --basetemp $baseTemp
-    if ($LASTEXITCODE -ne 0) { throw 'pytest failed' }
+    try {
+        & $python -B -m pytest -q -p no:cacheprovider --basetemp $baseTemp
+        if ($LASTEXITCODE -ne 0) { throw 'pytest failed' }
+    }
+    finally {
+        # Clean up immediately; \\?\ prefix handles paths beyond MAX_PATH.
+        if (Test-Path -LiteralPath $baseTemp) {
+            Remove-Item -LiteralPath ('\\?\' + $baseTemp) -Recurse -Force -Confirm:$false
+        }
+    }
     Write-Output 'Health check PASS (static/import + deterministic pytest suite; historical 1093-test regression and live services NOT verified)'
     # Print-only, never executed here (course init: show the standard paths).
     Write-Output 'START (needs live model/MCP + authorization): .venv/Scripts/python.exe -m app.agent "<goal>" --filesystem-root . --no-knowledge'

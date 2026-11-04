@@ -12,6 +12,7 @@
 | [DECISIONS.md](DECISIONS.md) | 设计决策、理由、被否方案（来源指向原报告） |
 | [clean-state 清单](harness/clean-state-checklist.md)、[evaluator-rubric](harness/evaluator-rubric.md)、[质量文档](harness/quality-document.md) | 会话退出检查、评审打分、领域/层质量与可观测性 |
 | [合规审查 2026-11-04](harness/conformance-audit-2026-11-04.md) | 对照 Learn Harness Engineering 的逐项结论与剩余缺口 |
+| [Team 一致性审查 2026-11-04](harness/team-audit-2026-11-04.md) | Team V1 文档声明逐条对照代码；历史 Team 测试 68 passed；修订上限表述更正 |
 | [已记录基线](harness/baseline.md) | HEAD + 工作区差异哈希清单（[JSON](harness/history/baseline-2026-11-04.json)）及核对命令 |
 | [AGENTS.md](../AGENTS.md)、[CLAUDE.md](../CLAUDE.md) | 公共工程约束与 Claude 入口 |
 | [session-handoff.md](../session-handoff.md)、[progress.md](../progress.md)、[feature_list.json](../feature_list.json) | 当前状态、执行记录、功能证据 |
