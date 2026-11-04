@@ -1,8 +1,14 @@
 """Session-facing service using Aletheia's single registry and AgentRuntime."""
 
 import asyncio
+import json
+import logging
+from dataclasses import asdict
+from datetime import datetime, timezone
+from uuid import uuid4
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from mcp import StdioServerParameters
@@ -15,17 +21,39 @@ from app.agent.runtime import AgentRunResult, AgentRuntime
 from app.agent.runner_registry import RunnerRegistry
 from app.agent.runner_router import RoutingPolicy, RequirementsProvider
 from app.config import config
-from app.models.conversation_memory import ConversationMemory
+from app.models.conversation_memory import (
+    ConversationMemory, ConversationMessage, ConversationTurn, MessageRole, TurnStatus,
+    finish_conversation_write as _durable,
+)
+from app.agent.step_models import StepExecutionReceipt, ToolCall, ToolResult
 from app.models.taskstate import TaskState, TaskStatus
-from app.models.working_memory import WorkingMemory
+from app.models.working_memory import WorkingMemory, StaleExecutionError
 from app.tools.tool_loader import local_mcp_servers, open_tool_registry
 from app.services.conversation_archive import ConversationArchive
 from app.services.context_manager import ContextManager, ContextManagedModel
+from app.services.summary_scheduler import SummaryScheduler
 from app.tools.context_archive_tool import ContextArchiveTool
 
 
+logger = logging.getLogger(__name__)
+
+
+def _restore_result(data: dict) -> AgentRunResult:
+    """Reconstruct an immutable execution receipt; never execute archived work."""
+    data = dict(data)
+    steps = []
+    for item in data.pop('steps'):
+        item = dict(item)
+        item['source_refs'] = tuple(item['source_refs'])
+        item['tool_calls'] = tuple(ToolCall(**c) for c in item['tool_calls'])
+        item['tool_results'] = tuple(ToolResult(**(r | {'source_refs': tuple(r['source_refs'])}))
+                                     for r in item['tool_results'])
+        steps.append(StepExecutionReceipt(**item))
+    data['status'] = TaskStatus(data['status'])
+    return AgentRunResult(steps=tuple(steps), **data)
+
 class RagAgentService:
-    """Each query is a task; complete conversation turns persist by session.
+    """Each accepted request is a turn; explicit resumes retain the same task.
 
     Inject a ToolCallingModel and optionally a Planner text model for tests.
     query_stream keeps the event API but emits the final result, not model tokens.
@@ -40,6 +68,7 @@ class RagAgentService:
         memory_directory=None, conversation_compressor=None,
         runner_registry: RunnerRegistry | None = None, routing_policy: RoutingPolicy | None = None,
         runner_requirements: RequirementsProvider | None = None,
+        execution_mode: str = 'single', team_options=None,
     ) -> None:
         self.streaming = streaming
         self.model = model
@@ -48,6 +77,19 @@ class RagAgentService:
         self._planner_model = planner_model
         self._runner_options = dict(runner_registry=runner_registry, routing_policy=routing_policy,
                                     runner_requirements=runner_requirements)
+        if execution_mode not in ('single', 'team'):
+            raise ValueError('execution_mode must be single or team')
+        from app.agent.team.models import TeamOptions, TeamStore
+        if team_options is not None and not isinstance(team_options, TeamOptions):
+            raise TypeError('team_options must be TeamOptions')
+        if (execution_mode == 'team' or team_options is not None) and runner_registry is not None:
+            raise ValueError('use register_team_runner for custom registry assembly')
+        self._execution_mode = execution_mode
+        self._team_options = team_options or (TeamOptions() if execution_mode == 'team' else None)
+        self._team_store = TeamStore()
+        if execution_mode == 'team' and runner_requirements is None:
+            from app.agent.runner_router import RunnerRequirements
+            self._runner_options['runner_requirements'] = lambda context: RunnerRequirements(frozenset({'agent_team'}))
         self._mcp_servers = tuple(mcp_servers) if mcp_servers is not None else local_mcp_servers(
             filesystem_root=config.mcp_filesystem_root or None,
             write_root=config.mcp_filesystem_write_root or None,
@@ -60,9 +102,40 @@ class RagAgentService:
                                                   if step_timeout_seconds is None else step_timeout_seconds),
                             planning_timeout_seconds=(config.agent_planning_timeout_seconds
                                                       if planning_timeout_seconds is None else planning_timeout_seconds))
-        self._conversations: dict[str, ConversationMemory] = {}
-        self._locks: dict[str, asyncio.Lock] = {}
+        if self._team_options is not None and step_timeout_seconds is None:
+            self._limits['step_timeout_seconds'] = max(
+                self._limits['step_timeout_seconds'], self._team_options.timeout_seconds + 5)
+        self._conversations: dict[object, ConversationMemory] = {}
+        self._locks: dict[object, asyncio.Lock] = {}
+        self._tasks: dict[tuple[object, str], AgentRuntime] = {}
+        self._pending_outcomes: dict[tuple[object, str], tuple] = {}
+        self._summary_scheduler = SummaryScheduler(self._conversations)
+        self._closed = False
 
+    def _validate_identity(self, user_id: str | None) -> None:
+        if user_id is None:
+            return
+
+        if not isinstance(user_id, str) or not user_id.strip():
+            raise ValueError("user_id must be non-empty")
+        if len(user_id.encode("utf-8")) > 256:
+            raise ValueError("user_id is too long")
+
+    @staticmethod
+    def _session_key(user_id: str | None, session_id: str):
+        if user_id is None:
+            return session_id
+        return ("user", user_id, session_id)
+
+    @staticmethod
+    def _archive_label(user_id: str | None, session_id: str) -> str:
+        if user_id is None:
+            return session_id
+        return json.dumps(
+            ["user", user_id, session_id],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
     @asynccontextmanager
     async def _models(self):
         if self.model is not None:
@@ -86,43 +159,245 @@ class RagAgentService:
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("session_id must not be empty")
 
-    async def query_result(self, question: str, session_id: str) -> AgentRunResult:
+    async def query_result(
+        self, question: str, session_id: str, *, user_id: str | None = None,
+        request_id: str | None = None, resume_task_id: str | None = None,
+        question_id: str | None = None,
+    ) -> AgentRunResult:
+        if self._closed:
+            raise RuntimeError('service is closed')
         self._validate_input(question, session_id)
-        async with self._locks.setdefault(session_id, asyncio.Lock()):
-            conversation = self._conversations.get(session_id)
+        self._validate_identity(user_id)
+        for name, value in (('request_id', request_id), ('resume_task_id', resume_task_id), ('question_id', question_id)):
+            if value is not None and (not isinstance(value, str) or not value.strip() or len(value) > 256):
+                raise ValueError(f'{name} must be a nonempty string of at most 256 characters')
+        if question_id is not None and resume_task_id is None:
+            raise ValueError('question_id requires resume_task_id')
+        stamp = datetime.now(timezone.utc)
+        key = self._session_key(user_id, session_id)
+        async with self._locks.setdefault(key, asyncio.Lock()):
+            conversation = self._conversations.get(key)
             if conversation is None:
-                archive = await asyncio.to_thread(ConversationArchive, self._memory_directory, session_id) if self._memory_directory else None
-                conversation = ConversationMemory(session_id, compressor=self._conversation_compressor, archive=archive)
-                await conversation.restore()
-                self._conversations[session_id] = conversation
-            context_manager = ContextManager(
-                window_tokens=config.context_window_tokens, output_tokens=config.context_output_tokens,
-                safety_tokens=config.context_safety_tokens,
-                archive=conversation.archive,
-            )
-            memory = WorkingMemory(TaskState(session_id, question))
-            async with self._models() as (planner_model, model):
-                if self._planner_model is None:
-                    planner_model = PlanningModel(ContextManagedModel(model, context_manager))
-                async with open_tool_registry(
-                    memory, mcp_servers=self._mcp_servers, conversation=conversation,
-                    knowledge_search=self._knowledge_search, include_knowledge=self._include_knowledge,
-                    local_tools=(ContextArchiveTool(conversation.archive),) if conversation.archive else (),
-                    context_manager=context_manager,
-                ) as registry:
-                    runtime = AgentRuntime(
-                        Planner(planner_model, context_manager=context_manager), model, memory, registry,
-                        conversation=conversation, **self._limits, **self._runner_options,
-                        context_manager=context_manager,
+                label = self._archive_label(user_id, session_id)
+                archive = None
+                if self._memory_directory:
+                    root = Path(self._memory_directory)
+                    if user_id is not None:
+                        root = root / "user-scoped"
+                    archive = await asyncio.to_thread(
+                        ConversationArchive, root, label
                     )
-                    return await runtime.run()
+                conversation = ConversationMemory(label, compressor=self._conversation_compressor, archive=archive,
+                                                  background_compression=archive is not None)
+                await conversation.restore()
+                self._conversations[key] = conversation
+                # Reconstruct old backlog on session load, including restart.
+                self._notify_summary(key)
 
-    async def query(self, question: str, session_id: str) -> str:
-        return (await self.query_result(question, session_id)).content
+            turn_id = f'request:{request_id}' if request_id is not None else str(uuid4())
+            outcome_key = (key, turn_id)
+            try:
+                existing = await conversation.read_turn(turn_id)
+            except KeyError:
+                existing = None
+            if existing is not None:
+                if (existing.messages[0].content != question or existing.status is None
+                        or (resume_task_id is None) != (existing.question_id is None)
+                        or (resume_task_id is not None and existing.task_id != resume_task_id)
+                        or (question_id is not None and existing.question_id != question_id)):
+                    raise ValueError('request ID conflict')
+                if outcome_key in self._pending_outcomes:
+                    await _durable(self._publish_outcome(conversation, outcome_key))
+                    existing = await conversation.read_turn(turn_id)
+                payload = await conversation.turn_result(turn_id)
+                if payload is not None:
+                    restored = _restore_result(payload)
+                    if (restored.task_id != existing.task_id or restored.status.value != existing.status.value
+                            or restored.content != existing.messages[-1].content):
+                        raise ValueError('archived result conflicts with turn')
+                    return restored
+                raise RuntimeError(f'request already {existing.status.value}; automatic execution replay is unsafe')
 
-    async def query_stream(self, question: str, session_id: str) -> AsyncIterator[dict[str, Any]]:
+            runtime = None
+            if resume_task_id is not None:
+                runtime = self._tasks.get((key, resume_task_id))
+                if runtime is None or runtime.memory.task_state.status is not TaskStatus.BLOCKED:
+                    raise ValueError('No resumable task in this user/session; restart restores history, not live tasks')
+                task = runtime.memory.task_state
+                questions = [q for q in task.scratchpad.open_questions
+                             if q.goal_revision == task.goal_revision and q.blocking and q.resolved_at is None]
+                if question_id is None:
+                    if len(questions) != 1:
+                        raise ValueError('question_id is required when there is not exactly one blocking question')
+                    question_id = questions[0].question_id
+                if not any(q.question_id == question_id for q in questions):
+                    raise ValueError('question_id is not an unresolved blocking question of this task')
+                memory = runtime.memory
+            else:
+                memory = WorkingMemory(TaskState(user_id or session_id, question))
+            task = memory.task_state
+            turn = ConversationTurn([ConversationMessage(MessageRole.USER, question, stamp)], turn_id, stamp,
+                                    task_id=task.task_id, status=TurnStatus.RECEIVED, question_id=question_id)
+
+            # Every external call is after the original input has been published.
+            try:
+                await _durable(conversation.add(turn))
+            except asyncio.CancelledError:
+                try:
+                    await conversation.read_turn(turn_id)
+                except KeyError:
+                    raise
+                self._pending_outcomes[outcome_key] = (TurnStatus.CANCELLED, 'Request cancelled before execution', None)
+                await _durable(self._publish_outcome(conversation, outcome_key))
+                raise
+            except Exception as exc:
+                # Publication may have succeeded before a cache reload failed.
+                # Preserve that accepted input, but never start external work.
+                try:
+                    await conversation.read_turn(turn_id)
+                except KeyError:
+                    pass
+                else:
+                    self._pending_outcomes[outcome_key] = (TurnStatus.FAILED, f'Input persistence failed: {type(exc).__name__}', None)
+                    await _durable(self._publish_outcome(conversation, outcome_key))
+                raise
+            try:
+                context_manager = ContextManager(
+                    window_tokens=config.context_window_tokens, output_tokens=config.context_output_tokens,
+                    safety_tokens=config.context_safety_tokens, archive=conversation.archive,
+                )
+                if runtime is not None:
+                    task.resolve_question(question_id, question)
+                else:
+                    history = await context_manager.prepare_conversation(conversation, task.active_goal)
+                    task.pin_content(history, 'conversation_memory')
+                async with self._models() as (planner_model, model):
+                    if self._planner_model is None:
+                        planner_model = PlanningModel(ContextManagedModel(model, context_manager))
+                    async with open_tool_registry(
+                        memory, mcp_servers=self._mcp_servers, conversation=conversation,
+                        knowledge_search=self._knowledge_search, include_knowledge=self._include_knowledge,
+                        local_tools=(ContextArchiveTool(conversation.archive),) if conversation.archive else (),
+                        context_manager=context_manager,
+                    ) as registry:
+                        planner = Planner(planner_model, context_manager=context_manager)
+                        if runtime is None:
+                            runner_options = dict(self._runner_options)
+                            if self._team_options is not None:
+                                runner_options['runner_registry'] = self._team_registry(memory)
+                            runtime = AgentRuntime(planner, model, memory, registry,
+                                                   **self._limits, **runner_options, context_manager=context_manager)
+                        else:
+                            runtime.rebind(planner, model, registry, context_manager=context_manager)
+                        result = await runtime.run()
+                        # Retain the result before resource cleanup or durable completion can fail.
+                        self._pending_outcomes[outcome_key] = (TurnStatus(result.status.value), result.content, asdict(result))
+                        if result.status is TaskStatus.BLOCKED:
+                            self._tasks[(key, task.task_id)] = runtime
+                        else:
+                            self._tasks.pop((key, task.task_id), None)
+                            self._team_store.discard_task(task.task_id)
+            except StaleExecutionError:
+                # This interaction no longer owns task state. Finish only its
+                # own durable turn; do not fail or remove the newer execution.
+                self._pending_outcomes[outcome_key] = (TurnStatus.FAILED,
+                    'Execution superseded; stale output was not committed', None)
+                await _durable(self._publish_outcome(conversation, outcome_key))
+                raise
+            except (Exception, asyncio.CancelledError) as exc:
+                self._team_store.discard_task(task.task_id)
+                if outcome_key not in self._pending_outcomes:
+                    status = TurnStatus.CANCELLED if isinstance(exc, asyncio.CancelledError) else TurnStatus.FAILED
+                    content = ('Request cancelled; tool side effects may already exist' if status is TurnStatus.CANCELLED
+                               else f'Request failed: {type(exc).__name__}')
+                    if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                        task.fail_task(content)
+                    self._tasks.pop((key, task.task_id), None)
+                    self._pending_outcomes[outcome_key] = (status, content, None)
+                await _durable(self._publish_outcome(conversation, outcome_key))
+                raise
+            await _durable(self._publish_outcome(conversation, outcome_key))
+            return result
+
+    def _team_registry(self, parent_memory):
+        from app.agent.runner_registry import default_runner_registry
+        from app.agent.agent_team_runner import register_team_runner
+        from app.agent.team.models import TeamEnvironment
+        @asynccontextmanager
+        async def tools(memory, manager):
+            async with open_tool_registry(memory, mcp_servers=self._mcp_servers,
+                    include_knowledge=self._include_knowledge, knowledge_search=self._knowledge_search,
+                    context_manager=manager) as registry:
+                yield registry
+        def import_sources(members):
+            mapping = {}
+            for member in members:
+                used = {ref for r in member.session.tool_results for ref in r.source_refs}
+                for local_id in used:
+                    source = member.memory.resources.get(local_id)
+                    existing = next((r for r in parent_memory.resources.list_all() if r.ref == source.ref), None)
+                    if existing is None:
+                        rid = parent_memory.resources.register(source.ref, source.resource_type,
+                                                               source=f'team/{member.name}')
+                        if source.loaded:
+                            parent_memory.resources.mark_loaded(rid, summary=source.summary)
+                    else:
+                        rid = existing.resource_id
+                    mapping[(member.name, local_id)] = rid
+            return mapping
+        registry = default_runner_registry()
+        def capture_guard(context):
+            task = parent_memory.task_state
+            expected = (task.task_id, task.goal_revision, task.plan_revision,
+                        task.active_step_id, task.state_version)
+            requested = (context.task_id, context.goal_revision, context.plan_revision, context.current_step.step_id)
+            def current():
+                return (requested == expected[:4] and task.status is TaskStatus.RUNNING and expected ==
+                        (task.task_id, task.goal_revision, task.plan_revision, task.active_step_id, task.state_version))
+            return current
+        register_team_runner(registry, options=self._team_options, store=self._team_store,
+            environment=TeamEnvironment(parent_memory.task_state.user_id, tools, import_sources, capture_guard))
+        return registry
+
+    async def _publish_outcome(self, conversation, outcome_key):
+        status, content, payload = self._pending_outcomes[outcome_key]
+        await conversation.complete_turn(outcome_key[1], status, content, result=payload)
+        self._pending_outcomes.pop(outcome_key, None)
+        self._notify_summary(outcome_key[0])
+
+    def _notify_summary(self, key):
         try:
-            result = await self.query_result(question, session_id)
+            self._summary_scheduler.notify(key)
+        except Exception as exc:
+            # Scheduling is an optimization over durable history, never part
+            # of the accepted request's execution outcome.
+            logger.warning('Summary scheduling unavailable: %s', type(exc).__name__)
+
+    async def __aenter__(self):
+        if self._closed:
+            raise RuntimeError('service is closed')
+        return self
+
+    async def __aexit__(self, *exc):
+        await self.aclose()
+
+    async def aclose(self, *, timeout_seconds=5.0):
+        self._closed = True
+        await self._summary_scheduler.aclose(timeout_seconds=timeout_seconds)
+        self._team_store.states.clear()
+
+    async def query(self, question: str, session_id: str, *, user_id: str | None = None,
+                    request_id: str | None = None, resume_task_id: str | None = None,
+                    question_id: str | None = None) -> str:
+        return (await self.query_result(question, session_id, user_id=user_id, request_id=request_id,
+                                       resume_task_id=resume_task_id, question_id=question_id)).content
+
+    async def query_stream(self, question: str, session_id: str, *, user_id: str | None = None,
+                           request_id: str | None = None, resume_task_id: str | None = None,
+                           question_id: str | None = None) -> AsyncIterator[dict[str, Any]]:
+        try:
+            result = await self.query_result(question, session_id, user_id=user_id, request_id=request_id,
+                                             resume_task_id=resume_task_id, question_id=question_id)
             yield {"type": "content", "data": result.content, "node": "agent_runtime"}
             terminal = "complete" if result.status is TaskStatus.COMPLETED else (
                 "blocked" if result.status is TaskStatus.BLOCKED else "error"

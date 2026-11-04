@@ -41,6 +41,18 @@ class ModelResponseError(ToolCallingModelError):
     pass
 
 
+class ModelOutputLimitError(ModelResponseError):
+    """An incomplete provider response; partial text/calls must never execute."""
+
+    def __init__(self, *, prompt_tokens=None, completion_tokens=None, output_token_limit=None):
+        super().__init__('model response was truncated (finish_reason=length)')
+        self.finish_reason = 'length'
+        # Keep only nonnegative counts, never provider payloads or partial text.
+        for name, value in (('prompt_tokens', prompt_tokens), ('completion_tokens', completion_tokens),
+                            ('output_token_limit', output_token_limit)):
+            setattr(self, name, value if type(value) is int and value >= 0 else None)
+
+
 class ModelTimeoutError(ModelRequestError):
     """The provider request exceeded its deadline."""
 

@@ -177,9 +177,42 @@ async def test_service_injects_trusted_requirements_not_from_model(tmp_path):
     from app.services.rag_agent_service import RagAgentService
     model, planner = AsyncMock(), AsyncMock()
     planner.generate.return_value = '{"steps":["Do work"],"reason":null}'
-    service = RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
-                              memory_directory=tmp_path,
-                              runner_requirements=lambda ctx: RunnerRequirements(frozenset({'unavailable'})))
-    result = await service.query_result('goal', 's')
+    async with RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
+                                memory_directory=tmp_path,
+                                runner_requirements=lambda ctx: RunnerRequirements(frozenset({'unavailable'}))) as service:
+        result = await service.query_result('goal', 's')
     assert result.status is TaskStatus.FAILED and result.replan_count == 0
     model.generate.assert_not_awaited()
+
+
+async def test_service_stale_cleanup_preserves_new_task_and_records_old_turn(tmp_path, monkeypatch):
+    import app.services.rag_agent_service as module
+    from app.models.conversation_memory import TurnStatus
+    entered, release = asyncio.Event(), asyncio.Event()
+    captured = []
+    class Runtime(AgentRuntime):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            captured.append(self.memory)
+    async def run(context):
+        entered.set()
+        await release.wait()
+        raise ValueError('late invalid implementation result')
+    monkeypatch.setattr(module, 'AgentRuntime', Runtime)
+    planner = AsyncMock()
+    planner.generate.return_value = '{"steps":["Do work"],"reason":null}'
+    async with module.RagAgentService(model=AsyncMock(), planner_model=planner, mcp_servers=(),
+                                      include_knowledge=False, memory_directory=tmp_path,
+                                      runner_registry=fake_registry(run)) as service:
+        task = asyncio.create_task(service.query_result('original goal', 's', request_id='old'))
+        await entered.wait()
+        memory = captured[0]
+        memory.record_failure('Superseded by the application')
+        memory.update_goal('new goal')
+        before = memory.snapshot()
+        release.set()
+        with pytest.raises(StaleExecutionError):
+            await task
+        assert memory.snapshot() == before
+        turn = service._conversations['s'].archive.read_turn('request:old')
+        assert turn.status is TurnStatus.FAILED and turn.messages[0].content == 'original goal'

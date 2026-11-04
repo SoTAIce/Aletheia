@@ -15,7 +15,8 @@ from app.agent.runner_registry import RunnerRegistry, RunnerDependencies, Runner
 from app.agent.runner_router import RoutingPolicy, RequirementsProvider
 from app.agent.routing_step_runner import RoutingStepRunner, RoutingEvent
 from app.models.conversation_memory import (
-    ConversationMemory, ConversationMessage, ConversationTurn, MessageRole,
+    ConversationMemory, ConversationMessage, ConversationTurn, MessageRole, TurnStatus,
+    finish_conversation_write,
 )
 from app.models.taskstate import StepStatus, TaskStatus
 from app.models.working_memory import StaleExecutionError, WorkingMemory
@@ -78,6 +79,10 @@ class AgentRuntime:
         self._steps: list[StepExecutionReceipt] = []
         self._lock = asyncio.Lock()
         self._reported_version: int | None = None
+        self._active_turn: ConversationTurn | None = None
+        self._conversation_outcome: tuple | None = None
+        self._pending_result: AgentRunResult | None = None
+        self._outcome_version: int | None = None
 
     def _assemble_runner(self, model, registry, context_manager):
         """The sole construction path for both initial and resumed bindings."""
@@ -109,19 +114,59 @@ class AgentRuntime:
 
     async def run(self) -> AgentRunResult:
         async with self._lock:
+            conversation = self._conversation
+            task = self.memory.task_state
+            # The service supplies exact inbound text itself. This optional,
+            # low-level compatibility path can only see the task goal/answer.
+            if conversation is not None and self._conversation_outcome is not None:
+                pending = self._pending_result
+                await self._finish_turn()
+                return pending if pending is not None else self._result('Previous interaction did not complete')
+            if conversation is not None and self._reported_version != task.state_version:
+                if self._active_turn is None:
+                    answers = [q for q in task.scratchpad.open_questions
+                               if q.resolved_at is not None and q.goal_revision == task.goal_revision]
+                    text = answers[-1].answer if answers and self._reported_version is not None else task.active_goal
+                    self._active_turn = ConversationTurn([ConversationMessage(MessageRole.USER, text)],
+                                                        task_id=task.task_id, status=TurnStatus.RECEIVED)
             try:
+                if conversation is not None and self._active_turn is not None:
+                    await finish_conversation_write(conversation.add(self._active_turn))
                 result = await self._run()
-            except asyncio.CancelledError:
-                if self.memory.task_state.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
-                    self.memory.task_state.fail_task("Agent execution cancelled; tool side effects may already exist")
+            except StaleExecutionError:
+                # A newer task/step owns this workspace. Even exception cleanup
+                # must not fail that state or publish an old interaction result.
                 raise
-            if self._conversation is not None and self._reported_version != self.memory.task_state.state_version:
-                await self._conversation.add(ConversationTurn([
-                    ConversationMessage(MessageRole.USER, self.memory.task_state.active_goal),
-                    ConversationMessage(MessageRole.ASSISTANT, f"[{result.status.value}] {result.content}"),
-                ]))
-                self._reported_version = self.memory.task_state.state_version
+            except (Exception, asyncio.CancelledError) as exc:
+                status = TurnStatus.CANCELLED if isinstance(exc, asyncio.CancelledError) else TurnStatus.FAILED
+                content = ('Agent execution cancelled; tool side effects may already exist'
+                           if status is TurnStatus.CANCELLED else f'Agent execution failed: {type(exc).__name__}')
+                if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                    task.fail_task(content)
+                if conversation is not None and self._active_turn is not None:
+                    try:
+                        await conversation.read_turn(self._active_turn.turn_id)
+                    except KeyError:
+                        self._active_turn = None  # Original publication failed; nothing to finish.
+                    else:
+                        self._conversation_outcome = (status, content, None)
+                        self._outcome_version = task.state_version
+                        await self._finish_turn()
+                raise
+            if conversation is not None and self._active_turn is not None:
+                self._pending_result = result
+                self._outcome_version = task.state_version
+                self._conversation_outcome = (TurnStatus(result.status.value), result.content, asdict(result))
+                await self._finish_turn()
             return result
+
+    async def _finish_turn(self):
+        status, content, payload = self._conversation_outcome
+        await finish_conversation_write(self._conversation.complete_turn(
+            self._active_turn.turn_id, status, content, result=payload))
+        self._active_turn = self._conversation_outcome = None
+        self._pending_result = None
+        self._reported_version = self._outcome_version
 
     async def _run(self) -> AgentRunResult:
         task = self.memory.task_state
@@ -183,6 +228,9 @@ class AgentRuntime:
                 # Never overwrite evidence or lifecycle belonging to newer work.
                 raise
             except TimeoutError:
+                if self.routing_decisions and self.routing_decisions[-1].runner_id == 'agent_team':
+                    # A team owns many side effects; an outer deadline must not replay it.
+                    return self._fail('Team execution timed out; automatic replanning is disabled')
                 if self._context_manager.overflow_recovery_interrupted:
                     return self._fail("Context overflow recovery timed out; completed tools will not be repeated")
                 self.memory.record_failure("Step execution timed out; side effects may already exist")

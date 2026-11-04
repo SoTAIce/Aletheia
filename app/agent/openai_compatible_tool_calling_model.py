@@ -17,7 +17,7 @@ from app.agent.step_models import (
     ToolCall, ToolDefinition, ToolMessage, UserMessage,
 )
 from app.agent.tool_calling_model import ModelRequestError, ModelResponseError, ModelTimeoutError
-from app.agent.tool_calling_model import ModelContextOverflowError
+from app.agent.tool_calling_model import ModelContextOverflowError, ModelOutputLimitError
 
 
 class OpenAICompatibleToolCallingModel:
@@ -298,7 +298,10 @@ class OpenAICompatibleToolCallingModel:
         choice = choices[0]
         finish_reason = getattr(choice, "finish_reason", None)
         if finish_reason == "length":
-            raise ModelResponseError("model response was truncated (finish_reason=length)")
+            usage = getattr(response, 'usage', None)
+            raise ModelOutputLimitError(prompt_tokens=getattr(usage, 'prompt_tokens', None),
+                completion_tokens=getattr(usage, 'completion_tokens', None),
+                output_token_limit=self._max_output_tokens)
         if finish_reason == "content_filter":
             raise ModelResponseError("model response was filtered (finish_reason=content_filter)")
         if finish_reason not in ("stop", "tool_calls"):

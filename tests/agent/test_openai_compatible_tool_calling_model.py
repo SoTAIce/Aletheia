@@ -76,6 +76,38 @@ async def test_generate_minimal_request():
 
 
 @pytest.mark.asyncio
+async def test_json_options_preserve_native_tool_calls():
+    fake = client()
+    fake.chat.completions.create.return_value = response(None, 'tool_calls', [{
+        'id': 'once', 'type': 'function', 'function': {'name': 'read', 'arguments': '{}'},
+    }])
+    model = OpenAICompatibleToolCallingModel(fake, 'model', json_mode=True, enable_thinking=False)
+    turn = await model.generate([UserMessage('Return final JSON or request a tool')],
+                                (ToolDefinition('read', 'Read', {'type': 'object'}),))
+    assert turn.tool_calls == (ToolCall('once', 'read', {}),)
+    request = fake.chat.completions.create.call_args.kwargs
+    assert request['response_format'] == {'type': 'json_object'}
+    assert request['extra_body'] == {'enable_thinking': False}
+
+
+@pytest.mark.parametrize('kwargs', [{'json_mode': 1}, {'enable_thinking': 'false'}])
+def test_invalid_structured_output_options(kwargs):
+    with pytest.raises(TypeError):
+        OpenAICompatibleToolCallingModel(client(), 'model', **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_sdk_timeout_remains_distinct_from_other_provider_errors():
+    from app.agent.tool_calling_model import ModelTimeoutError
+    fake = client()
+    fake.chat.completions.create.side_effect = APITimeoutError(
+        request=httpx.Request('POST', 'https://example.invalid')
+    )
+    with pytest.raises(ModelTimeoutError):
+        await OpenAICompatibleToolCallingModel(fake, 'model').generate([UserMessage('JSON')], ())
+
+
+@pytest.mark.asyncio
 async def test_generate_passes_tools_and_configured_options():
     fake = client()
     fake.chat.completions.create.return_value = response(None, 'tool_calls', [{
@@ -120,6 +152,22 @@ async def test_generate_keeps_response_errors_distinct():
     fake.chat.completions.create.return_value = response('partial', 'length')
     with pytest.raises(ModelResponseError, match='truncated'):
         await OpenAICompatibleToolCallingModel(fake, 'model').generate([UserMessage('hello')], ())
+
+
+async def test_truncated_response_exposes_safe_usage_without_partial_tool_execution():
+    fake = client()
+    raw = response('PRIVATE partial response', 'length')
+    raw.usage = SimpleNamespace(prompt_tokens=500, completion_tokens=128)
+    fake.chat.completions.create.return_value = raw
+    model = OpenAICompatibleToolCallingModel(fake, 'model', max_output_tokens=128)
+    with pytest.raises(ModelResponseError) as caught:
+        await model.generate([UserMessage('JSON')], ())
+    assert type(caught.value).__name__ == 'ModelOutputLimitError'
+    assert caught.value.finish_reason == 'length'
+    assert caught.value.prompt_tokens == 500
+    assert caught.value.completion_tokens == 128
+    assert caught.value.output_token_limit == 128
+    assert 'PRIVATE' not in str(caught.value)
 
 
 @pytest.mark.asyncio

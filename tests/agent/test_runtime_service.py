@@ -2,13 +2,42 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
+from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 import pytest
 
 from app.agent.openai_compatible_tool_calling_model import OpenAICompatibleToolCallingModel
-from app.agent.step_models import ModelTurn
+from app.agent.step_models import ModelTurn, UserMessage
+from app.config import config
 from app.models.taskstate import TaskStatus
 from app.services.rag_agent_service import RagAgentService
+
+
+@pytest.mark.asyncio
+async def test_configured_timeout_reaches_provider_and_runtime(monkeypatch):
+    import app.services.rag_agent_service as module
+
+    def respond(request):
+        assert request.extensions["timeout"]["read"] == 90.0
+        return httpx.Response(200, json=response("Verified").model_dump())
+
+    monkeypatch.setattr(config, "rag_model_timeout_seconds", 90.0)
+    monkeypatch.setattr(config, "agent_step_timeout_seconds", 240.0)
+    monkeypatch.setattr(config, "agent_planning_timeout_seconds", 120.0)
+    monkeypatch.setattr(module, "AsyncOpenAI", lambda **kwargs: AsyncOpenAI(
+        **(kwargs | {"api_key": "test-key", "base_url": "https://example.com/v1"}),
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
+    ))
+    service = RagAgentService(mcp_servers=(), include_knowledge=False)
+    assert service._limits["step_timeout_seconds"] == 240.0
+    assert service._limits["planning_timeout_seconds"] == 120.0
+    async with service._models() as (_, model):
+        turn = await model.generate((UserMessage("Verify timeout configuration"),), ())
+        assert turn.content == "Verified"
+    override = RagAgentService(step_timeout_seconds=5, planning_timeout_seconds=6)
+    assert override._limits["step_timeout_seconds"] == 5
+    assert override._limits["planning_timeout_seconds"] == 6
 
 
 def response(content=None, calls=None):

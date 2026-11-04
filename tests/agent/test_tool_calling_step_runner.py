@@ -176,3 +176,82 @@ async def test_text_only_with_zero_budget():
                                                max_total_tool_calls=0)
     assert (await runner.run(context)).content == 'done'
     tool.invoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_format_repair_preserves_a_declared_business_failure():
+    runner, model, tool, context = loop_fixture([
+        ModelTurn('Unable to complete: required input is missing.'),
+        ModelTurn('{"status":"failed","content":"Input missing","reason":"No input"}'),
+    ], require_step_outcome=True)
+    output = await runner.run(context)
+    assert output.outcome.value == 'failed' and output.reason == 'No input'
+    assert model.generate.call_args.args[1] == ()
+    tool.invoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('text', [
+    '{"status":"failed","status":"succeeded","content":"done","reason":null}',
+    '{"status":"unknown","content":"done","reason":null}',
+    '{"status":"failed","content":"failed","reason":null}',
+    '{"status":"succeeded","content":"done","reason":"failed"}',
+    '{"status":"succeeded","content":"done","reason":NaN}',
+])
+async def test_ambiguous_or_invalid_status_is_not_rewritten_by_format_repair(text):
+    from app.agent.step_runner import StepFormatError
+    runner, model, tool, context = loop_fixture([ModelTurn(text)], require_step_outcome=True)
+    with pytest.raises(StepFormatError):
+        await runner.run(context)
+    model.generate.assert_awaited_once()
+    tool.invoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tool_exception_is_distinct_from_business_failure():
+    from app.agent.step_runner import StepToolError
+    runner, model, tool, context = loop_fixture([
+        ModelTurn(tool_calls=(ToolCall('once', 'read', {}),)),
+    ], require_step_outcome=True)
+    tool.invoke.side_effect = ConnectionError('disconnected')
+    with pytest.raises(StepToolError):
+        await runner.run(context)
+    assert runner.format_repair_count == 0
+
+
+@pytest.mark.asyncio
+async def test_exhausted_tool_budget_requests_finalization_without_more_tools():
+    runner, model, tool, context = loop_fixture([
+        ModelTurn(tool_calls=(ToolCall('once', 'read', {}),)),
+        ModelTurn('{"status":"succeeded","content":"Verified evidence","reason":null}'),
+    ], require_step_outcome=True, max_tool_rounds=1)
+    output = await runner.run(context)
+    assert output.content == 'Verified evidence'
+    assert model.generate.call_args.args[1] == ()
+    tool.invoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_whitespace_draft_is_repaired_without_invalid_assistant_history():
+    runner, model, tool, context = loop_fixture([
+        ModelTurn('  '),
+        ModelTurn('{"status":"failed","content":"No evidence","reason":"Missing evidence"}'),
+    ], require_step_outcome=True)
+    output = await runner.run(context)
+    assert output.outcome.value == 'failed'
+    messages, tools = model.generate.call_args.args
+    assert tools == ()
+    assert all(m.content.strip() for m in messages if isinstance(m, AssistantMessage))
+    tool.invoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_repair_rejects_invalid_tool_call_container_without_execution():
+    from app.agent.step_runner import StepFormatError
+    runner, model, tool, context = loop_fixture([
+        ModelTurn('broken'),
+        ModelTurn('{"status":"succeeded","content":"done","reason":null}', tool_calls=[]),
+    ], require_step_outcome=True)
+    with pytest.raises(StepFormatError):
+        await runner.run(context)
+    tool.invoke.assert_not_awaited()

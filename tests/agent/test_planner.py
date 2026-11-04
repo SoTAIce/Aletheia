@@ -276,3 +276,44 @@ async def test_generation_propagates_model_failure(method):
     with pytest.raises(TimeoutError):
         await getattr(planner, method)(planner.build_context(wm))
     assert wm.snapshot() == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('method', ['plan', 'replan'])
+async def test_planning_repairs_syntax_locally_without_mutating_task(method):
+    model = AsyncMock()
+    model.generate.side_effect = ['{"steps":["inspect"],"reason":bad}',
+                                 '{"steps":["inspect"],"reason":null}']
+    planner = Planner(model, max_format_repairs=1)
+    wm = WorkingMemory(TaskState('user', 'goal'))
+    if method == 'replan':
+        wm.task_state.start_planning()
+        wm.task_state.set_plan(['original'])
+    before = wm.snapshot()
+    proposal = await getattr(planner, method)(planner.build_context(wm))
+    assert proposal.steps == ('inspect',)
+    assert model.generate.await_count == 2 and planner.format_repair_count == 1
+    assert 'Tools are disabled' in model.generate.call_args.args[0]
+    assert wm.snapshot() == before
+
+
+@pytest.mark.asyncio
+async def test_planning_format_repairs_are_bounded_and_duplicates_are_not_repaired():
+    wm = WorkingMemory(TaskState('user', 'goal'))
+    for text, count in [('not json', 3), ('{"steps":["a"],"steps":["b"],"reason":null}', 1)]:
+        model = AsyncMock()
+        model.generate.return_value = text
+        planner = Planner(model, max_format_repairs=2)
+        with pytest.raises(ValueError):
+            await planner.plan(planner.build_context(wm))
+        assert model.generate.await_count == count
+
+
+@pytest.mark.asyncio
+async def test_planning_unwraps_one_complete_fence_without_another_model_call():
+    model = AsyncMock()
+    model.generate.return_value = '```json\n{"steps":["inspect"],"reason":null}\n```'
+    planner = Planner(model)
+    proposal = await planner.plan(planner.build_context(WorkingMemory(TaskState('user', 'goal'))))
+    assert proposal.steps == ('inspect',)
+    model.generate.assert_awaited_once()

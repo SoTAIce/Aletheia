@@ -109,3 +109,97 @@ async def test_force_compresses_buffer_below_threshold() -> None:
     assert compressed is True
     assert memory.summary == "compressed summary"
     assert memory.get_compression_buffer() == []
+
+
+@pytest.mark.asyncio
+async def test_archive_restores_recent_turns_without_raw_eviction_buffer(tmp_path):
+    from app.services.conversation_archive import ConversationArchive
+    archive = ConversationArchive(tmp_path, "session")
+    memory = ConversationMemory("u", max_turns=2, archive=archive)
+    turns = [make_turn(str(i)) for i in range(12)]
+    await memory.add_turns(turns)
+    assert memory.retrieve() == turns[-2:]
+    assert memory.get_compression_buffer() == []
+    assert memory.compression_buffer_tokens == 0
+    restored = ConversationMemory("u", max_turns=2, archive=ConversationArchive(tmp_path, "session"))
+    await restored.restore()
+    assert restored.retrieve() == turns[-2:]
+    assert archive.load_turns() == turns
+    await restored.add(turns[0])
+    assert restored.retrieve() == turns[-2:]
+    assert archive.load_turns() == turns
+
+
+@pytest.mark.asyncio
+async def test_failed_archive_save_does_not_evict_cache(tmp_path, monkeypatch):
+    from app.services.conversation_archive import ConversationArchive
+    archive = ConversationArchive(tmp_path, "session")
+    memory = ConversationMemory("u", max_turns=1, archive=archive)
+    original = make_turn("original")
+    await memory.add(original)
+    def fail(turn):
+        raise OSError("disk full")
+    monkeypatch.setattr(archive, "save_turn", fail)
+    with pytest.raises(OSError):
+        await memory.add(make_turn("new"))
+    assert memory.retrieve() == [original]
+    assert archive.load_turns() == [original]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_add_is_idempotent(tmp_path):
+    import asyncio
+    from dataclasses import replace
+    from app.services.conversation_archive import ConversationArchive
+    archive = ConversationArchive(tmp_path, "session")
+    memory = ConversationMemory("u", max_turns=20, archive=archive)
+    turns = [make_turn(str(i)) for i in range(10)]
+    await asyncio.gather(*(memory.add(turn) for turn in turns for _ in range(3)))
+    assert memory.retrieve() == turns
+    assert archive.load_turns() == turns
+    with pytest.raises(ValueError, match="conflict"):
+        await memory.add(replace(turns[0], messages=[ConversationMessage(MessageRole.USER, "different")]))
+    assert memory.retrieve() == turns
+
+
+@pytest.mark.asyncio
+async def test_cancelled_save_leaves_cache_and_retry_recovers_one_durable_turn(tmp_path, monkeypatch):
+    import asyncio
+    import threading
+    from app.services.conversation_archive import ConversationArchive
+    archive = ConversationArchive(tmp_path, "session")
+    memory = ConversationMemory("u", max_turns=1, archive=archive)
+    original, pending = make_turn("original"), make_turn("pending")
+    await memory.add(original)
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    save = archive.save_turn
+    def blocked_save(turn):
+        started.set()
+        assert release.wait(5)
+        try:
+            save(turn)
+        finally:
+            finished.set()
+    monkeypatch.setattr(archive, "save_turn", blocked_save)
+    task = asyncio.create_task(memory.add(pending))
+    assert await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert memory.retrieve() == [original]
+    finally:
+        release.set()
+        assert await asyncio.to_thread(finished.wait, 5)
+    await memory.add(pending)
+    assert memory.retrieve() == [pending]
+    assert archive.load_turns() == [original, pending]
+
+
+@pytest.mark.asyncio
+async def test_legacy_memory_deduplicates_turn_id():
+    memory = ConversationMemory("u")
+    turn = make_turn("same")
+    await memory.add(turn)
+    await memory.add(turn)
+    assert memory.retrieve() == [turn]

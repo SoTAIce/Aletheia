@@ -251,6 +251,77 @@ async def test_tool_failure_can_be_recovered_within_the_same_step():
 
 
 @pytest.mark.asyncio
+async def test_format_repair_keeps_tool_evidence_without_reexecuting_or_replanning():
+    registry = ToolRegistry()
+    invoke = AsyncMock(return_value=ToolOutput(True, "actual evidence"))
+    registry.register(SimpleNamespace(
+        definition=ToolDefinition("read", "Read", {"type": "object"}), invoke=invoke,
+    ))
+    runtime, memory, model, planner_model = fixture([
+        ModelTurn(tool_calls=(ToolCall("once", "read", {}),)),
+        ModelTurn('{"status":"succeeded","content":"bad "quote"","reason":null}'),
+        final("Verified actual evidence"),
+    ], registry=registry, max_tool_rounds=1)
+    result = await runtime.run()
+    assert result.status is TaskStatus.COMPLETED
+    assert result.execution_count == 1 and result.replan_count == 0
+    assert runtime.format_repair_count == 1
+    invoke.assert_awaited_once_with({})
+    planner_model.generate.assert_awaited_once()
+    repair_messages, repair_tools = model.generate.call_args_list[-1].args
+    assert repair_tools == ()
+    evidence = [m for m in repair_messages if isinstance(m, ToolMessage)]
+    assert len(evidence) == 1 and evidence[0].call_id == "once"
+    assert "actual evidence" in evidence[0].content
+    assert result.steps[0].tool_results[0].success
+    assert memory.task_state.scratchpad.failure_history == ()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("extra", [
+    [ModelTurn("still malformed"), ModelTurn("still malformed")],
+    [ModelTurn(tool_calls=(ToolCall("forbidden", "read", {}),))],
+])
+async def test_failed_format_repair_never_replays_tools_or_requests_a_new_plan(extra):
+    registry = ToolRegistry()
+    invoke = AsyncMock(return_value=ToolOutput(True, "saved evidence"))
+    registry.register(SimpleNamespace(
+        definition=ToolDefinition("read", "Read", {"type": "object"}), invoke=invoke,
+    ))
+    runtime, memory, model, planner_model = fixture([
+        ModelTurn(tool_calls=(ToolCall("once", "read", {}),)), ModelTurn("malformed"), *extra,
+    ], registry=registry)
+    result = await runtime.run()
+    assert result.status is TaskStatus.FAILED and "StepFormatError" in result.content
+    assert result.execution_count == 1 and result.replan_count == 0
+    invoke.assert_awaited_once()
+    planner_model.generate.assert_awaited_once()
+    assert all(call.args[1] == () for call in model.generate.call_args_list[2:])
+    assert memory.task_state.scratchpad.intermediate_results == ()
+
+
+@pytest.mark.asyncio
+async def test_model_timeout_is_not_treated_as_business_replanning():
+    from app.agent.tool_calling_model import ModelTimeoutError
+    runtime, memory, _, planner_model = fixture([ModelTimeoutError("slow provider")])
+    result = await runtime.run()
+    assert result.status is TaskStatus.FAILED and "StepTimeoutError" in result.content
+    assert result.execution_count == 1 and result.replan_count == 0
+    planner_model.generate.assert_awaited_once()
+    assert memory.task_state.active_step_id is None
+
+
+@pytest.mark.asyncio
+async def test_format_repair_cancellation_does_not_replan():
+    runtime, memory, _, planner_model = fixture([ModelTurn("broken JSON"), asyncio.CancelledError()])
+    with pytest.raises(asyncio.CancelledError):
+        await runtime.run()
+    assert memory.task_state.status is TaskStatus.FAILED
+    assert memory.task_state.active_step_id is None
+    planner_model.generate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_step_timeout_replans_and_clears_active_execution():
     runtime, memory, model, _ = fixture([], [plan("Timed step"), plan("Replacement step")],
                                       step_timeout_seconds=0.02)

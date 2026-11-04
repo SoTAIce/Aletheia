@@ -1,4 +1,5 @@
 from openai import AsyncOpenAI
+from contextlib import asynccontextmanager
 
 from app.models.conversation_memory import ConversationMemory
 from app.services.memory_compression.llm_compressor import LLMCompressor
@@ -15,6 +16,14 @@ conversation_compressor = LLMCompressor(
     client=ollama_client,
     model="qwen3:4b-instruct",
 )
+
+
+@asynccontextmanager
+async def open_conversation_compressor():
+    """Owned local client for background work; scheduler controls retries."""
+    async with AsyncOpenAI(base_url=ollama_client.base_url, api_key=ollama_client.api_key,
+                           timeout=ollama_client.timeout, max_retries=0) as client:
+        yield LLMCompressor(client=client, model=conversation_compressor._model)
 
 
 def create_conversation_memory(
