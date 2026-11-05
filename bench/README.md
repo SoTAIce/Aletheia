@@ -28,6 +28,12 @@
 - 报告只含状态、次数、耗时、异常类型名和检查结果，不含模型原文。`--keep-answers <dir>` 会保存完成的答案，供浏览器人工检查；用完自行删除。
 - `python_checks` 先做 AST 守卫（只允许少量标准库导入，禁止 open/exec/eval/dunder 访问），再用 `python -I` 子进程加超时执行。它只防止误伤，**不是安全沙箱**。
 
+## 文件交付与沙盒模式
+
+- `--write`：智能体把交付物写进临时根目录里的指定文件（`task.json` 的 `deliverable`），评分读取该文件；文件没写或没改动都算失败。
+- `--sandbox`：在 `--write` 基础上开放 `run_tests` / `run_python`（Docker 沙盒，需要先构建 `aletheia-sandbox:py313`），并提示智能体先测试再交付；团队模式结束任务前必须有通过的运行。`--team-timeout` 可以加长团队的时间预算。
+- 第一版沙盒只支持 Python，`todo_html` 在沙盒模式下仍然只做静态评分。
+
 ## 判定口径
 
 - `passed` = 运行状态为 completed，且该任务的全部检查都通过。部分得分只作诊断，不能代替严格交付。

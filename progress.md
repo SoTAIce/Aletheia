@@ -19,6 +19,24 @@
 
 ## Session Record
 
+### 2026-11-04 — sandbox-step4-001：沙盒真实评测（用户授权 4 次）
+
+- **Result**：普通模式严格 **2/2**（parse_duration 21/21、fix_inventory 16/16，每个任务都在沙盒中运行了约 7 次）；团队模式 0/2，两次都在任何沙盒运行之前就失败了（一次是修复次数用完后仍有参数 JSON 错误，一次失败类型被评测运行器的过滤规则拒绝，记成 unrecognized）。
+- **Fixes**：评测运行器的失败过滤规则允许数字、下划线、句点和逗号，并补了测试。
+- **Cleanup**：答案、报告、日志已删除；没有残留容器；没有 `__pycache__`。
+- **Evidence**：[sandbox-live-2026-11-04.md](docs/harness/sandbox-live-2026-11-04.md)
+- **Next**：团队参数错误和失败诊断（待办 team-failure-diagnosis-001，优先级已提为 1）
+
+### 2026-11-04 — sandbox-step3-001：沙盒第三步，接入运行工具
+
+- **Goal**：把 `run_tests` / `run_python` 接入两种模式；团队必须先有通过的运行，才能结束任务。
+- **Completed**：沙盒 MCP 服务；命令行 `--sandbox`、`--team-timeout`（在调用模型前检查镜像）；团队结束门槛 `require_passing_run`；评测集 `--sandbox`；决策 D-017。
+- **Verification run**：本步测试 14 passed；真实容器测试 11 passed（含 MCP 端到端）；全量回归 1160 passed、14 skipped；没有调用真实模型。
+- **Evidence recorded**：feature_list.json → sandbox-step3-001；设计方案第 6 节实施状态；bench/README.md
+- **Commits**：无
+- **Known risks**：普通模式每步只有 4 轮、8 次工具调用，写→跑→改的循环可能不够；团队默认 180 秒，跑代码可能不够（可用 `--team-timeout` 加长）
+- **Next best action**：第四步，用 `--sandbox` 跑真实评测（需用户授权和次数上限）
+
 ### 2026-11-04 — sandbox-step2-001：沙盒第二步，镜像与执行器
 
 - **Goal**：构建沙盒镜像，实现宿主侧执行器，并用破坏性测试证明限制有效（用户确认 Docker 已运行，并授权拉取基础镜像）。

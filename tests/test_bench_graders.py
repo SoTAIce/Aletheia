@@ -171,6 +171,10 @@ def test_extract_code_is_diagnostic_and_strict_score_still_fails_prose():
     ('StepModelError: Model generation failed: ModelResponseError -> JSONDecodeError', True),
     ('TeamError: team execution failed: ExceptionGroup -> SessionError', True),
     ('StepModelError: leaked "<html>" text', False),
+    ('TeamError: team action limit reached after 32 actions', True),
+    ('SessionError: model call limit reached (48)', True),
+    ("TeamError: leaked 'quoted' text", False),
+    ('TeamError: 中文原文', False),
 ])
 def test_failure_line_filter(line, safe):
     assert bool(run_bench._SAFE_FAILURE.match(line)) is safe

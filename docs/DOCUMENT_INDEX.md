@@ -12,7 +12,8 @@
 | [DECISIONS.md](DECISIONS.md) | 设计决策、理由、被否方案（来源指向原报告） |
 | [clean-state 清单](harness/clean-state-checklist.md)、[evaluator-rubric](harness/evaluator-rubric.md)、[质量文档](harness/quality-document.md) | 会话退出检查、评审打分、领域/层质量与可观测性 |
 | [合规审查 2026-11-04](harness/conformance-audit-2026-11-04.md) | 对照 Learn Harness Engineering 的逐项结论与剩余缺口 |
-| [沙盒执行设计方案（草案）](sandbox_execution_design.md) | 阶段二受限写入 + 阶段三沙盒运行：Docker 限制参数、工具接口、按角色分权、安全测试、实施步骤和待决问题；未实现 |
+| [沙盒真实评测 2026-11-04](harness/sandbox-live-2026-11-04.md) | 写文件 + 沙盒运行：普通模式 2/2 严格通过（各运行沙盒 7 次），团队模式 0/2（参数 JSON 错误、类型未采集） |
+| [沙盒执行设计方案](sandbox_execution_design.md) | 阶段二受限写入 + 阶段三沙盒运行：Docker 限制参数、工具接口、按角色分权、安全测试、实施步骤和待决问题；未实现 |
 | [能力增强阶段 1 2026-11-04](harness/capability-phase1-2026-11-04.md) | 工具参数错误可有界修复、失败带类型链；评测集 bench/（3 任务 + 自动评分）；确定性测试 20 个，历史 450 passed |
 | [评测集说明](../bench/README.md) | 任务、运行命令、授权与上限、判定口径 |
 | [single/team 前端任务对照 2026-11-04](harness/frontend-compare-2026-11-04.md) | 真实模型各跑 1 次单文件 HTML 任务：single、team 都失败（0/1），未产出 HTML |

@@ -10,7 +10,7 @@ import time
 from app.agent.step_models import StepRunOutput, ToolOutput, ToolCall, AssistantMessage
 from app.agent.step_runner import StepBlockedError
 from app.agent.team.contracts import JsonContract, ContractError
-from app.agent.team.models import TeamError, Member, WORKER_ONLY_TOOLS
+from app.agent.team.models import TeamError, Member, WORKER_ONLY_TOOLS, has_passing_run_after_last_write
 from app.agent.team.session import TeamSession, SessionError
 from app.agent.team.diagnostics import failure_details, failure_types
 from app.models.taskstate import TaskState
@@ -176,6 +176,9 @@ class TeamCoordinator:
                 (' Workers only (never reviewers): ' + json.dumps(sorted(
                     self.state.options.allowed_tools & WORKER_ONLY_TOOLS))
                  if self.state.options.allowed_tools & WORKER_ONLY_TOOLS else '') +
+                (' Finish also requires the worker to have a passing run_tests/run_python (exit code 0) '
+                 'after its last write_file; have workers write code and tests, run them, and fix failures.'
+                 if self.state.options.require_passing_run else '') +
                 '\nHost final schema: ' +
                 json.dumps(self.state.options.output_contract.schema()) + '\nParent context:\n' +
                 json.dumps(context, default=lambda v: v.isoformat(), ensure_ascii=False))
@@ -304,6 +307,10 @@ class TeamCoordinator:
                         m.review[0] == member.name and m.review[1] == member.session.version]
             if not matching or any(r[2]['decision'] != 'approve' for r in matching):
                 raise _CommandRejected('host acceptance gate requires independent current approval')
+            if (self.state.options.require_passing_run and
+                    not has_passing_run_after_last_write(member.session.tool_results)):
+                raise _CommandRejected('host acceptance gate requires a passing run_tests/run_python '
+                                       '(exit code 0) after the worker\'s last write_file')
             try:
                 content = self.state.options.output_contract.serialize(json.loads(member.candidate))
             except ContractError as exc:

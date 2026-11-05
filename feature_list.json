@@ -335,6 +335,38 @@
       ],
       "evidence": "2026-11-04: image aletheia-sandbox:py313 built (Python 3.13.18, pytest 8.3.4, uid 1000). tests/test_sandbox_executor.py 12 passed + 1 skipped (symlink needs privilege on Windows). tests/test_sandbox_docker.py with ALETHEIA_DOCKER_TESTS=1: 10 passed (network unreachable, host files invisible, only /work and /tmp writable, /tmp noexec, no host env, timeout kill + removal, 1GB alloc killed 137, fork capped at 127, output truncated to 20000, no leftover containers). HEAD snapshot + steps 1-2 files: 1146 passed, 13 skipped; init.ps1 PASS (53 passed, 11 skipped). Decision D-016. Not yet exposed to models.",
       "evidence_kind": "deterministic_plus_real_container_tests"
+    },
+    {
+      "id": "sandbox-step3-001",
+      "name": "Expose run_tests/run_python to single and team; team finish requires a passing run",
+      "description": "Step 3 of docs/sandbox_execution_design.md (user said start 2026-11-04). A sandbox MCP server wraps DockerSandbox on the write root; the CLI --sandbox flag (requires --write-root and a built image) registers it for both modes; team mode adds run_tests/run_python as worker-only tools and the host finish gate requires a successful run (exit code 0) after the worker's last write_file. bench gains --sandbox.",
+      "status": "done",
+      "dependencies": [
+        "sandbox-step2-001"
+      ],
+      "acceptance": [
+        "Without --sandbox nothing changes: no sandbox server, team allowlist unchanged, no new gate.",
+        "--sandbox without --write-root or without the image is refused before any model call.",
+        "Sandbox tools reject bad paths/args as tool errors and return 'exit code N; ...' summaries; the MCP child gets no secrets.",
+        "Team finish is rejected (recoverable) until a passing run follows the last write; deterministic coordinator test covers reject then accept.",
+        "Full regression passes; no live model calls in this step."
+      ],
+      "evidence": "2026-11-04: tests/test_sandbox_step3.py 14 passed (CLI options, pre-model refusal, loader without secrets, server tool errors, passing-run rule x8, full scripted team flow: finish rejected without run, accepted after passing run). Real containers with ALETHEIA_DOCKER_TESTS=1: 11 passed incl. MCP sandbox server end-to-end (run_tests exit 0, ../ path refused, no leftover containers). HEAD snapshot + step-3 files: 1160 passed, 14 skipped. Decision D-017. No live model calls.",
+      "evidence_kind": "deterministic_plus_real_container_tests"
+    },
+    {
+      "id": "sandbox-step4-001",
+      "name": "Live sandbox benchmark (step 4)",
+      "description": "User-authorized 4 live runs (2026-11-04): parse_duration and fix_inventory, single and team, file delivery plus Docker sandbox, team timeout 400s.",
+      "status": "done",
+      "dependencies": [
+        "sandbox-step3-001"
+      ],
+      "acceptance": [
+        "Runs within the authorized cap; strict results, sandbox usage and failure types recorded; failures recorded as-is; cleanup verified."
+      ],
+      "evidence": "2026-11-04: strict single 2/2 (parse_duration 21/21 after 7 sandbox runs, fix_inventory 16/16 after 7 sandbox runs); team 0/2 (parse_duration: ModelToolArgumentsError after repairs exhausted; fix_inventory: failure type lost to runner filter, now widened with tests). Team runs started no sandbox container. Record: docs/harness/sandbox-live-2026-11-04.md",
+      "evidence_kind": "live_benchmark"
     }
   ],
   "cleanup_2026_11_04": {
@@ -380,15 +412,15 @@
     {
       "id": "team-failure-diagnosis-001",
       "authorized": false,
-      "priority": 3,
-      "next_action": "Re-run bench team only (3 runs, needs authorization) with the fixed runner to capture failure type chains; add repair counts to the report. Hypothesis to check: a Lead request for a tool outside the allowlist is fatal (TeamError), which fits fix_inventory/team failing after 1 model call and 0 tool calls.",
+      "priority": 1,
+      "next_action": "Sandbox run (2026-11-04): team 0/2 before any sandbox run - parse_duration ModelToolArgumentsError after repairs exhausted; fix_inventory type lost (filter fixed). Next: re-run fix_inventory/team once to get its type; consider more argument repairs or chunked writes for members.",
       "source": "docs/harness/capability-phase1-2026-11-04.md"
     },
     {
       "id": "sandbox-execution",
       "authorized": false,
       "priority": 2,
-      "next_action": "Steps 1-2 done. Next: step 3 - wire run_tests/run_python as worker-only tools for single and team (workspace = write root), reviewer approval must cite a passing run; then step 4 live benchmark (needs authorization).",
+      "next_action": "Steps 1-4 done (single 2/2 with sandbox). Remaining sandbox work only if needed: frontend testing in the image.",
       "source": "docs/sandbox_execution_design.md"
     }
   ]

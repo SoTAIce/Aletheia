@@ -19,17 +19,27 @@ from app.tools.tool_registry import ToolRegistry
 
 def local_mcp_servers(*, filesystem_root: str | Path | None = None,
                       write_root: str | Path | None = None,
-                      tavily_api_key: str = "") -> tuple[StdioServerParameters, ...]:
+                      tavily_api_key: str = "", sandbox: bool = False) -> tuple[StdioServerParameters, ...]:
     """Configure existing stdio servers; omit unconfigured optional services."""
     project_root = str(Path(__file__).resolve().parents[2])
     servers = []
     if write_root and not filesystem_root:
         raise ValueError("filesystem_root is required when write_root is configured")
+    if sandbox and not write_root:
+        raise ValueError("sandbox requires write_root (the sandbox workspace)")
     if filesystem_root:
         args = ["-m", "app.tools.filesystem.server", "--root", str(Path(filesystem_root).resolve())]
         if write_root:
             args += ["--write-root", str(Path(write_root).resolve())]
         servers.append(StdioServerParameters(command=sys.executable, args=args, cwd=project_root))
+    if sandbox:
+        # The child inherits only MCP's minimal default env (PATH, USERPROFILE, ...) for the docker CLI;
+        # no API keys. The container itself receives none of it.
+        servers.append(StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "app.tools.sandbox.server", "--workspace", str(Path(write_root).resolve())],
+            cwd=project_root, env={"PYTHONDONTWRITEBYTECODE": "1"},
+        ))
     if tavily_api_key.strip():
         servers.append(StdioServerParameters(
             command=sys.executable, args=["-m", "app.tools.web_search.server"],

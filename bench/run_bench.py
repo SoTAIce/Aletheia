@@ -22,7 +22,7 @@ from bench.graders import extract_code, grade_html_todo, grade_python, split_cli
 
 BENCH = Path(__file__).resolve().parent
 REPO = BENCH.parent
-_SAFE_FAILURE = re.compile(r'^[A-Za-z]+(Error|Exception)(: [A-Za-z][A-Za-z :()>-]{0,200})?$')
+_SAFE_FAILURE = re.compile(r'^[A-Za-z]+(Error|Exception)(: [A-Za-z][\w :().,>-]{0,200})?$', re.ASCII)
 _TEAM_COUNTS = re.compile(r'"model_calls": (\d+), "tool_calls": (\d+)')
 
 
@@ -73,7 +73,12 @@ def _read_deliverable(root: Path, name: str, limit: int = 1_000_000):
     return path.read_text(encoding='utf-8', errors='replace')
 
 
-def run_one(task, mode, index, timeout, keep_dir=None, write=False):
+SANDBOX_HINT = ('写完后先写测试，再用 run_tests 或 run_python 在沙盒中运行；根据结果修改，直到运行通过（exit code 0）'
+                '后再交付。')
+
+
+def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=False, team_timeout=None):
+    write = write or sandbox
     work = Path(tempfile.mkdtemp(prefix='aletheia-bench-'))
     root = work / 'root'
     root.mkdir()
@@ -81,12 +86,19 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False):
         for name in task['files']:
             shutil.copyfile(task['dir'] / name, root / name)
         env = dict(os.environ, TAVILY_API_KEY='', PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8')
-        cmd = [sys.executable, '-B', '-m', 'app.agent', task['write_goal'] if write else task['goal'],
+        goal = task['write_goal'] if write else task['goal']
+        if sandbox:
+            goal += SANDBOX_HINT
+        cmd = [sys.executable, '-B', '-m', 'app.agent', goal,
                '--session-id', f'bench-{task["id"]}-{mode}-{index}', '--filesystem-root', str(root),
                '--no-knowledge', '--execution-mode', mode]
         if write:
             # The TEMP root is both the read and the write root; nothing else is writable.
             cmd += ['--write-root', str(root)]
+        if sandbox:
+            cmd.append('--sandbox')
+        if team_timeout is not None and mode == 'team':
+            cmd += ['--team-timeout', str(team_timeout)]
         started = time.monotonic()
         try:
             done = launch_agent(cmd, env, timeout)
@@ -158,6 +170,9 @@ def main(argv=None):
     parser.add_argument('--keep-answers', help='directory for completed answers (for manual browser checks)')
     parser.add_argument('--out', help='write the JSON report here as well as to stdout')
     parser.add_argument('--confirm-live', action='store_true', help='required: runs call the real model provider')
+    parser.add_argument('--sandbox', action='store_true',
+                        help='file delivery plus run_tests/run_python in the Docker sandbox (implies --write)')
+    parser.add_argument('--team-timeout', type=float, help='team time budget per run in seconds')
     parser.add_argument('--write', action='store_true',
                         help='let the agent write the deliverable file into its TEMP root and grade that file')
     args = parser.parse_args(argv)
@@ -166,7 +181,7 @@ def main(argv=None):
     tasks = load_tasks(args.tasks)
     planned = len(tasks) * len(args.modes) * args.runs
     plan = (f'{planned} agent run(s): tasks={[t["id"] for t in tasks]} modes={args.modes} runs={args.runs} '
-            f'delivery={"file" if args.write else "answer"}')
+            f'delivery={"file" if args.write or args.sandbox else "answer"} sandbox={args.sandbox}')
     if planned > args.max_runs:
         parser.error(f'{plan} exceeds --max-runs {args.max_runs}')
     if not args.confirm_live:
@@ -178,7 +193,8 @@ def main(argv=None):
         for task in tasks:
             for mode in args.modes:
                 for index in range(1, args.runs + 1):
-                    rows.append(run_one(task, mode, index, args.timeout, args.keep_answers, args.write))
+                    rows.append(run_one(task, mode, index, args.timeout, args.keep_answers, args.write,
+                                        args.sandbox, args.team_timeout))
                     print(json.dumps(rows[-1], ensure_ascii=False), file=sys.stderr, flush=True)
     finally:
         # The MCP stdio child does not inherit PYTHONDONTWRITEBYTECODE (DECISIONS D-011).

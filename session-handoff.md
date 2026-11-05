@@ -18,7 +18,15 @@ Done when: 参数错误可有界修复、错误链可见、评测集与评分器
 
 **结果（2026-11-04）**：确定性验证通过（新增测试 25 个；历史 tests/agent 450 passed）。第一轮真实评测（6 次，已授权）**严格交付 0/6**：single 三项都 completed，代码基本正确（宽松诊断 16/16、20/21、11/11，浏览器实测 9/9），但答案前后夹带说明文字；team 三项都失败，失败类型因运行器 bug 丢失（已修复）。详见 [阶段 1 记录](docs/harness/capability-phase1-2026-11-04.md)。active_feature=null，**尚未提交**。
 
-**最新（2026-11-04）**：沙盒第二步 `sandbox-step2-001` 已完成：镜像 `aletheia-sandbox:py313` 已构建，执行器 `app/tools/sandbox/executor.py` 已实现，10 项真实容器破坏性测试全部通过（决策 D-016）；全量回归 1146 passed、13 skipped。第一、二步都**未提交**。下一步是第三步（接入运行工具）。真实容器测试命令：
+**最新（2026-11-04）**：第四步真实评测完成：**普通模式 2/2 严格通过**，团队模式 0/2，详见 [沙盒真实评测](docs/harness/sandbox-live-2026-11-04.md)。第三、四步的改动**未提交**。下一个最值得做的是团队参数错误和失败诊断（待办 team-failure-diagnosis-001）。
+
+沙盒第三步 `sandbox-step3-001` 已完成（运行工具已接入两种模式；团队必须先有通过的运行才能结束任务；决策 D-017），全量回归 1160 passed、14 skipped，**未提交**。下一步是第四步：真实评测，需要用户授权。建议命令：
+
+```powershell
+.venv/Scripts/python.exe -m bench.run_bench --confirm-live --sandbox --tasks parse_duration fix_inventory --modes single team --runs 1 --team-timeout 400 --out output/bench-report.json
+```
+
+沙盒第二步 `sandbox-step2-001` 已完成：镜像 `aletheia-sandbox:py313` 已构建，执行器 `app/tools/sandbox/executor.py` 已实现，10 项真实容器破坏性测试全部通过（决策 D-016）；全量回归 1146 passed、13 skipped。第一、二步都**未提交**。下一步是第三步（接入运行工具）。真实容器测试命令：
 
 ```powershell
 $env:ALETHEIA_DOCKER_TESTS='1'; .venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider tests/test_sandbox_docker.py --basetemp <新的 TEMP 目录>

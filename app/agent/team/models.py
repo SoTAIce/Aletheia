@@ -31,6 +31,8 @@ class TeamOptions:
     allowed_tools: frozenset[str] = frozenset({
         'get_current_time', 'read_file', 'list_directory', 'retrieve_knowledge', 'search_web'})
     output_contract: JsonContract = field(default_factory=lambda: JsonContract('team-final', (('answer', str),), _answer_check))
+    # When true, finish needs a passing run_tests/run_python after the worker's last write_file.
+    require_passing_run: bool = False
 
     def __post_init__(self):
         for name in ('max_members', 'max_actions', 'max_model_calls', 'max_tool_calls',
@@ -43,12 +45,28 @@ class TeamOptions:
         if not isinstance(self.allowed_tools, frozenset) or any(
                 not isinstance(n, str) or not n.strip() or n != n.strip() for n in self.allowed_tools):
             raise ValueError('allowed_tools must be a frozenset of nonempty tool names')
+        if type(self.require_passing_run) is not bool:
+            raise TypeError('require_passing_run must be a bool')
         if not isinstance(self.output_contract, JsonContract):
             raise TypeError('output_contract must be a host-owned JsonContract')
 
 
 # Tools that change files or execute code; the coordinator grants them to workers only.
 WORKER_ONLY_TOOLS = frozenset({'write_file', 'run_tests', 'run_python'})
+RUN_TOOLS = frozenset({'run_tests', 'run_python'})
+
+
+def has_passing_run_after_last_write(tool_results) -> bool:
+    """True when a sandbox run with exit code 0 succeeded after the last successful write_file."""
+    last_write = last_pass = -1
+    for index, result in enumerate(tool_results):
+        if not result.success:
+            continue
+        if result.tool_name == 'write_file':
+            last_write = index
+        elif result.tool_name in RUN_TOOLS and result.content.startswith('exit code 0;'):
+            last_pass = index
+    return last_pass > last_write
 
 
 @dataclass(slots=True)
