@@ -1,5 +1,5 @@
 """Bounded exception structure without raw messages, prompts or provider bodies."""
-from app.agent.tool_calling_model import ModelOutputLimitError
+from app.agent.tool_calling_model import ModelOutputLimitError, ModelToolArgumentsError
 
 
 def failure_details(error: BaseException) -> dict:
@@ -13,6 +13,8 @@ def failure_details(error: BaseException) -> dict:
         if isinstance(exc, ModelOutputLimitError):
             detail.update(finish_reason=exc.finish_reason, prompt_tokens=exc.prompt_tokens,
                 completion_tokens=exc.completion_tokens, output_token_limit=exc.output_token_limit)
+        if isinstance(exc, ModelToolArgumentsError):
+            detail.update(reason=exc.reason, tool_name=exc.tool_name, argument_chars=exc.argument_chars)
         if isinstance(exc, BaseExceptionGroup):
             detail['exceptions'] = [visit(child, depth + 1) for child in exc.exceptions[:32]]
             if len(exc.exceptions) > 32:

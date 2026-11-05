@@ -282,6 +282,24 @@
       ],
       "evidence": "2026-11-04 live run (qwen3.8-flash, one run per mode, read-only TEMP root, web search off): single failed (StepModelError, 2 executions, 37s); team failed (TeamError -> ModelResponseError -> JSONDecodeError, 7 model calls, 4 tool calls, 45s). Strict delivery single 0/1, team 0/1; no HTML produced, so browser functional checks had nothing to check. TEMP dir and app/tools __pycache__ removed and verified absent. Record: docs/harness/frontend-compare-2026-11-04.md",
       "evidence_kind": "live_run_failed"
+    },
+    {
+      "id": "capability-phase1-001",
+      "name": "Recoverable tool-argument errors, safe failure codes and a graded benchmark",
+      "description": "Phase 1 of the capability roadmap (user-authorized 2026-11-04). (a) Malformed tool-call arguments become a typed ModelToolArgumentsError with only safe fields; Team Sessions and the single ToolCallingStepRunner feed back a bounded repair instruction instead of failing. (b) StepModelError messages carry the exception type chain (no raw text). (c) A fixed benchmark (bench/) with deterministic graders and a runner that executes N runs per mode in TEMP.",
+      "status": "done",
+      "dependencies": [
+        "frontend-compare-001"
+      ],
+      "acceptance": [
+        "Adapter raises ModelToolArgumentsError (subclass of ModelResponseError, same messages) carrying only reason, sanitized tool name and argument length.",
+        "Team Session and single runner repair at most max_format_repairs times, executing nothing from the rejected turn; exhaustion still fails; repair counts are visible.",
+        "StepModelError message includes only the exception type chain.",
+        "Deterministic tests in tests/ cover all of the above plus the benchmark graders; historical Team/routing tests from 9138ac1 still pass.",
+        "Benchmark live runs only with explicit per-round user authorization and call caps."
+      ],
+      "evidence": "2026-11-04: deterministic tests/test_tool_argument_repair.py 9 passed and tests/test_bench_graders.py 16 passed; historical tests/agent from git 9138ac1 in TEMP 450 passed. First live benchmark (user-authorized, 6 runs, qwen3.8-flash): strict 0/6. single completed 3/3 but every answer wrapped code in prose (lenient: fix_inventory 16/16, parse_duration 20/21, todo_html 11/11 static + 9/9 browser checks); team failed 3/3 (failure types lost to a runner regex bug, now fixed). Grader false negative (localStorage via constant) fixed. Record: docs/harness/capability-phase1-2026-11-04.md",
+      "evidence_kind": "deterministic_tests_plus_live_benchmark"
     }
   ],
   "cleanup_2026_11_04": {
@@ -316,6 +334,20 @@
       "priority": 2,
       "next_action": "Verify and finish optional read-only long-term integration; do not automatically add autonomous writes.",
       "source": "docs/superpowers/plans/2026-10-21-longterm-agent-integration.md"
+    },
+    {
+      "id": "deliverable-format-001",
+      "authorized": false,
+      "priority": 2,
+      "next_action": "Make the final answer contain only the deliverable (host deliverable contract or final-step-only output); re-run bench single to compare strict score.",
+      "source": "docs/harness/capability-phase1-2026-11-04.md"
+    },
+    {
+      "id": "team-failure-diagnosis-001",
+      "authorized": false,
+      "priority": 3,
+      "next_action": "Re-run bench team only (3 runs, needs authorization) with the fixed runner to capture failure type chains; add repair counts to the report.",
+      "source": "docs/harness/capability-phase1-2026-11-04.md"
     }
   ]
 }

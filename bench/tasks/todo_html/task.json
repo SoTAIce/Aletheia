@@ -1,0 +1,6 @@
+{
+  "id": "todo_html",
+  "goal": "读取根目录下的 spec.md，严格按其中要求实现单文件 HTML 待办事项页面。最终答案只输出完整的 HTML 文档源码。",
+  "files": ["spec.md"],
+  "grader": "html_todo"
+}

@@ -1,8 +1,31 @@
-# Current Session Handoff — 2026-11-04（team-audit-001）
+# Current Session Handoff — 2026-11-04（capability-phase1-001）
 
 格式按课程模板：Currently verified / Changes / Still broken or unverified / Next best action / Commands。
 
 ## 当前任务 / Scope
+
+**已完成：capability-phase1-001**（用户 2026-11-04 授权“先按照这个开始”：增强路线的阶段 1）。
+
+```text
+Feature: capability-phase1-001
+Scope: app/agent/tool_calling_model.py、openai_compatible_tool_calling_model.py、team/session.py、team/diagnostics.py、
+       tool_calling_step_runner.py（只加恢复逻辑；用户未提交的中文 docstring 原样保留，提交时只提交本轮 hunk）；新增 bench/ 和 tests/
+Exclusions: 不改 .env、模型默认值、依赖；不开放写权限（属于阶段 2）；不推送
+Verification: tests/ 新增确定性测试；历史 Team/路由/适配器测试（git 9138ac1 → TEMP）回归；init.ps1
+Authorization: 代码修改 + 确定性测试；评测集的真实模型运行须另行授权并设调用上限
+Done when: 参数错误可有界修复、错误链可见、评测集与评分器有测试；回归通过；TEMP 与 __pycache__ 已清理
+```
+
+**结果（2026-11-04）**：确定性验证通过（新增测试 25 个；历史 tests/agent 450 passed）。第一轮真实评测（6 次，已授权）**严格交付 0/6**：single 三项都 completed，代码基本正确（宽松诊断 16/16、20/21、11/11，浏览器实测 9/9），但答案前后夹带说明文字；team 三项都失败，失败类型因运行器 bug 丢失（已修复）。详见 [阶段 1 记录](docs/harness/capability-phase1-2026-11-04.md)。active_feature=null，**尚未提交**。
+
+下一步（backlog，均未授权）：`deliverable-format-001` 让最终答案只含交付物；`team-failure-diagnosis-001` 只跑 team 三项（3 次）以拿到失败类型。
+
+```powershell
+.venv/Scripts/python.exe -m bench.run_bench            # dry run
+.venv/Scripts/python.exe -m bench.run_bench --confirm-live --modes team --runs 1 --out output/bench-report.json   # 需授权
+```
+
+提交时注意：`app/agent/tool_calling_step_runner.py` 里混有用户未提交的中文 docstring，只能提交本轮 hunk（导入、`argument_repair_count`、`_generate` 消息、主循环 try/except）。
 
 **已完成：frontend-compare-001**（用户 2026-11-04 授权：用 single 和 team 模式各跑一次真实模型的复杂代码任务——设计一个简单前端页面）。结果：**两种模式都失败**（single 为 StepModelError，team 为 JSONDecodeError），都没有产出 HTML。详见 [对照记录](docs/harness/frontend-compare-2026-11-04.md)。active_feature=null。本轮改动未提交。
 

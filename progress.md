@@ -19,6 +19,23 @@
 
 ## Session Record
 
+### 2026-11-04 — capability-phase1-001：第一轮真实评测（用户授权 6 次）
+
+- **Result**：严格 0/6。single 3/3 completed，但答案都夹带说明文字；宽松诊断：fix_inventory 16/16、parse_duration 20/21、todo_html 11/11，浏览器 9/9。team 3/3 failed（失败类型因运行器正则 bug 丢失，已修复）。
+- **Fixes**：运行器的失败过滤；HTML 评分器的常量键误判；新增宽松诊断字段（严格口径不变）；grader 测试 16 个。
+- **Cleanup**：保存的答案、报告、本地 http 服务和浏览器标签都已删除或关闭；localStorage 已清除。
+- **Next**：backlog deliverable-format-001（交付格式），team-failure-diagnosis-001（team 重跑 3 次，需授权）。
+
+### 2026-11-04 — capability-phase1-001：可恢复的参数错误 + 评测集
+
+- **Goal**：增强路线阶段 1，即错误恢复、错误类型可见、固定评测集。
+- **Completed**：`ModelToolArgumentsError` 加有界修复（Team Session 和 single runner 都支持）；`StepModelError` 消息带类型链；`bench/` 新增 3 个任务、评分器和运行器（需 `--confirm-live`，默认最多 6 次）；DECISIONS D-012、D-013。
+- **Verification run**：新增测试 20 个通过；init.ps1 PASS（30 passed）；历史 tests/agent（git 9138ac1 → TEMP）450 passed。没有调用真实模型。
+- **Evidence recorded**：[capability-phase1-2026-11-04.md](docs/harness/capability-phase1-2026-11-04.md)，feature_list.json → capability-phase1-001
+- **Commits**：无
+- **Known risks**：修复对真实模型是否有效尚未验证；前端页面只做静态评分；AST 守卫不是沙箱
+- **Next best action**：经用户授权后跑一轮评测（6 次运行），和 frontend-compare-001 的 0/1 对比
+
 ### 2026-11-04 — frontend-compare-001：single 与 team 真实模型对照（前端页面）
 
 - **Goal**：用户授权，用 single 和 team 各跑一次真实复杂代码任务（单文件 HTML 待办页面）。

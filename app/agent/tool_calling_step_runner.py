@@ -13,7 +13,9 @@ from app.agent.step_runner import StepRunError, StepRunnerContractError, ToolRou
 from app.agent.step_runner import StepFormatError, StepToolError, StepModelError, StepTimeoutError
 from app.agent.json_output import JsonFormatError, load_json, unwrap_json_fence, repair_instruction
 from app.agent.tool_calling_model import ToolCallingModel, ToolCallingModelError
-from app.agent.tool_calling_model import ModelTimeoutError
+from app.agent.tool_calling_model import ModelTimeoutError, ModelToolArgumentsError
+from app.agent.tool_calling_model import tool_argument_repair_instruction
+from app.agent.team.diagnostics import failure_details, failure_types
 from app.tools.tool_registry import ToolRegistry
 
 
@@ -47,6 +49,7 @@ class ToolCallingStepRunner:
             raise ValueError("max_format_repairs must be a non-negative integer")
         self._max_format_repairs = max_format_repairs
         self.format_repair_count = 0
+        self.argument_repair_count = 0
 
     def _build_initial_messages(
         self, context: StepExecutionContext
@@ -120,7 +123,9 @@ class ToolCallingStepRunner:
         except ModelTimeoutError as exc:
             raise StepTimeoutError("Model request timed out", tuple(source_refs)) from exc
         except ToolCallingModelError as exc:
-            raise StepModelError("Model generation failed", tuple(source_refs)) from exc
+            # Only exception type names, never provider text or model output.
+            raise StepModelError("Model generation failed: " + failure_types(failure_details(exc)),
+                                 tuple(source_refs)) from exc
 
     async def _final_outcome(self, turn, messages, source_refs):
         # Retain the completed calls and replies, and never return to the tool loop.
@@ -174,12 +179,23 @@ class ToolCallingStepRunner:
         source_refs: list[str] = []
         seen_call_ids: set[str] = set()
         tool_rounds = 0
+        self.argument_repair_count = 0
 
         while True:
             request_tools = tools
             if tool_rounds >= self._max_tool_rounds or len(all_tool_calls) >= self._max_total_tool_calls:
                 request_tools = ()
-            turn = await self._generate(messages, request_tools, source_refs)
+            try:
+                turn = await self._generate(messages, request_tools, source_refs)
+            except StepModelError as exc:
+                # Undecodable tool arguments executed nothing: bounded host repair.
+                cause = exc.__cause__
+                if (not isinstance(cause, ModelToolArgumentsError)
+                        or self.argument_repair_count >= self._max_format_repairs):
+                    raise
+                self.argument_repair_count += 1
+                messages.append(SystemMessage(tool_argument_repair_instruction(cause)))
+                continue
             if not isinstance(turn, ModelTurn):
                 raise StepRunnerContractError("model.generate() must return ModelTurn")
             if turn.content is not None and not isinstance(turn.content, str):

@@ -10,7 +10,8 @@ from app.agent.step_models import (
 from app.services.context_manager import ContextManager
 from app.tools.tool_registry import ToolRegistry
 from app.agent.team.contracts import JsonContract, ContractError
-from app.agent.tool_calling_model import ModelOutputLimitError
+from app.agent.tool_calling_model import ModelOutputLimitError, ModelToolArgumentsError
+from app.agent.tool_calling_model import tool_argument_repair_instruction
 from app.agent.team.diagnostics import failure_details
 
 
@@ -129,6 +130,7 @@ class TeamSession:
         self._paused_version = None
         self._initialized = False
         self.format_repairs = 0
+        self.argument_repairs = 0
         self.request_tool_names = []
         self._submit_only = False
         self.version, self.model_calls, self.tool_calls = 1, 0, 0
@@ -277,6 +279,19 @@ class TeamSession:
                 self._reject_output('output limit reached; submit a compact result from retained evidence. '
                     'Do not repeat the full candidate. If evidence is insufficient, request revision '
                     'rather than approve. Never invent missing evidence')
+                continue
+            except ModelToolArgumentsError as exc:
+                # Undecodable arguments executed nothing; feed back a bounded host repair.
+                self._check_cancelled()
+                self._emit('tool_arguments_rejected', json.dumps(failure_details(exc)))
+                if version != self.version:
+                    self._emit('stale_model_discarded')
+                    continue
+                if self.format_repairs >= self.max_format_repairs:
+                    raise
+                self.format_repairs += 1
+                self.argument_repairs += 1
+                self.messages.append(UserMessage(tool_argument_repair_instruction(exc)))
                 continue
             self._check_cancelled()
             if version != self.version:

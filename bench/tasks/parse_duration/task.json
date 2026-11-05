@@ -1,0 +1,7 @@
+{
+  "id": "parse_duration",
+  "goal": "读取根目录下的 spec.md，按其中规则实现 parse_duration。最终答案只输出完整的 Python 源码。",
+  "files": ["spec.md"],
+  "grader": "python_checks",
+  "checker": "checker.py"
+}

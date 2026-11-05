@@ -18,6 +18,7 @@ from app.agent.step_models import (
 )
 from app.agent.tool_calling_model import ModelRequestError, ModelResponseError, ModelTimeoutError
 from app.agent.tool_calling_model import ModelContextOverflowError, ModelOutputLimitError
+from app.agent.tool_calling_model import ModelToolArgumentsError
 
 
 class OpenAICompatibleToolCallingModel:
@@ -214,11 +215,9 @@ class OpenAICompatibleToolCallingModel:
             names.add(tool.name)
         return payload
 
-    def _parse_arguments(self, raw_arguments: str) -> dict[str, Any]:
+    def _parse_arguments(self, raw_arguments: str, tool_name: str | None = None) -> dict[str, Any]:
         if not isinstance(raw_arguments, str):
-            raise ModelResponseError(
-                "tool call arguments must be a JSON string"
-            )
+            raise ModelToolArgumentsError('not_string', tool_name=tool_name)
 
         def reject_constant(value: str) -> None:
             raise ValueError(f"non-finite JSON constant: {value}")
@@ -238,14 +237,12 @@ class OpenAICompatibleToolCallingModel:
             # Also reject exponent overflow such as 1e999, including nested values.
             json.dumps(arguments, allow_nan=False)
         except (ValueError, RecursionError) as e:
-            raise ModelResponseError(
-                "tool call arguments are not valid JSON"
-            ) from e
+            raise ModelToolArgumentsError('invalid_json', tool_name=tool_name,
+                                          argument_chars=len(raw_arguments)) from e
 
         if not isinstance(arguments, dict):
-            raise ModelResponseError(
-                "tool call arguments must decode to a JSON object"
-            )
+            raise ModelToolArgumentsError('not_object', tool_name=tool_name,
+                                          argument_chars=len(raw_arguments))
 
         return arguments
 
@@ -276,7 +273,7 @@ class OpenAICompatibleToolCallingModel:
             if call_id in seen_ids:
                 raise ModelResponseError(f"duplicate tool call ID: {call_id}")
 
-            arguments = self._parse_arguments(raw_arguments)
+            arguments = self._parse_arguments(raw_arguments, tool_name)
             calls.append(ToolCall(
                 call_id=call_id,
                 tool_name=tool_name,

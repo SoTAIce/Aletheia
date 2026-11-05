@@ -12,6 +12,8 @@
 | [DECISIONS.md](DECISIONS.md) | 设计决策、理由、被否方案（来源指向原报告） |
 | [clean-state 清单](harness/clean-state-checklist.md)、[evaluator-rubric](harness/evaluator-rubric.md)、[质量文档](harness/quality-document.md) | 会话退出检查、评审打分、领域/层质量与可观测性 |
 | [合规审查 2026-11-04](harness/conformance-audit-2026-11-04.md) | 对照 Learn Harness Engineering 的逐项结论与剩余缺口 |
+| [能力增强阶段 1 2026-11-04](harness/capability-phase1-2026-11-04.md) | 工具参数错误可有界修复、失败带类型链；评测集 bench/（3 任务 + 自动评分）；确定性测试 20 个，历史 450 passed |
+| [评测集说明](../bench/README.md) | 任务、运行命令、授权与上限、判定口径 |
 | [single/team 前端任务对照 2026-11-04](harness/frontend-compare-2026-11-04.md) | 真实模型各跑 1 次单文件 HTML 任务：single、team 都失败（0/1），未产出 HTML |
 | [Team 一致性审查 2026-11-04](harness/team-audit-2026-11-04.md) | Team V1 文档声明逐条对照代码；历史 Team 测试 68 passed；修订上限表述更正 |
 | [已记录基线](harness/baseline.md) | HEAD + 工作区差异哈希清单（[JSON](harness/history/baseline-2026-11-04.json)）及核对命令 |

@@ -91,3 +91,19 @@
 - 约束：PowerShell 管道会破坏二进制数据，必须用 `-o` 输出文件；运行时用仓库 pyproject 的 pytest 配置（`-c pyproject.toml`）。
 - 注意：部分测试会启动 filesystem MCP 子进程，MCP stdio 客户端不会把 `PYTHONDONTWRITEBYTECODE` 传给子进程，所以会在 `app/tools/` 下生成 `__pycache__`。测完要删除（`find app -name __pycache__`）。
 - 来源：[Team 一致性审查](harness/team-audit-2026-11-04.md)
+
+## D-012 2026-11-04 工具参数解析失败可有界修复；失败信息带异常类型链
+
+- 决策：适配器把无法解析的 tool call 参数抛为 `ModelToolArgumentsError`（`ModelResponseError` 的子类，消息文本不变），只带 reason、经过过滤的工具名和参数长度。Team Session 遇到它时追加宿主修复指令后重试，和截断修复共用 `max_format_repairs` 预算；single runner 单独计数（`argument_repair_count`），上限同样是 `max_format_repairs`。被拒绝的那一轮不执行任何工具。`StepModelError` 的消息附带异常类型链（只有类型名）。
+- 理由：frontend-compare-001 中 team 因为一次参数 JSON 错误整体失败，模型既看不到错误也无法修正；single 的失败原因无法定位。
+- 被否方案：在适配器内部自动重发请求（会让 Team 的模型调用预算少算）；把原始参数回显给模型（会泄露、放大模型原文）。
+- 约束：修复次数耗尽仍然失败；其他 `ModelResponseError` 不做修复。
+- 来源：[阶段 1 记录](harness/capability-phase1-2026-11-04.md)
+
+## D-013 2026-11-04 用固定评测集衡量交付能力
+
+- 决策：新增 `bench/`：3 个固定任务（前端页面、函数实现、读代码修 bug）、隐藏 checker、确定性评分器和运行器。真实运行必须加 `--confirm-live`，并受 `--max-runs` 上限约束。
+- 理由：课程要求用可复现的验证判断完成度；单次演示不能说明能力有没有提升。
+- 被否方案：继续用一次性人工对照；让模型自己评分。
+- 约束：候选 Python 代码先过 AST 守卫，再在 `python -I` 子进程中带超时执行——只防误伤，不是安全沙箱；报告不含模型原文。每轮真实运行都要用户单独授权。
+- 来源：[bench/README.md](../bench/README.md)
