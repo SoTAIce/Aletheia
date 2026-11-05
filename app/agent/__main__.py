@@ -11,14 +11,19 @@ from app.tools.tool_loader import local_mcp_servers
 
 
 def team_options_for(execution_mode, write_root, sandbox=False, timeout_seconds=None, acceptance=False):
-    """Options for the delegating team (DECISIONS D-019; the only team since D-025); None outside team mode.
+    """Options for the delegating team (DECISIONS D-019; the only team since D-025); None when no team can run.
+
+    auto (D-026) gets team options only with a write root and the sandbox, the one case the routing
+    rules leave to the model; otherwise auto always runs single.
 
     Workers stay read-only unless a write root is configured; with the sandbox they may also run code
     and completion needs a passing run after the last write. acceptance opts in to independent
     acceptance tests, off by default because weak models write wrong ones (DECISIONS D-022).
     """
-    if execution_mode != 'team':
+    if execution_mode not in ('team', 'auto'):
         return None
+    if execution_mode == 'auto' and not (write_root and sandbox):
+        return None   # the routing rules allow the team only for code delivery in the sandbox (D-026)
     from app.agent.team_v2 import DelegationOptions, READ_TOOLS
     tools = READ_TOOLS | ({'write_file'} if write_root else set()) | (
         {'run_tests', 'run_python'} if sandbox else set())
@@ -85,8 +90,9 @@ def build_parser():
     parser.add_argument("--filesystem-root", help="Directory exposed by the filesystem MCP server")
     parser.add_argument("--write-root", help="Optional writable directory; omitted means read-only")
     parser.add_argument("--no-knowledge", action="store_true", help="Disable RAG when no knowledge store is configured")
-    parser.add_argument('--execution-mode', choices=['single', 'team'], default='single',
-                        help='Use ordinary tool calling or an independently led reviewed team')
+    parser.add_argument('--execution-mode', choices=['single', 'team', 'auto'], default='single',
+                        help='single: ordinary tool calling; team: the delegating team; '
+                             'auto: host rules, then one model call, pick per task (D-026)')
     parser.add_argument('--sandbox', action='store_true',
                         help='Let the agent run workspace code/tests in the Docker sandbox (needs --write-root)')
     parser.add_argument('--team-timeout', type=float, help='Team time budget in seconds (default 180)')

@@ -27,6 +27,7 @@ _GUARD_REASONS = frozenset({'syntax_error', 'forbidden_import', 'forbidden_name'
 _SAFE_FAILURE = re.compile(r'^(Planning failed: )?[A-Za-z]+(Error|Exception)(: [A-Za-z][\w :().,>-]{0,200})?$',
                            re.ASCII)
 _TEAM_TRACE = re.compile(r'Team trace: (\{.*\})')
+_ROUTE = re.compile(r'Route decision: (\{[^\n]*\})')
 _TEAM_COUNTS = re.compile(r'"model_calls": (\d+), "tool_calls": (\d+)')
 
 
@@ -109,11 +110,12 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             cmd += ['--write-root', str(root)]
         if sandbox:
             cmd.append('--sandbox')
-        if team_timeout is not None and mode == 'team':
+        teamish = mode in ('team', 'auto')   # auto may route to the team (D-026)
+        if team_timeout is not None and teamish:
             cmd += ['--team-timeout', str(team_timeout)]
-        if mode == 'team' and team_acceptance:
+        if teamish and team_acceptance:
             cmd.append('--team-acceptance')
-        if team_timeout is not None and mode == 'team':
+        if team_timeout is not None and teamish:
             # Planning and teardown run outside the team budget; never kill a team that is still in time.
             timeout = max(timeout, team_timeout + 300)
         started = time.monotonic()
@@ -139,6 +141,12 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             row['team_trace'] = parsed[-1]
             if len(parsed) > 1:
                 row['team_traces'] = parsed
+        route = _ROUTE.search(stderr)
+        if route:
+            try:
+                row['route'] = json.loads(route.group(1))   # host values only (D-026)
+            except ValueError:
+                row['route'] = 'unparsable'
         counts = _TEAM_COUNTS.search(stderr)
         if counts:
             row['team_model_calls'], row['team_tool_calls'] = int(counts.group(1)), int(counts.group(2))
@@ -199,7 +207,7 @@ def summary(rows):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--tasks', nargs='+', default=['all'])
-    parser.add_argument('--modes', nargs='+', choices=['single', 'team'], default=['single', 'team'])
+    parser.add_argument('--modes', nargs='+', choices=['single', 'team', 'auto'], default=['single', 'team'])
     parser.add_argument('--runs', type=int, default=1, help='runs per task and mode')
     parser.add_argument('--max-runs', type=int, default=6, help='refuse plans with more agent runs than this')
     parser.add_argument('--timeout', type=float, default=600, help='seconds per agent run')
@@ -209,8 +217,6 @@ def main(argv=None):
     parser.add_argument('--sandbox', action='store_true',
                         help='file delivery plus run_tests/run_python in the Docker sandbox (implies --write)')
     parser.add_argument('--team-timeout', type=float, help='team time budget per run in seconds')
-    parser.add_argument('--team-version', type=int, choices=[1, 2], default=2,
-                        help='team implementation for team mode (2, default since D-024: delegating team; 1: V1)')
     parser.add_argument('--team-acceptance', action='store_true',
                         help='team V2 + sandbox: opt in to independent acceptance tests (D-022)')
     parser.add_argument('--write', action='store_true',

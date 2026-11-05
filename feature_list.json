@@ -526,6 +526,22 @@
         "Current regression passes; historical regression differs only by the four V1/prototype test files that can no longer be collected."
       ],
       "evidence": "Current tests 108 passed/12 skipped (V1-only tests removed); tests/test_team_v2.py covers the removal; historical 9138ac1: 1022 passed/2 skipped/3 known failures plus 4 collection errors, exactly tests/agent/test_team_v1.py, test_team_contract_review.py, test_team_reliability.py, test_team_session_poc.py (68 tests); init.ps1 PASS."
+    },
+    {
+      "id": "route-auto-001",
+      "name": "Per-task routing: host rules, then one model call (auto mode)",
+      "description": "User asked 2026-11-05 ('先按如此写') for dynamic routing that combines rules and a model, phase 1 of the proposal: choose single or team once per task, before planning. New app/agent/route_selection.py: allowed_modes() is the host rule layer (the team is a candidate only with write_file and the sandbox gate, where it has evidence); choose_mode() asks the model one tool-free JSON question only when the rules leave both modes, validates the reply against the rules, and falls back to single on any failure or timeout (20 s). RagAgentService accepts execution_mode='auto', chooses per new task, keeps the choice for a blocked task's resume and forgets it when the task ends; fixed modes log a 'user' decision. CLI --execution-mode auto (team options only with --write-root and --sandbox); the bench accepts --modes auto, passes team flags to it and records the decision as row['route']. Every decision is logged as 'Route decision: {...}' with host values only. Also removed the bench --team-version argument left over from D-025. Per-step routing is phase 2 and not done.",
+      "status": "done",
+      "dependencies": [
+        "team-v1-removal-001"
+      ],
+      "acceptance": [
+        "Rules that leave one mode never call the model; the model cannot choose a mode the rules exclude.",
+        "Invalid JSON, extra fields, tool calls, model errors and timeouts fall back to single; cancellation propagates.",
+        "Auto binds the team planner, registry and capability requirement only for tasks routed to the team; a blocked task keeps its route.",
+        "The decision log carries no model text; current and historical regression unchanged."
+      ],
+      "evidence": "tests/test_route_selection.py 20 passed; current tests 128 passed/12 skipped; historical 9138ac1 1022 passed/2 skipped/3 known failures plus the 4 V1 collection errors (baseline unchanged); init.ps1 PASS. Live routing accuracy not measured."
     }
   ],
   "cleanup_2026_11_04": {

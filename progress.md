@@ -19,6 +19,12 @@
 
 ## Session Record
 
+### 2026-11-05 — route-auto-001：按任务动态选择执行模式
+
+- **Result**：新增 `--execution-mode auto`，每个任务先按宿主规则、再用一次模型判断选择普通或团队，任何异常退回普通模式。决策 D-026。顺带删除评测器遗留的 `--team-version`。
+- **Verification**：路由测试 20 passed；当前 tests 128 passed；历史回归基线不变；init.ps1 PASS。
+- **Evidence**：[route-auto-2026-11-05.md](docs/harness/route-auto-2026-11-05.md)。真实运行未验证；**未提交**。
+
 ### 2026-11-05 — team-v1-removal-001：删除团队模式 V1
 
 - **Result**：V1 团队和早期原型代码已删除；团队模式只剩 V2，`--team-version` 移除。决策 D-025。

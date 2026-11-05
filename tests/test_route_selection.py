@@ -1,0 +1,206 @@
+"""Deterministic tests for per-task routing: host rules, then one model call (route-auto-001, DECISIONS D-026)."""
+
+import asyncio
+import json
+import logging
+
+import pytest
+
+from app.agent.route_selection import ModeChoice, allowed_modes, choose_mode
+from app.agent.runtime import AgentRunResult
+from app.agent.step_models import ModelTurn, ToolCall
+from app.agent.team_v2 import READ_TOOLS, DelegationOptions, SingleStepPlanner
+from app.models.taskstate import TaskStatus
+
+SANDBOX = DelegationOptions(allowed_tools=READ_TOOLS | {'write_file', 'run_tests', 'run_python'},
+                            require_passing_run=True)
+SECRET = 'SECRET-ROUTE-7c1'
+
+
+class Model:
+    """Scripted model; an exception in the script is raised instead of returned."""
+
+    def __init__(self, *turns):
+        self.turns, self.requests = list(turns), []
+
+    async def generate(self, messages, tools):
+        self.requests.append((tuple(messages), tools))
+        item = self.turns.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+class Slow:
+    async def generate(self, messages, tools):
+        await asyncio.sleep(5)
+
+
+def reply(route, **extra):
+    return ModelTurn(content=json.dumps({'route': route, 'reason': SECRET, **extra}))
+
+
+def test_rules_leave_the_choice_to_the_model_only_for_code_delivery_in_the_sandbox():
+    assert allowed_modes(None) == (frozenset({'single'}), 'team_unavailable')
+    assert allowed_modes(DelegationOptions()) == (frozenset({'single'}), 'read_only')
+    write_only = DelegationOptions(allowed_tools=READ_TOOLS | {'write_file'})
+    assert allowed_modes(write_only) == (frozenset({'single'}), 'no_sandbox')
+    assert allowed_modes(SANDBOX) == (frozenset({'single', 'team'}), 'code_delivery_with_sandbox')
+
+
+async def test_a_rule_decision_never_calls_the_model():
+    model = Model()
+    choice = await choose_mode('what time is it', DelegationOptions(), model)
+    assert choice == ModeChoice('single', 'rule', 'read_only') and model.requests == []
+
+
+@pytest.mark.parametrize('route', ['team', 'single'])
+async def test_the_model_chooses_inside_the_rules(route):
+    model = Model(reply(route))
+    choice = await choose_mode('implement parse_duration with tests', SANDBOX, model)
+    assert choice == ModeChoice(route, 'model', 'code_delivery_with_sandbox')
+    (messages, tools), = model.requests
+    assert tools == ()                                               # tool-free call
+    assert 'json' in ' '.join(m.content for m in messages).lower()   # provider JSON mode needs it
+    assert json.loads(messages[1].content) == {'task': 'implement parse_duration with tests'}
+
+
+async def test_long_goals_are_truncated_for_the_routing_call():
+    model = Model(reply('single'))
+    await choose_mode('x' * 9000, SANDBOX, model)
+    assert len(json.loads(model.requests[0][0][1].content)['task']) == 4000
+
+
+@pytest.mark.parametrize('turn, failure', [
+    (ModelTurn(content='team'), 'JsonFormatError -> JSONDecodeError'),
+    (ModelTurn(content='```json\n{"route": "parallel"}\n```'), 'ValueError'),
+    (reply('team', plan='do everything'), 'ValueError'),
+    (ModelTurn(content='{"route": "team"}', tool_calls=(ToolCall('c', 'write_file', {}),)), 'ValueError'),
+    (ConnectionError(SECRET), 'ConnectionError'),
+])
+async def test_any_model_failure_falls_back_to_single(turn, failure, caplog):
+    caplog.set_level(logging.INFO, logger='app.agent.route_selection')
+    choice = await choose_mode('implement it', SANDBOX, Model(turn))
+    assert choice == ModeChoice('single', 'fallback', 'code_delivery_with_sandbox', failure)
+    assert SECRET not in caplog.text
+
+
+async def test_a_slow_model_times_out_to_single():
+    choice = await choose_mode('implement it', SANDBOX, Slow(), timeout_seconds=0.05)
+    assert (choice.mode, choice.source, choice.failure) == ('single', 'fallback', 'TimeoutError -> CancelledError')
+
+
+async def test_cancellation_is_not_swallowed():
+    task = asyncio.ensure_future(choose_mode('implement it', SANDBOX, Slow()))
+    await asyncio.sleep(0.01)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+async def test_the_decision_log_has_host_values_only_and_is_loud_on_request(caplog, monkeypatch):
+    caplog.set_level(logging.INFO, logger='app.agent.route_selection')
+    monkeypatch.delenv('ALETHEIA_TEAM_TRACE', raising=False)
+    await choose_mode('implement it', SANDBOX, Model(reply('team')))
+    monkeypatch.setenv('ALETHEIA_TEAM_TRACE', '1')
+    await choose_mode('implement it', SANDBOX, Model(reply('team')))
+    records = [r for r in caplog.records if r.getMessage().startswith('Route decision: ')]
+    assert [r.levelname for r in records] == ['INFO', 'WARNING']
+    assert json.loads(records[0].getMessage()[len('Route decision: '):]) == {
+        'mode': 'team', 'source': 'model', 'rule': 'code_delivery_with_sandbox'}
+    assert SECRET not in caplog.text
+
+
+def test_cli_auto_gets_team_options_only_for_code_delivery_in_the_sandbox():
+    from app.agent.__main__ import build_parser, team_options_for
+    assert build_parser().parse_args(['goal', '--execution-mode', 'auto']).execution_mode == 'auto'
+    options = team_options_for('auto', 'w', True, 300)
+    assert isinstance(options, DelegationOptions) and options.require_passing_run and options.timeout_seconds == 300
+    assert team_options_for('auto', 'w', False) is None and team_options_for('auto', None, False) is None
+
+
+def test_bench_passes_team_flags_to_auto_and_reads_the_decision(monkeypatch):
+    from types import SimpleNamespace
+    from bench import run_bench
+    seen = []
+    decision = 'Route decision: ' + json.dumps({'mode': 'team', 'source': 'model', 'rule': 'r'})
+    monkeypatch.setattr(run_bench, 'launch_agent', lambda cmd, env, timeout: seen.append((cmd, timeout)) or
+                        SimpleNamespace(stdout='x\n\nStatus: failed; executions: 1; replans: 0\n',
+                                        stderr='noise\n' + decision + '\n'))
+    task = next(t for t in run_bench.load_tasks(['all']) if t['id'] == 'parse_duration')
+    row = run_bench.run_one(task, 'auto', 1, 5, team_timeout=200, team_acceptance=True)
+    cmd, timeout = seen[0]
+    assert cmd[cmd.index('--execution-mode') + 1] == 'auto' and '--team-acceptance' in cmd
+    assert cmd[cmd.index('--team-timeout') + 1] == '200' and timeout == 500
+    assert row['route'] == {'mode': 'team', 'source': 'model', 'rule': 'r'}
+    with pytest.raises(SystemExit):
+        run_bench.main(['--team-version', '2'])                      # removed with V1 (D-025)
+
+
+# ---- service ------------------------------------------------------------------------------
+
+class FakeRuntime:
+    created = []
+
+    def __init__(self, planner, model, memory, registry, **options):
+        self.planner, self.memory, self.options = planner, memory, options
+        FakeRuntime.created.append(self)
+
+    async def run(self):
+        status = FakeRuntime.status
+        return AgentRunResult(self.memory.task_state.task_id, status, 'done', (), 1, 0)
+
+
+def _service(monkeypatch, model, status=TaskStatus.COMPLETED, **kw):
+    from app.services import rag_agent_service as module
+    FakeRuntime.created, FakeRuntime.status = [], status
+    monkeypatch.setattr(module, 'AgentRuntime', FakeRuntime)
+    return module.RagAgentService(model=model, mcp_servers=(), include_knowledge=False, **kw)
+
+
+async def test_auto_service_routes_each_task_and_binds_the_chosen_runner(monkeypatch):
+    model = Model(reply('team'), reply('single'))
+    service = _service(monkeypatch, model, execution_mode='auto', team_options=SANDBOX)
+    async with service:
+        await service.query_result('implement parse_duration with tests', 's')
+        await service.query_result('what does parse_duration do?', 's')
+    team, single = FakeRuntime.created
+    assert isinstance(team.planner, SingleStepPlanner) and not isinstance(single.planner, SingleStepPlanner)
+    assert [d.runner_id for d in team.options['runner_registry'].definitions()] == ['tool_calling', 'agent_team']
+    assert team.options['runner_requirements'](None).capabilities == {'agent_team'}
+    assert single.options['runner_registry'] is None and single.options['runner_requirements'] is None
+    assert service._routes == {}                                     # finished tasks forget their route
+
+
+async def test_auto_without_team_options_never_asks_the_model(monkeypatch):
+    service = _service(monkeypatch, Model(), execution_mode='auto')
+    async with service:
+        await service.query_result('implement it', 's')
+    assert not isinstance(FakeRuntime.created[0].planner, SingleStepPlanner)
+
+
+async def test_a_blocked_task_keeps_its_route_for_the_resume(monkeypatch):
+    service = _service(monkeypatch, Model(reply('team')), TaskStatus.BLOCKED,
+                       execution_mode='auto', team_options=SANDBOX)
+    async with service:
+        result = await service.query_result('implement it', 's')
+        assert list(service._routes.values()) == ['team']
+        assert service._routes == {(service._session_key(None, 's'), result.task_id): 'team'}
+
+
+async def test_fixed_modes_keep_their_runner_and_log_a_user_decision(monkeypatch, caplog):
+    caplog.set_level(logging.INFO, logger='app.agent.route_selection')
+    service = _service(monkeypatch, Model(), execution_mode='team', team_options=SANDBOX)
+    async with service:
+        await service.query_result('anything', 's')
+    assert isinstance(FakeRuntime.created[0].planner, SingleStepPlanner)
+    assert '"source": "user", "rule": "team"' in caplog.text
+
+
+def test_auto_rejects_a_custom_runner_registry():
+    from app.agent.runner_registry import default_runner_registry
+    from app.services.rag_agent_service import RagAgentService
+    with pytest.raises(ValueError, match='register_delegating_team_runner'):
+        RagAgentService(execution_mode='auto', runner_registry=default_runner_registry(), mcp_servers=())
+    with pytest.raises(ValueError, match='single, team or auto'):
+        RagAgentService(execution_mode='parallel', mcp_servers=())

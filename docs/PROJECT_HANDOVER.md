@@ -53,13 +53,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1
 ```text
 CLI / 调用方
   -> RagAgentService：身份、Turn、模型/工具生命周期、暂停恢复
+       auto 模式：每个新任务先选模式（宿主规则，再一次模型判断，D-026）
   -> WorkingMemory(TaskState + Resources)
   -> Planner 提议 -> Executor 校验并安装
   -> AgentRuntime 取下一步 / Replan / 完成或阻塞
   -> StepExecutor 开始、校验、提交 Step
   -> RoutingStepRunner -> RunnerRegistry + RoutingPolicy
        -> ToolCallingStepRunner：单 Agent 工具循环
-       -> AgentTeamRunner：Lead + Coordinator + Member Sessions
+       -> DelegatingTeamRunner（V2）：负责人委派给全新上下文的执行者，宿主判定完成
   -> StepRunOutput -> 公共提交路径 -> Task Completion / Turn outcome
 ```
 

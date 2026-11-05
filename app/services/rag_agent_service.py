@@ -52,6 +52,11 @@ def _restore_result(data: dict) -> AgentRunResult:
     data['status'] = TaskStatus(data['status'])
     return AgentRunResult(steps=tuple(steps), **data)
 
+def _team_requirements(context):
+    from app.agent.runner_router import RunnerRequirements
+    return RunnerRequirements(frozenset({'agent_team'}))
+
+
 class RagAgentService:
     """Each accepted request is a turn; explicit resumes retain the same task.
 
@@ -77,18 +82,18 @@ class RagAgentService:
         self._planner_model = planner_model
         self._runner_options = dict(runner_registry=runner_registry, routing_policy=routing_policy,
                                     runner_requirements=runner_requirements)
-        if execution_mode not in ('single', 'team'):
-            raise ValueError('execution_mode must be single or team')
+        if execution_mode not in ('single', 'team', 'auto'):
+            raise ValueError('execution_mode must be single, team or auto')
         from app.agent.team_v2 import DelegationOptions
         if team_options is not None and not isinstance(team_options, DelegationOptions):
             raise TypeError('team_options must be DelegationOptions')
-        if (execution_mode == 'team' or team_options is not None) and runner_registry is not None:
+        if (execution_mode != 'single' or team_options is not None) and runner_registry is not None:
             raise ValueError('use register_delegating_team_runner for custom registry assembly')
         self._execution_mode = execution_mode
         self._team_options = team_options or (DelegationOptions() if execution_mode == 'team' else None)
         if execution_mode == 'team' and runner_requirements is None:
-            from app.agent.runner_router import RunnerRequirements
-            self._runner_options['runner_requirements'] = lambda context: RunnerRequirements(frozenset({'agent_team'}))
+            self._runner_options['runner_requirements'] = _team_requirements
+        self._routes: dict[tuple[object, str], str] = {}   # task -> mode chosen at its start (D-026)
         self._mcp_servers = tuple(mcp_servers) if mcp_servers is not None else local_mcp_servers(
             filesystem_root=config.mcp_filesystem_root or None,
             write_root=config.mcp_filesystem_write_root or None,
@@ -279,16 +284,23 @@ class RagAgentService:
                         local_tools=(ContextArchiveTool(conversation.archive),) if conversation.archive else (),
                         context_manager=context_manager,
                     ) as registry:
+                        # The mode is chosen once per task and kept when a blocked task resumes (D-026).
+                        route = self._routes.get((key, task.task_id)) if runtime is not None else None
+                        if route is None:
+                            route = await self._choose_route(question, model)
+                        self._routes[(key, task.task_id)] = route
                         # Team V2 owns the whole task: one fixed plan step, one team (DECISIONS D-019).
-                        if self._team_options is not None:
+                        if route == 'team':
                             from app.agent.team_v2 import SingleStepPlanner
                             planner = SingleStepPlanner(planner_model, max_steps=1, context_manager=context_manager)
                         else:
                             planner = Planner(planner_model, context_manager=context_manager)
                         if runtime is None:
                             runner_options = dict(self._runner_options)
-                            if self._team_options is not None:
+                            if route == 'team':
                                 runner_options['runner_registry'] = self._team_registry()
+                                if runner_options['runner_requirements'] is None:
+                                    runner_options['runner_requirements'] = _team_requirements
                             runtime = AgentRuntime(planner, model, memory, registry,
                                                    **self._limits, **runner_options, context_manager=context_manager)
                         else:
@@ -300,6 +312,7 @@ class RagAgentService:
                             self._tasks[(key, task.task_id)] = runtime
                         else:
                             self._tasks.pop((key, task.task_id), None)
+                            self._routes.pop((key, task.task_id), None)
             except StaleExecutionError:
                 # This interaction no longer owns task state. Finish only its
                 # own durable turn; do not fail or remove the newer execution.
@@ -315,11 +328,21 @@ class RagAgentService:
                     if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                         task.fail_task(content)
                     self._tasks.pop((key, task.task_id), None)
+                    self._routes.pop((key, task.task_id), None)
                     self._pending_outcomes[outcome_key] = (status, content, None)
                 await _durable(self._publish_outcome(conversation, outcome_key))
                 raise
             await _durable(self._publish_outcome(conversation, outcome_key))
             return result
+
+    async def _choose_route(self, question, model):
+        """single/team keep the configured runner; auto applies host rules, then one model call."""
+        from app.agent.route_selection import SINGLE, TEAM, ModeChoice, choose_mode, log_choice
+        if self._execution_mode != 'auto':
+            choice = ModeChoice(TEAM if self._team_options is not None else SINGLE, 'user', self._execution_mode)
+            log_choice(choice)
+            return choice.mode
+        return (await choose_mode(question, self._team_options, model)).mode
 
     def _team_registry(self):
         from app.agent.runner_registry import default_runner_registry
