@@ -10,6 +10,7 @@ from app.agent.step_models import ModelTurn, StepOutcome, ToolMessage
 from app.agent.team.models import TeamError
 from app.agent.team_v2 import DelegatingTeamRunner, DelegationOptions, READ_TOOLS
 from app.agent.tool_calling_model import ModelToolArgumentsError
+from app.agent.tool_calling_step_runner import ToolCallingStepRunner
 from app.tools.tool_registry import ToolRegistry
 from test_sandbox_step1 import _context
 from test_sandbox_step3 import FakeTool, call
@@ -384,3 +385,237 @@ async def test_lead_json_failure_ends_the_team():
     model = Scripted(ModelTurn(content='{"status": "failed", "content": "x", "reason": "PRIVATE"}'))
     with pytest.raises(TeamError, match='lead reported failure'):
         await DelegatingTeamRunner(model, _registry(), DelegationOptions()).run(_context())
+
+
+def _worker_writes(request):
+    from app.agent.step_models import AssistantMessage
+    return {c.arguments['path']: c.arguments['content'] for m in request if isinstance(m, AssistantMessage)
+            for c in m.tool_calls if c.tool_name == 'write_file'}
+
+
+def _four_writes():
+    return [call(f'w{i}', 'write_file', path=f'{n}.py', content=n * 3000) for i, n in enumerate('abcd', 1)]
+
+
+async def test_plain_worker_overflows_on_whole_file_writes():
+    # Reproduces the live failure: prepare() never shrinks write_file arguments.
+    from app.agent.step_runner import StepModelError
+    from app.services.context_manager import ContextManager
+    model = Scripted(*_four_writes(), call('w5', 'run_tests', path='t.py'), final('done'))
+    runner = ToolCallingStepRunner(model, _registry(*_sandbox_tools()), 12, 24, require_step_outcome=True,
+                                   context_manager=ContextManager(window_tokens=7000))
+    with pytest.raises(StepModelError, match='ContextBudgetError'):
+        await runner.run(_context())
+
+
+async def test_worker_view_keeps_only_the_latest_file_body_when_near_the_window():
+    from app.services.context_manager import ContextManager
+    model = Scripted(delegate('l1'), *_four_writes(), call('w5', 'run_tests', path='t.py'), final('done'))
+    runner = DelegatingTeamRunner(model, _registry(*_sandbox_tools()), SANDBOX, ContextManager(window_tokens=7000))
+    output = await runner.run(_context())
+    assert output.outcome is StepOutcome.SUCCEEDED and not model.items
+    view = _worker_writes(model.requests[5])                  # worker request after the 4th write
+    assert view['d.py'] == 'd' * 3000
+    for name in 'abc':
+        assert view[f'{name}.py'] == '[host: 3000 chars omitted; read_file this path for its current content]'
+    record = {c.arguments['path']: c.arguments['content'] for c in output.tool_calls if c.tool_name == 'write_file'}
+    assert record == {f'{n}.py': n * 3000 for n in 'abcd'}   # evidence keeps the full arguments
+
+
+async def test_worker_view_drops_superseded_bodies_first(caplog, monkeypatch):
+    from app.services.context_manager import ContextManager
+    monkeypatch.setenv('ALETHEIA_TEAM_TRACE', '1')
+    model = Scripted(delegate('l1'),
+                     call('w1', 'write_file', path='a.py', content='a' * 3000),
+                     call('w2', 'write_file', path='a.py', content='b' * 3000),
+                     call('w3', 'run_tests', path='t.py'), final('done'))
+    runner = DelegatingTeamRunner(model, _registry(*_sandbox_tools()), SANDBOX, ContextManager(window_tokens=6500))
+    with caplog.at_level(logging.INFO):
+        await runner.run(_context())
+    from app.agent.step_models import AssistantMessage
+    bodies = [c.arguments['content'] for m in model.requests[3] if isinstance(m, AssistantMessage)
+              for c in m.tool_calls if c.tool_name == 'write_file']
+    assert bodies == ['[host: 3000 chars omitted; a later write_file replaced this file]', 'b' * 3000]
+    line = next(r.getMessage() for r in caplog.records if 'Team trace' in r.getMessage())
+    entry = json.loads(line.split('Team trace: ', 1)[1])['delegations'][0]
+    assert entry['compacted'] >= 1 and entry['strong_compacted'] == 0
+
+
+async def test_strong_tier_also_drops_old_code_arguments_and_long_outputs():
+    # Live run: strong compaction of write bodies alone still overflowed (run_python code, full outputs).
+    from app.agent.step_models import AssistantMessage
+    from app.services.context_manager import ContextManager
+    big_out = 'exit code 0; 1.0s\n' + 'o' * 3000
+    tools = (FakeTool('read_file', 'x'), FakeTool('write_file', 'ok'), FakeTool('run_tests', big_out),
+             FakeTool('run_python', big_out))
+    model = Scripted(delegate('l1'),
+                     call('w1', 'run_python', code='p' * 3000),
+                     call('w2', 'run_python', code='q' * 3000),
+                     call('w3', 'run_python', code='r' * 3000),
+                     call('w4', 'write_file', path='a.py', content='a' * 3000),
+                     call('w5', 'run_tests', path='t.py'), final('done'))
+    runner = DelegatingTeamRunner(model, _registry(*tools), SANDBOX, ContextManager(window_tokens=7000))
+    output = await runner.run(_context())
+    assert output.outcome is StepOutcome.SUCCEEDED and not model.items
+    request = model.requests[5]                                  # after the write, before run_tests
+    codes = [c.arguments.get('code') for m in request if isinstance(m, AssistantMessage)
+             for c in m.tool_calls if c.tool_name == 'run_python']
+    assert codes == ['[host: 3000 chars omitted from an earlier call]'] * 3
+    assert _worker_writes(request) == {'a.py': 'a' * 3000}      # the latest turn stays whole
+    assert [c.arguments['code'] for c in output.tool_calls if c.tool_name == 'run_python'] == [
+        'p' * 3000, 'q' * 3000, 'r' * 3000]                      # evidence keeps full arguments
+
+
+ACC = DelegationOptions(allowed_tools=SANDBOX.allowed_tools, require_passing_run=True, acceptance_tests=True)
+PASS, FAIL = 'exit code 0; 1.0s\n3 passed', 'exit code 1; 1.0s\nFAILED test_acceptance_p.py::test_rejects_1d'
+
+
+def _lead_requests(model):
+    return [r for r in model.requests if 'Team Lead' in (getattr(r[0], 'content', '') or '')]
+
+
+def _lead_replies(model):
+    return [json.loads(m.content) for m in _lead_requests(model)[-1]
+            if isinstance(m, ToolMessage) and m.content.startswith('{')]
+
+
+def _acc_tools(*runs):
+    return (FakeTool('read_file', 'x'), FakeTool('write_file', 'File written successfully.'), Seq('run_tests', *runs))
+
+
+def _worker_round(tag):
+    return [call(f'{tag}1', 'write_file', path='p.py', content='code'), call(f'{tag}2', 'run_tests'), final('works')]
+
+
+def _verifier_round(tag):
+    return [call(f'{tag}1', 'write_file', path='test_acceptance_p.py', content='tests'),
+            call(f'{tag}2', 'run_tests', path='test_acceptance_p.py'), final('tests written')]
+
+
+async def test_host_runs_independent_acceptance_tests_before_completing():
+    tools = _acc_tools(PASS, PASS, PASS)                  # worker, verifier, host
+    model = Scripted(delegate('l1'), *_worker_round('w'), *_verifier_round('v'))
+    output = await DelegatingTeamRunner(model, _registry(*tools), ACC).run(_context())
+    assert output.outcome is StepOutcome.SUCCEEDED and output.content == 'works' and not model.items
+    host = [(c.call_id, c.arguments) for c in output.tool_calls if c.call_id.startswith('host/')]
+    assert host == [('host/acceptance-1', {'path': 'test_acceptance_p.py'})]
+    assert tools[2].calls[-1] == {'path': 'test_acceptance_p.py'}           # the host's own run
+    assert 'independent acceptance tester' in _texts(model.requests[4])     # verifier gets a fresh brief
+    assert 'Team Lead' not in _texts(model.requests[4])
+
+
+async def test_failed_acceptance_goes_back_to_the_lead_and_the_suite_is_reused():
+    tools = _acc_tools(PASS, FAIL, FAIL, PASS, PASS)    # worker, verifier, host, worker, host
+    model = Scripted(delegate('l1'), *_worker_round('w'), *_verifier_round('v'),
+                     delegate('l2', task='fix p.py so the acceptance tests pass'), *_worker_round('x'))
+    output = await DelegatingTeamRunner(model, _registry(*tools), ACC).run(_context())
+    assert output.outcome is StepOutcome.SUCCEEDED and not model.items
+    first = _lead_replies(model)[0]
+    assert first['acceptance']['passed'] is False and first['acceptance']['verifiers'][0]['member'] == 'verifier-2'
+    assert 'test_rejects_1d' in first['acceptance']['runs'][0]['output']
+    assert 'make them pass' in _texts(model.requests[8]) and 'test_acceptance_p.py' in _texts(model.requests[8])
+    assert [c.call_id for c in output.tool_calls if c.call_id.startswith('host/')] == [
+        'host/acceptance-1', 'host/acceptance-2']                            # no second verifier
+
+
+async def test_lead_answer_is_not_accepted_while_acceptance_fails():
+    tools = _acc_tools(PASS, FAIL, FAIL)
+    done = ModelTurn(content='{"status": "succeeded", "content": "done", "reason": null}')
+    model = Scripted(delegate('l1'), *_worker_round('w'), *_verifier_round('v'), done, done)
+    with pytest.raises(TeamError, match='acceptance gate not met'):
+        await DelegatingTeamRunner(model, _registry(*tools), ACC).run(_context())
+
+
+async def test_write_gate_keeps_workers_and_verifiers_on_their_own_files():
+    from app.agent.team_v2 import _WriteGate
+    write = FakeTool('write_file', 'ok')
+    worker, verifier = _WriteGate(write, False), _WriteGate(write, True)
+    assert (await worker.invoke({'path': 'sub/test_acceptance_p.py'})).success is False
+    assert (await worker.invoke({'path': 'p.py'})).success is True
+    assert (await verifier.invoke({'path': 'p.py'})).success is False
+    assert (await verifier.invoke({'path': 'test_acceptance_p.py'})).success is True
+    assert write.calls == [{'path': 'p.py'}, {'path': 'test_acceptance_p.py'}]
+    # In a delegation the rejection reaches the worker as a failed tool result, never a write.
+    tools = _acc_tools(PASS)
+    model = Scripted(delegate('l1'), call('w1', 'write_file', path='test_acceptance_p.py', content='weaker'),
+                     final('tried', status='failed', reason='blocked by host'),
+                     ModelTurn(content='{"status": "failed", "content": "x", "reason": "stop"}'))
+    with pytest.raises(TeamError):
+        await DelegatingTeamRunner(model, _registry(*tools), ACC).run(_context())
+    assert tools[1].calls == []
+
+
+async def test_verify_rewrites_the_suite_and_can_complete():
+    tools = _acc_tools(PASS, FAIL, FAIL, PASS, PASS)    # worker, verifier, host, new verifier, host
+    model = Scripted(call('l0', 'verify', focus='too early'),
+                     delegate('l1'), *_worker_round('w'), *_verifier_round('v'),
+                     call('l2', 'verify', focus='1d is allowed by the goal'), *_verifier_round('u'))
+    output = await DelegatingTeamRunner(model, _registry(*tools), ACC).run(_context())
+    assert output.outcome is StepOutcome.SUCCEEDED and not model.items
+    early = next(m.content for m in _lead_requests(model)[-1] if isinstance(m, ToolMessage) and m.call_id == 'l0')
+    assert early == 'HOST: no worker has succeeded yet; delegate the implementation first.'
+    assert '1d is allowed by the goal' in _texts(model.requests[-3])          # the fresh verifier's brief
+
+
+async def test_verifiers_have_their_own_budget_then_fall_back_to_the_worker_gate(caplog, monkeypatch):
+    # Live run 1: a failed verifier used up the shared budget and a 21/21 delivery ended blocked.
+    monkeypatch.setenv('ALETHEIA_TEAM_TRACE', '1')
+    model = Scripted(delegate('l1'), *_worker_round('w'),
+                     final('wrote nothing'),                                    # verifier 1: no tests
+                     BAD, BAD, BAD)                                              # verifier 2: crashes
+    options = DelegationOptions(allowed_tools=ACC.allowed_tools, require_passing_run=True,
+                                acceptance_tests=True, max_delegations=1)
+    with caplog.at_level(logging.INFO):
+        output = await DelegatingTeamRunner(model, _registry(*_acc_tools(PASS)), options).run(_context())
+    assert output.outcome is StepOutcome.SUCCEEDED and output.content == 'works' and not model.items
+    line = next(r.getMessage() for r in caplog.records if 'Team trace' in r.getMessage())
+    trace = json.loads(line.split('Team trace: ', 1)[1])
+    assert trace['budget']['delegations'] == 1 and trace['budget']['verifications'] == 2
+    assert trace['delegations'][-1] == {'member': 'host', 'role': 'acceptance', 'status': 'unavailable', 'suite': 0}
+
+
+async def test_failed_verifier_files_are_recovered_from_the_workspace():
+    listing = FakeTool('list_directory', '{"entries": [{"name": "p.py"}, {"name": "test_acceptance_p.py"}]}')
+    tools = (*_acc_tools(PASS, PASS), listing)          # worker run, host run
+    model = Scripted(delegate('l1'), *_worker_round('w'),
+                     call('v1', 'write_file', path='test_acceptance_p.py', content='tests'),
+                     BAD, BAD, BAD)                      # the verifier crashes after writing its file
+    output = await DelegatingTeamRunner(model, _registry(*tools), ACC).run(_context())
+    assert output.outcome is StepOutcome.SUCCEEDED and not model.items
+    assert [c.arguments for c in output.tool_calls if c.call_id.startswith('host/')] == [
+        {'path': 'test_acceptance_p.py'}]
+    assert listing.calls == [{'path': '.'}]
+
+
+async def test_ungranted_tool_is_named_in_the_report():
+    model = Scripted(delegate('l1', tools=['read_file']), call('w1', 'write_file', path='p.py', content='x'),
+                     ModelTurn(content='{"status": "failed", "content": "x", "reason": "stop"}'))
+    with pytest.raises(TeamError):
+        await DelegatingTeamRunner(model, _registry(*_sandbox_tools()), SANDBOX).run(_context())
+    report = _reports(model)[0]
+    assert report['status'] == 'error' and report['unavailable_tool'] == 'write_file'
+    assert 'not granted' in report['note']
+
+
+def test_acceptance_tests_are_opt_in():
+    # D-022: independent acceptance blocked correct deliveries on the current model; off by default.
+    from types import SimpleNamespace
+    from app.agent.__main__ import team_options_for
+    from bench import run_bench
+    assert team_options_for('team', 'w', True, 400, team_version=2).acceptance_tests is False
+    assert team_options_for('team', 'w', True, 400, team_version=2, acceptance=True).acceptance_tests is True
+    assert team_options_for('team', 'w', False, 400, team_version=2, acceptance=True).acceptance_tests is False
+    seen = []
+    monkeypatch_target = run_bench.launch_agent
+    run_bench.launch_agent = lambda cmd, env, timeout: seen.append(cmd) or SimpleNamespace(
+        stdout='x\n\nStatus: failed; executions: 1; replans: 0\n', stderr='')
+    try:
+        task = next(t for t in run_bench.load_tasks(['all']) if t['id'] == 'parse_duration')
+        run_bench.run_one(task, 'team', 1, 5, team_version=2)
+        run_bench.run_one(task, 'team', 1, 5, team_version=2, team_acceptance=True)
+        run_bench.run_one(task, 'single', 1, 5, team_version=2, team_acceptance=True)
+    finally:
+        run_bench.launch_agent = monkeypatch_target
+    assert ['--team-acceptance' in cmd for cmd in seen] == [False, True, False]
+    runner = DelegatingTeamRunner(Scripted(), _registry(FakeTool('read_file', 'x')), ACC)
+    assert runner.acceptance is False                                         # no run/write tools, no gate

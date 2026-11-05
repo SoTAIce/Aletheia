@@ -416,7 +416,70 @@
         "Safe trace logged; bench can select --team-version 2; V1 tests unchanged.",
         "Deterministic tests pass, current and historical regression unchanged; live runs need separate authorization."
       ],
-      "evidence": "app/agent/team_v2.py (new), wiring in rag_agent_service.py (V2 branch + one-step planner), __main__.py and bench --team-version; tests/test_team_v2.py 19 passed; current tests 114 passed/12 skipped; historical 9138ac1 1090 passed/2 skipped/3 known failures; init.ps1 PASS. Baseline commit 480f6fb. Live evaluation not run (needs authorization). Record: docs/harness/team-v2-2026-11-04.md | Live run 1 (authorized 2): 0/2, both failed in planning after ~6s (max_steps=1 planner output rejected by validation, not repaired); fixed with SingleStepPlanner (no planning model call) and bench recognizing \"Planning failed:\" lines; tests/test_team_v2.py 22 passed incl. runtime end-to-end; current tests 116 passed; historical 1090 passed/3 known failures; init PASS. | Live run 2 (authorized 2): 0/2, Lead first request rejected (BadRequestError): RAG_JSON_MODE requires \"json\" in messages and JSON-only output; Lead final answer switched to the single-mode JSON outcome (plain-text fallback); tests/test_team_v2.py 28 passed; current tests 122 passed; historical 1090 passed/3 known failures; init PASS. | Live run 3 (authorized 2): 2/2 strict pass. parse_duration 132.1s, 2 delegations (worker-1 ContextBudgetError -> redelegated, worker-2 passed), 25 model/14 tool calls, 21/21; fix_inventory 39.4s, 1 delegation, 7 model/6 tool calls, 16/16. Host completion and redelegation verified live. One run each: small sample."
+      "evidence": "app/agent/team_v2.py (new), wiring in rag_agent_service.py (V2 branch + one-step planner), __main__.py and bench --team-version; tests/test_team_v2.py 19 passed; current tests 114 passed/12 skipped; historical 9138ac1 1090 passed/2 skipped/3 known failures; init.ps1 PASS. Baseline commit 480f6fb. Live evaluation not run (needs authorization). Record: docs/harness/team-v2-2026-11-04.md | Live run 1 (authorized 2): 0/2, both failed in planning after ~6s (max_steps=1 planner output rejected by validation, not repaired); fixed with SingleStepPlanner (no planning model call) and bench recognizing \"Planning failed:\" lines; tests/test_team_v2.py 22 passed incl. runtime end-to-end; current tests 116 passed; historical 1090 passed/3 known failures; init PASS. | Live run 2 (authorized 2): 0/2, Lead first request rejected (BadRequestError): RAG_JSON_MODE requires \"json\" in messages and JSON-only output; Lead final answer switched to the single-mode JSON outcome (plain-text fallback); tests/test_team_v2.py 28 passed; current tests 122 passed; historical 1090 passed/3 known failures; init PASS. | Live run 3 (authorized 2): 2/2 strict pass. parse_duration 132.1s, 2 delegations (worker-1 ContextBudgetError -> redelegated, worker-2 passed), 25 model/14 tool calls, 21/21; fix_inventory 39.4s, 1 delegation, 7 model/6 tool calls, 16/16. Host completion and redelegation verified live. One run each: small sample. | Stability (authorized 12): V2 parse_duration 3/3 (283.1/80.0/185.9s; 2 of 3 first workers ContextBudgetError then redelegated), fix_inventory 3/3 (77.5/61.6/84.6s); single parse_duration 1/3 (StepFormatError, ModelOutputLimitError), fix_inventory 3/3 (98.1/125.4/99.8s). V2 total 8/8."
+    },
+    {
+      "id": "team-v2-context-001",
+      "name": "Keep V2 workers inside the context window",
+      "description": "User asked 2026-11-04 ('先修执行者超窗') after the stability run: 3 of 4 live parse_duration runs lost the first worker to ContextBudgetError because ContextManager.prepare never shrinks write_file arguments. The V1 model-view compaction moves to app/agent/model_view.py (V1 session unchanged in behavior); V2 workers get a context-manager wrapper: above 60% of the window superseded write_file bodies and older outputs are compacted, above 85% every write_file body but the latest is replaced by a read_file pointer. Only the model view changes; evidence keeps full arguments.",
+      "status": "done",
+      "dependencies": [
+        "team-v2-001"
+      ],
+      "acceptance": [
+        "A deterministic repro shows the plain worker raising ContextBudgetError on four whole-file writes; the V2 worker completes the same script.",
+        "Superseded bodies are dropped first; the strong tier keeps only the latest body; tool evidence keeps full arguments; the trace counts compactions.",
+        "V1 model-view tests pass unchanged; current and historical regression unchanged; live confirmation needs authorization."
+      ],
+      "evidence": "tests/test_team_v2.py 30 passed (3 new); current tests 125 passed/12 skipped; historical 9138ac1 1090 passed/2 skipped/3 known failures; init.ps1 PASS. Live runs not done. | Live (authorized 3, parse_duration/V2): strict 2/3 (231.6s pass, 203.8s 14/21 accepted on own tests, 126.9s pass). Overflow 1/3 (was 3/4): strong tier missed run_python code args and recent outputs -> strong tier now drops all large args outside the latest turn and keeps 2 whole outputs (1 new test). Open: worker requesting an ungranted tool is fatal (StepRunError, 2 workers); acceptance trusts the worker's own tests. tests 126 passed; historical 1090 passed."
+    },
+    {
+      "id": "team-v2-acceptance-001",
+      "name": "Independent acceptance tests decide V2 completion",
+      "description": "User asked 2026-11-04 ('先修验收门槛') after a live run where the host accepted a 14/21 answer because only the worker's own tests had to pass. With DelegationOptions.acceptance_tests (on with --sandbox), after a worker passes its own tests the host delegates a fresh verifier that writes test_acceptance*.py from the goal only; the HOST runs those files itself and completion needs them to pass after the last deliverable write. Workers cannot write acceptance files and verifiers can write nothing else (write_file gate). Failures go back to the Lead with the host run output; later worker successes are re-checked by a host rerun without a new verifier; verify(focus) lets the Lead have the suite rewritten when a test contradicts the goal.",
+      "status": "done",
+      "dependencies": [
+        "team-v2-context-001"
+      ],
+      "acceptance": [
+        "Completion waits for a passing host run of the verifier's suite; a Lead final answer is rejected while it fails.",
+        "Workers cannot modify acceptance files; verifiers cannot modify anything else; rejections never write.",
+        "Failures reach the Lead with host output; the suite is reused; verify rewrites it; no tests written means no completion.",
+        "Current and historical regression unchanged; live confirmation needs authorization."
+      ],
+      "evidence": "tests/test_team_v2.py 38 passed (7 new); current tests 133 passed/12 skipped; historical 9138ac1 1090 passed/2 skipped/3 known failures; init.ps1 PASS. Live runs not done. | Live (authorized 3, parse_duration/V2+acceptance): strict 2/3; both completed runs 21/21 (no wrong answer accepted); run 1 blocked although the file was 21/21 (verifier failed, 6 delegations used up). 460.6-536.6s, 67-84 model calls (2-4x before). Causes: verifier failures lose written test paths; verifier shares the delegation cap; frequent worker blocked; ungranted-tool StepRunError."
+    },
+    {
+      "id": "team-v2-acceptance-002",
+      "name": "Harden V2 acceptance: own verifier budget, recovered suites, fallback, named ungranted tools",
+      "description": "User asked 2026-11-04 ('加固验收流程') after live acceptance runs: a failed verifier shared the 6-delegation cap and a 21/21 delivery ended blocked. Verifiers now have max_verifications (default 2) apart from max_delegations and the host retries a failed verifier itself; after a verifier fails, the host lists the workspace and reuses any test_acceptance*.py it finds; if no suite exists after all attempts, completion falls back to the worker's own passing run (trace: acceptance unavailable); a worker that calls an ungranted tool is reported with the tool name and a note for the Lead.",
+      "status": "done",
+      "dependencies": [
+        "team-v2-acceptance-001"
+      ],
+      "acceptance": [
+        "Verifier attempts never consume worker delegations; the host retries a failed verifier up to max_verifications.",
+        "Acceptance files written before a verifier failure are found and run by the host.",
+        "With no suite after all attempts the worker's passing run decides and the trace says acceptance was unavailable.",
+        "Ungranted tool calls are reported with a host-checked tool name.",
+        "Current and historical regression unchanged; live confirmation needs authorization."
+      ],
+      "evidence": "tests/test_team_v2.py 40 passed (3 new, 1 rewritten for the fallback); current tests 135 passed/12 skipped; historical 9138ac1 1090 passed/2 skipped/3 known failures; init.ps1 PASS. Live runs not done. | Live (authorized 3): strict 1/3. Run 1 team timeout 603s; run 2 blocked although the file was 21/21 (host acceptance failed 3 times: the verifier tests were wrong); run 3 passed after verify rewrote the suite. parse_duration/V2 totals: worker gate 6/7 vs independent acceptance 3/6 with 2 correct deliveries blocked and 2-4x cost. Hardening worked (own count, 6 files recovered, ungranted tool named) but acceptance test quality is the root problem."
+    },
+    {
+      "id": "team-v2-acceptance-003",
+      "name": "Independent acceptance tests become opt-in",
+      "description": "User decided 2026-11-04 ('改为默认关闭') after live evidence that the current model writes wrong acceptance tests: parse_duration/V2 strict 6/7 with the worker gate vs 3/6 with independent acceptance (2 correct deliveries blocked, 2-4x cost). Sandbox V2 now defaults to the worker's own passing run; --team-acceptance (CLI and bench) opts in. The acceptance code and its hardening stay.",
+      "status": "done",
+      "dependencies": [
+        "team-v2-acceptance-002"
+      ],
+      "acceptance": [
+        "Sandbox V2 without --team-acceptance has acceptance_tests false; with it true; never without the sandbox.",
+        "Bench passes --team-acceptance only for team mode when asked.",
+        "Current and historical regression unchanged."
+      ],
+      "evidence": "tests/test_team_v2.py 40 passed (opt-in test replaces the default-on test); current tests 135 passed/12 skipped; historical 9138ac1 1090 passed/2 skipped/3 known failures; init.ps1 PASS; bench dry run shows team_acceptance."
     }
   ],
   "cleanup_2026_11_04": {

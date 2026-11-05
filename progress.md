@@ -19,6 +19,33 @@
 
 ## Session Record
 
+### 2026-11-04 — team-v2-acceptance-003：独立验收改为默认关闭
+
+- **Result**：沙盒 V2 默认回到执行者自测门槛；`--team-acceptance` 可选开启。决策 D-022。
+- **Verification**：当前 tests 135 passed；完整历史 1090 passed；init.ps1 PASS。
+- **Evidence**：[team-v2-2026-11-04.md](docs/harness/team-v2-2026-11-04.md)。**未提交**。
+
+### 2026-11-04 — team-v2-acceptance-002：加固验收流程
+
+- **Result**：验收者单独计数并自动重试；失败后从工作目录找回验收文件；没有验收测试时退回自测门槛；未授予的工具会被点名。决策 D-021。
+- **Verification**：V2 测试 40 passed；当前 tests 135 passed；完整历史 1090 passed；init.ps1 PASS。
+- **Evidence**：[team-v2-2026-11-04.md](docs/harness/team-v2-2026-11-04.md)。**未提交**。
+- **Live（授权 3 次）**：严格 1/3；一次 21/21 的交付因验收测试写错被判 blocked。汇总：自测门槛 6/7，独立验收 3/6 且成本 2–4 倍。结论：当前模型上独立验收弊大于利。
+
+### 2026-11-04 — team-v2-acceptance-001：独立验收测试决定 V2 是否完成
+
+- **Result**：执行者自测通过后，宿主委派独立验收者按目标写 `test_acceptance*.py`，并亲自运行；通过才算完成。执行者不能改验收文件；负责人可用 `verify` 重写验收测试。决策 D-020。
+- **Verification**：新增 7 项测试；当前 tests 133 passed；完整历史 1090 passed；init.ps1 PASS。
+- **Evidence**：[team-v2-2026-11-04.md](docs/harness/team-v2-2026-11-04.md)。**未提交**。
+- **Live（授权 3 次）**：严格 2/3，完成的两次都是 21/21，没有再接受错误答案；但第 1 次文件 21/21 却因验收者失败、委派用完而 blocked；耗时与调用约为之前的 2–4 倍。
+
+### 2026-11-04 — team-v2-context-001：V2 执行者不再因写文件超窗
+
+- **Result**：视图压缩移到 `app/agent/model_view.py`；V2 执行者两档压缩（60% 去掉被取代的文件内容，85% 只保留最近一次写入的内容）。
+- **Verification**：新增 3 项测试（含超窗复现）；当前 tests 125 passed；完整历史 1090 passed；init.ps1 PASS。
+- **Evidence**：[team-v2-2026-11-04.md](docs/harness/team-v2-2026-11-04.md)。**未提交**。
+- **Live（授权 3 次）**：严格 2/3；超窗从 3/4 降到 1/3，剩下的一次已补（第二档也压缩 run_python 代码与旧输出）。新发现：执行者请求未授予的工具即失败；宿主只凭执行者自测就接受了 14/21 的答案。
+
 ### 2026-11-04 — team-v2-001：团队模式 V2（编排者—执行者）
 
 - **Result**：先把 V1 恢复改动提交为基线 `480f6fb`；新增 `app/agent/team_v2.py`，负责人通过 `delegate` 委派给全新上下文的普通模式执行器，宿主判定完成；`--team-version 2` 选择（默认仍为 1）。决策 D-019。
@@ -28,6 +55,7 @@
 - **Live run（授权 2 次）**：0/2，都在约 6 秒的规划阶段失败（单步规划的输出没通过校验，也没有修复），没进入团队。已改为不调用模型的固定单步计划，并补了运行时端到端测试；当前 tests 116 passed，历史 1090 passed。
 - **Live run 2（授权 2 次）**：0/2，进入了团队，但负责人第一次请求就被服务方拒绝（BadRequestError）：JSON 模式要求消息里出现 “json”，且只能输出 JSON。负责人的最终回答已改为普通模式的 JSON 结果格式；当前 tests 122 passed，历史 1090 passed。
 - **Live run 3（授权 2 次）**：**2/2 严格通过**。parse_duration 132 秒（第一个执行者上下文超窗失败，负责人重新委派后通过，21/21）；fix_inventory 39 秒（一次委派，16/16）。每项仅 1 次，样本小。
+- **稳定性对照（授权 12 次）**：V2 6/6（parse_duration 3/3、fix_inventory 3/3），普通模式 4/6（parse_duration 1/3）。V2 弱点：parse_duration 第一个执行者常超出上下文窗口，重新委派使耗时翻倍。已提交 `29c2efe`，本轮只改记录。
 
 ### 2026-11-04 — team-recovery-001：团队恢复能力（诊断建议第 1、2 项）
 

@@ -87,7 +87,7 @@ SANDBOX_HINT = ('写完后先写测试，再用 run_tests 或 run_python 在沙�
 
 
 def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=False, team_timeout=None,
-            team_version=1):
+            team_version=1, team_acceptance=False):
     write = write or sandbox
     work = Path(tempfile.mkdtemp(prefix='aletheia-bench-'))
     root = work / 'root'
@@ -112,6 +112,8 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             cmd += ['--team-timeout', str(team_timeout)]
         if mode == 'team' and team_version != 1:
             cmd += ['--team-version', str(team_version)]
+        if mode == 'team' and team_acceptance:
+            cmd.append('--team-acceptance')
         if team_timeout is not None and mode == 'team':
             # Planning and teardown run outside the team budget; never kill a team that is still in time.
             timeout = max(timeout, team_timeout + 300)
@@ -208,6 +210,8 @@ def main(argv=None):
     parser.add_argument('--team-timeout', type=float, help='team time budget per run in seconds')
     parser.add_argument('--team-version', type=int, choices=[1, 2], default=1,
                         help='team implementation for team mode (2: delegating team, D-019)')
+    parser.add_argument('--team-acceptance', action='store_true',
+                        help='team V2 + sandbox: opt in to independent acceptance tests (D-022)')
     parser.add_argument('--write', action='store_true',
                         help='let the agent write the deliverable file into its TEMP root and grade that file')
     args = parser.parse_args(argv)
@@ -216,7 +220,7 @@ def main(argv=None):
     tasks = load_tasks(args.tasks)
     planned = len(tasks) * len(args.modes) * args.runs
     plan = (f'{planned} agent run(s): tasks={[t["id"] for t in tasks]} modes={args.modes} runs={args.runs} '
-            f'team_version={args.team_version} '
+            f'team_version={args.team_version} team_acceptance={args.team_acceptance} '
             f'delivery={"file" if args.write or args.sandbox else "answer"} sandbox={args.sandbox}')
     if planned > args.max_runs:
         parser.error(f'{plan} exceeds --max-runs {args.max_runs}')
@@ -230,7 +234,8 @@ def main(argv=None):
             for mode in args.modes:
                 for index in range(1, args.runs + 1):
                     rows.append(run_one(task, mode, index, args.timeout, args.keep_answers, args.write,
-                                        args.sandbox, args.team_timeout, args.team_version))
+                                        args.sandbox, args.team_timeout, args.team_version,
+                                        args.team_acceptance))
                     print(json.dumps(rows[-1], ensure_ascii=False), file=sys.stderr, flush=True)
     finally:
         # The MCP stdio child does not inherit PYTHONDONTWRITEBYTECODE (DECISIONS D-011).

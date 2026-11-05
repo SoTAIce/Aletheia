@@ -14,6 +14,7 @@ from app.agent.team.contracts import JsonContract, ContractError
 from app.agent.tool_calling_model import ModelOutputLimitError, ModelToolArgumentsError
 from app.agent.tool_calling_model import tool_argument_repair_instruction
 from app.agent.team.diagnostics import failure_details
+from app.agent.model_view import compact_model_view
 
 
 _TOOL_NAME = re.compile(r'[A-Za-z][A-Za-z0-9_.-]{0,63}')
@@ -262,52 +263,9 @@ class TeamSession:
             raise
 
     # Long-lived team sessions accumulate whole files in write_file arguments and tool outputs.
-    # Above this share of the window, the MODEL VIEW drops superseded file bodies and shortens
-    # older outputs; self.messages and tool receipts are never changed.
-    VIEW_COMPACT_SHARE = 0.6
-    KEEP_RECENT_OUTPUTS = 6
-    _OLD_OUTPUT_CHARS = 300
-
     def _model_view(self, tools):
-        messages = tuple(self.messages)
-        if self.manager.count_request(messages, tools) <= self.manager.window_tokens * self.VIEW_COMPACT_SHARE:
-            return messages
-        latest = {}
-        for index, message in enumerate(messages):
-            if isinstance(message, AssistantMessage):
-                for call in message.tool_calls:
-                    if call.tool_name == 'write_file' and isinstance(call.arguments.get('path'), str):
-                        latest[call.arguments['path']] = (index, call.call_id)
-        tool_indexes = [i for i, m in enumerate(messages) if isinstance(m, ToolMessage)]
-        recent = set(tool_indexes[-self.KEEP_RECENT_OUTPUTS:])
-        view = []
-        for index, message in enumerate(messages):
-            if isinstance(message, AssistantMessage) and message.tool_calls:
-                calls = []
-                for call in message.tool_calls:
-                    body, path = call.arguments.get('content'), call.arguments.get('path')
-                    if (call.tool_name == 'write_file' and isinstance(body, str) and len(body) > 400
-                            and latest.get(path) != (index, call.call_id)):
-                        call = replace(call, arguments={**call.arguments, 'content':
-                            f'[host: {len(body)} chars omitted; a later write_file replaced this file]'})
-                    calls.append(call)
-                message = replace(message, tool_calls=tuple(calls))
-            elif isinstance(message, ToolMessage) and index not in recent:
-                message = self._shorten_output(message)
-            view.append(message)
-        return tuple(view)
-
-    def _shorten_output(self, message):
-        try:
-            payload = json.loads(message.content)
-        except ValueError:
-            return message
-        content = payload.get('content') if isinstance(payload, dict) else None
-        if not isinstance(content, str) or len(content) <= 2 * self._OLD_OUTPUT_CHARS:
-            return message
-        payload['content'] = (content[:self._OLD_OUTPUT_CHARS] +
-                              f'\n[host: older output shortened, {len(content)} chars in total]')
-        return replace(message, content=json.dumps(payload, ensure_ascii=False))
+        # Only the MODEL VIEW changes; self.messages and tool receipts stay intact (app/agent/model_view.py).
+        return compact_model_view(self.messages, tools, self.manager)
 
     async def _loop(self, registry):
         definitions = registry.list_definitions()
