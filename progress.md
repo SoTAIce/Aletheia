@@ -19,6 +19,16 @@
 
 ## Session Record
 
+### 2026-11-04 — team-v2-001：团队模式 V2（编排者—执行者）
+
+- **Result**：先把 V1 恢复改动提交为基线 `480f6fb`；新增 `app/agent/team_v2.py`，负责人通过 `delegate` 委派给全新上下文的普通模式执行器，宿主判定完成；`--team-version 2` 选择（默认仍为 1）。决策 D-019。
+- **Verification**：新增 19 项测试；当前 tests 114 passed；完整历史 1090 passed（3 项已知失败不变）；init.ps1 PASS。
+- **Cleanup**：TEMP 与 `__pycache__` 已删除，无沙盒容器残留。
+- **Evidence**：[team-v2-2026-11-04.md](docs/harness/team-v2-2026-11-04.md)。V2 改动**未提交**。
+- **Live run（授权 2 次）**：0/2，都在约 6 秒的规划阶段失败（单步规划的输出没通过校验，也没有修复），没进入团队。已改为不调用模型的固定单步计划，并补了运行时端到端测试；当前 tests 116 passed，历史 1090 passed。
+- **Live run 2（授权 2 次）**：0/2，进入了团队，但负责人第一次请求就被服务方拒绝（BadRequestError）：JSON 模式要求消息里出现 “json”，且只能输出 JSON。负责人的最终回答已改为普通模式的 JSON 结果格式；当前 tests 122 passed，历史 1090 passed。
+- **Live run 3（授权 2 次）**：**2/2 严格通过**。parse_duration 132 秒（第一个执行者上下文超窗失败，负责人重新委派后通过，21/21）；fix_inventory 39 秒（一次委派，16/16）。每项仅 1 次，样本小。
+
 ### 2026-11-04 — team-recovery-001：团队恢复能力（诊断建议第 1、2 项）
 
 - **Result**：成员只因协议错误失败时，交回负责人处理（团队最多 2 次）；修复次数改为每次运行重置（团队合计最多 8 次）。决策 D-018。

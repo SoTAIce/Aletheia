@@ -10,12 +10,21 @@ from app.services.rag_agent_service import RagAgentService
 from app.tools.tool_loader import local_mcp_servers
 
 
-def team_options_for(execution_mode, write_root, sandbox=False, timeout_seconds=None):
+def team_options_for(execution_mode, write_root, sandbox=False, timeout_seconds=None, team_version=1):
     """Team stays read-only unless a write root is configured; then workers may write files.
 
     With the sandbox, workers may also run code and finish needs a passing run; write -> test -> fix
     loops need larger team budgets than the read-only defaults (team-recovery-001).
+    team_version 2 selects the delegating team (DECISIONS D-019).
     """
+    if execution_mode == 'team' and team_version == 2:
+        from app.agent.team_v2 import DelegationOptions, READ_TOOLS
+        tools = READ_TOOLS | ({'write_file'} if write_root else set()) | (
+            {'run_tests', 'run_python'} if sandbox else set())
+        defaults = DelegationOptions()
+        return DelegationOptions(allowed_tools=frozenset(tools), require_passing_run=bool(sandbox),
+                                 timeout_seconds=defaults.timeout_seconds if timeout_seconds is None
+                                 else timeout_seconds)
     if execution_mode != 'team' or (not write_root and timeout_seconds is None):
         return None
     from app.agent.team.models import TeamOptions
@@ -74,7 +83,8 @@ async def main(args) -> int:
             conversation_compressor=compressor,
             execution_mode=getattr(args, 'execution_mode', 'single'),
             team_options=team_options_for(getattr(args, 'execution_mode', 'single'), write_root, sandbox,
-                                          getattr(args, 'team_timeout', None)),
+                                          getattr(args, 'team_timeout', None),
+                                          getattr(args, 'team_version', 1)),
         ))
         result = await service.query_result(args.goal, args.session_id)
     print(result.content)
@@ -94,6 +104,8 @@ if __name__ == "__main__":
     parser.add_argument('--sandbox', action='store_true',
                         help='Let the agent run workspace code/tests in the Docker sandbox (needs --write-root)')
     parser.add_argument('--team-timeout', type=float, help='Team time budget in seconds (default 180)')
+    parser.add_argument('--team-version', type=int, choices=[1, 2], default=1,
+                        help='1: Lead-commanded sessions; 2: Lead delegating to fresh workers (D-019)')
     parser.add_argument("--max-executions", type=int, default=16)
     parser.add_argument("--max-replans", type=int, default=2)
     parser.add_argument('--compress-history', action='store_true',

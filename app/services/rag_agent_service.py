@@ -80,13 +80,15 @@ class RagAgentService:
         if execution_mode not in ('single', 'team'):
             raise ValueError('execution_mode must be single or team')
         from app.agent.team.models import TeamOptions, TeamStore
-        if team_options is not None and not isinstance(team_options, TeamOptions):
-            raise TypeError('team_options must be TeamOptions')
+        from app.agent.team_v2 import DelegationOptions
+        if team_options is not None and not isinstance(team_options, (TeamOptions, DelegationOptions)):
+            raise TypeError('team_options must be TeamOptions or DelegationOptions')
         if (execution_mode == 'team' or team_options is not None) and runner_registry is not None:
             raise ValueError('use register_team_runner for custom registry assembly')
         self._execution_mode = execution_mode
         self._team_options = team_options or (TeamOptions() if execution_mode == 'team' else None)
         self._team_store = TeamStore()
+        self._team_v2 = isinstance(self._team_options, DelegationOptions)
         if execution_mode == 'team' and runner_requirements is None:
             from app.agent.runner_router import RunnerRequirements
             self._runner_options['runner_requirements'] = lambda context: RunnerRequirements(frozenset({'agent_team'}))
@@ -280,7 +282,12 @@ class RagAgentService:
                         local_tools=(ContextArchiveTool(conversation.archive),) if conversation.archive else (),
                         context_manager=context_manager,
                     ) as registry:
-                        planner = Planner(planner_model, context_manager=context_manager)
+                        # Team V2 owns the whole task: one fixed plan step, one team (DECISIONS D-019).
+                        if self._team_v2:
+                            from app.agent.team_v2 import SingleStepPlanner
+                            planner = SingleStepPlanner(planner_model, max_steps=1, context_manager=context_manager)
+                        else:
+                            planner = Planner(planner_model, context_manager=context_manager)
                         if runtime is None:
                             runner_options = dict(self._runner_options)
                             if self._team_options is not None:
@@ -321,6 +328,11 @@ class RagAgentService:
 
     def _team_registry(self, parent_memory):
         from app.agent.runner_registry import default_runner_registry
+        if self._team_v2:
+            from app.agent.team_v2 import register_delegating_team_runner
+            registry = default_runner_registry()
+            register_delegating_team_runner(registry, options=self._team_options)
+            return registry
         from app.agent.agent_team_runner import register_team_runner
         from app.agent.team.models import TeamEnvironment
         @asynccontextmanager
