@@ -265,6 +265,23 @@
         "scope": "Deterministic tests only; no live model/MCP/DB.",
         "record": "docs/harness/team-audit-2026-11-04.md"
       }
+    },
+    {
+      "id": "frontend-compare-001",
+      "name": "Real-model single vs team comparison on a frontend page task",
+      "description": "User-authorized (2026-11-04) live run: same spec (single-file HTML todo page) executed once with --execution-mode single and once with team, read-only filesystem root in TEMP, web search disabled; outputs judged by the same strict acceptance checks in a browser.",
+      "status": "done",
+      "dependencies": [
+        "team-audit-001"
+      ],
+      "acceptance": [
+        "Both modes run on an identical spec file in an isolated TEMP root; status, executions, replans and wall time recorded.",
+        "Final answer judged strictly: complete single-file HTML, no external resources, and each functional requirement (add/Enter/empty reject/toggle/delete/filter/count/localStorage/viewport) checked in a browser with no console errors.",
+        "Failures recorded as-is; no retries beyond one run per mode; no secrets or provider raw text recorded.",
+        "TEMP run dirs and repo __pycache__ removed and verified absent."
+      ],
+      "evidence": "2026-11-04 live run (qwen3.8-flash, one run per mode, read-only TEMP root, web search off): single failed (StepModelError, 2 executions, 37s); team failed (TeamError -> ModelResponseError -> JSONDecodeError, 7 model calls, 4 tool calls, 45s). Strict delivery single 0/1, team 0/1; no HTML produced, so browser functional checks had nothing to check. TEMP dir and app/tools __pycache__ removed and verified absent. Record: docs/harness/frontend-compare-2026-11-04.md",
+      "evidence_kind": "live_run_failed"
     }
   ],
   "cleanup_2026_11_04": {

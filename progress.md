@@ -19,6 +19,16 @@
 
 ## Session Record
 
+### 2026-11-04 — frontend-compare-001：single 与 team 真实模型对照（前端页面）
+
+- **Goal**：用户授权，用 single 和 team 各跑一次真实复杂代码任务（单文件 HTML 待办页面）。
+- **Completed**：在 TEMP 沙箱放同一份 spec；两种模式各跑 1 次（只读，web search 关闭，默认上限，不重试）。
+- **Verification run**：single failed（StepModelError，2 次执行，37s）；team failed（TeamError → ModelResponseError → JSONDecodeError，7 次模型调用，45s）。严格交付 0/1 对 0/1；没有 HTML，所以浏览器验收无对象。
+- **Evidence recorded**：[frontend-compare-2026-11-04.md](docs/harness/frontend-compare-2026-11-04.md)，feature_list.json → frontend-compare-001
+- **Commits**：无
+- **Known risks**：样本量 1；single 的具体失败子类无法从 CLI 得知
+- **Next best action**：如果授权，先让失败类型可诊断，或开放受限 write-root 后再对照
+
 ### 2026-11-04 — team-audit-001：Agent Team V1 文档—代码一致性审查
 
 - **Goal**：读 Team 源码，核对文档，按 harness 管理，测完及时清理。
