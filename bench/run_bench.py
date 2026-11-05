@@ -23,6 +23,7 @@ from bench.graders import extract_code, grade_html_todo, grade_python, split_cli
 BENCH = Path(__file__).resolve().parent
 REPO = BENCH.parent
 # The runtime prefixes planning failures; planner validation messages are host-authored.
+_GUARD_REASONS = frozenset({'syntax_error', 'forbidden_import', 'forbidden_name', 'forbidden_attribute'})
 _SAFE_FAILURE = re.compile(r'^(Planning failed: )?[A-Za-z]+(Error|Exception)(: [A-Za-z][\w :().,>-]{0,200})?$',
                            re.ASCII)
 _TEAM_TRACE = re.compile(r'Team trace: (\{.*\})')
@@ -87,7 +88,7 @@ SANDBOX_HINT = ('写完后先写测试，再用 run_tests 或 run_python 在沙�
 
 
 def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=False, team_timeout=None,
-            team_version=1, team_acceptance=False):
+            team_version=2, team_acceptance=False):
     write = write or sandbox
     work = Path(tempfile.mkdtemp(prefix='aletheia-bench-'))
     root = work / 'root'
@@ -110,7 +111,7 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             cmd.append('--sandbox')
         if team_timeout is not None and mode == 'team':
             cmd += ['--team-timeout', str(team_timeout)]
-        if mode == 'team' and team_version != 1:
+        if mode == 'team':
             cmd += ['--team-version', str(team_version)]
         if mode == 'team' and team_acceptance:
             cmd.append('--team-acceptance')
@@ -157,6 +158,8 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             checks = grade(task, content)
             row['checks_passed'], row['checks_total'], row['passed'] = summarize(checks)
             row['failed_checks'] = sorted(k for k, v in checks.items() if v is not True)
+            if checks.get('_reason') in _GUARD_REASONS:
+                row['guard_reason'] = checks['_reason']  # host enum: why the static guard refused
             row.update(lenient(task, content))
             if keep_dir is not None:
                 suffix = '.html' if task['grader'] == 'html_todo' else '.py'
@@ -208,8 +211,8 @@ def main(argv=None):
     parser.add_argument('--sandbox', action='store_true',
                         help='file delivery plus run_tests/run_python in the Docker sandbox (implies --write)')
     parser.add_argument('--team-timeout', type=float, help='team time budget per run in seconds')
-    parser.add_argument('--team-version', type=int, choices=[1, 2], default=1,
-                        help='team implementation for team mode (2: delegating team, D-019)')
+    parser.add_argument('--team-version', type=int, choices=[1, 2], default=2,
+                        help='team implementation for team mode (2, default since D-024: delegating team; 1: V1)')
     parser.add_argument('--team-acceptance', action='store_true',
                         help='team V2 + sandbox: opt in to independent acceptance tests (D-022)')
     parser.add_argument('--write', action='store_true',

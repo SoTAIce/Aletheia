@@ -143,7 +143,7 @@ async def test_tools_missing_from_the_parent_registry_are_never_granted():
     assert runner.worker_tools == {'read_file'} and runner.review_tools == {'read_file'}
 
 
-async def test_worker_failure_is_reported_and_its_unknown_writes_reset_the_gate():
+async def test_worker_error_without_tool_results_keeps_the_gate():
     model = Scripted(
         delegate('l1'),
         call('w1', 'write_file', path='p.py', content='x'),
@@ -156,9 +156,62 @@ async def test_worker_failure_is_reported_and_its_unknown_writes_reset_the_gate(
         await DelegatingTeamRunner(model, _registry(*_sandbox_tools()), SANDBOX).run(_context())
     first, second = _reports(model)
     assert first['status'] == 'failed' and first['passing_run_after_last_write'] is True
+    # D-023: the host observed that worker-2 wrote nothing, so worker-1's passing run still stands.
     assert second == {'member': 'worker-2', 'status': 'error',
                       'failure': 'StepModelError -> ModelToolArgumentsError',
-                      'passing_run_after_last_write': False, 'delegations_remaining': 4}
+                      'passing_run_after_last_write': True, 'delegations_remaining': 4}
+
+
+class _Raising(FakeTool):
+    async def invoke(self, arguments):
+        self.calls.append(arguments)
+        raise ConnectionError('disconnected')
+
+
+async def test_invalid_final_report_keeps_the_host_observed_delivery():
+    # Live V2: StepFormatError -> ValueError after a passing run discarded the delivery (D-023).
+    model = Scripted(
+        delegate('l1'),
+        call('w1', 'write_file', path='parse_duration.py', content='code'),
+        call('w2', 'run_tests', path='test_parse_duration.py'),
+        ModelTurn(content='{"status": "succeeded", "content": "done"}'),   # valid JSON, missing reason
+        final('implemented; the host saw the passing run'))
+    output = await DelegatingTeamRunner(model, _registry(*_sandbox_tools()), SANDBOX).run(_context())
+    assert output.outcome is StepOutcome.SUCCEEDED
+    assert output.content == 'implemented; the host saw the passing run' and not model.items
+    report = _reports(model)[0]
+    assert report['status'] == 'error' and report['failure'] == 'StepFormatError -> ValueError'
+    assert report['files_written'] == ['parse_duration.py']
+    assert report['last_run'] == {'tool': 'run_tests', 'summary': 'exit code 0; 1.0s'}
+    assert report['passing_run_after_last_write'] is True and 'host kept' in report['note']
+
+
+async def test_invalid_final_report_after_a_late_write_does_not_pass():
+    model = Scripted(
+        delegate('l1'),
+        call('w1', 'run_tests', path='t.py'),
+        call('w2', 'write_file', path='p.py', content='late'),
+        ModelTurn(content='{"status": "succeeded", "content": "done"}'),
+        final('done'), ModelTurn(content='FAILED: unverified'))
+    with pytest.raises(TeamError, match='lead reported failure'):
+        await DelegatingTeamRunner(model, _registry(*_sandbox_tools()), SANDBOX).run(_context())
+    assert _reports(model)[0]['passing_run_after_last_write'] is False
+
+
+async def test_interrupted_write_stays_unknown_and_resets_the_gate():
+    tools = (FakeTool('read_file', 'x'), _Raising('write_file', ''), Seq('run_tests', 'exit code 0; 1.0s'))
+    model = Scripted(
+        delegate('l1', tools=['read_file', 'run_tests']),
+        call('w1', 'run_tests', path='t.py'), final('ran', status='failed', reason='nothing written'),
+        delegate('l2'),
+        call('v1', 'write_file', path='p.py', content='x'),
+        ModelTurn(content='FAILED: write failed'))
+    with pytest.raises(TeamError):
+        await DelegatingTeamRunner(model, _registry(*tools), SANDBOX).run(_context())
+    first, second = _reports(model)
+    assert first['passing_run_after_last_write'] is True
+    assert second['status'] == 'error' and second['passing_run_after_last_write'] is False
+    assert 'files_written' not in second
 
 
 async def test_unknown_lead_tool_and_empty_task_get_host_replies():
@@ -278,7 +331,7 @@ def test_cli_and_bench_select_version_2(monkeypatch):
     assert isinstance(options, DelegationOptions) and options.require_passing_run
     assert {'write_file', 'run_tests', 'run_python'} <= options.allowed_tools and options.timeout_seconds == 400
     assert team_options_for('team', None, team_version=2).allowed_tools == READ_TOOLS
-    assert type(team_options_for('team', 'w', True, 400)).__name__ == 'TeamOptions'   # V1 stays the default
+    assert type(team_options_for('team', 'w', True, 400)).__name__ == 'TeamOptions'   # programmatic V1 API kept
     seen = {}
 
     def fake(cmd, env, timeout):
@@ -574,7 +627,7 @@ async def test_verifiers_have_their_own_budget_then_fall_back_to_the_worker_gate
     assert trace['delegations'][-1] == {'member': 'host', 'role': 'acceptance', 'status': 'unavailable', 'suite': 0}
 
 
-async def test_failed_verifier_files_are_recovered_from_the_workspace():
+async def test_failed_verifier_files_come_from_host_observation():
     listing = FakeTool('list_directory', '{"entries": [{"name": "p.py"}, {"name": "test_acceptance_p.py"}]}')
     tools = (*_acc_tools(PASS, PASS), listing)          # worker run, host run
     model = Scripted(delegate('l1'), *_worker_round('w'),
@@ -584,7 +637,7 @@ async def test_failed_verifier_files_are_recovered_from_the_workspace():
     assert output.outcome is StepOutcome.SUCCEEDED and not model.items
     assert [c.arguments for c in output.tool_calls if c.call_id.startswith('host/')] == [
         {'path': 'test_acceptance_p.py'}]
-    assert listing.calls == [{'path': '.'}]
+    assert listing.calls == []                           # D-023: observed, no workspace listing needed
 
 
 async def test_ungranted_tool_is_named_in_the_report():
@@ -595,6 +648,22 @@ async def test_ungranted_tool_is_named_in_the_report():
     report = _reports(model)[0]
     assert report['status'] == 'error' and report['unavailable_tool'] == 'write_file'
     assert 'not granted' in report['note']
+
+
+def test_command_line_and_bench_default_to_version_2(monkeypatch):
+    # D-024: V2 is the default team for the command line and the bench; --team-version 1 keeps V1.
+    from types import SimpleNamespace
+    from app.agent.__main__ import build_parser
+    from bench import run_bench
+    assert build_parser().parse_args(['goal']).team_version == 2
+    assert build_parser().parse_args(['goal', '--team-version', '1']).team_version == 1
+    seen = []
+    monkeypatch.setattr(run_bench, 'launch_agent', lambda cmd, env, timeout: seen.append(cmd) or SimpleNamespace(
+        stdout='x\n\nStatus: failed; executions: 1; replans: 0\n', stderr=''))
+    task = next(t for t in run_bench.load_tasks(['all']) if t['id'] == 'parse_duration')
+    run_bench.run_one(task, 'team', 1, 5)
+    run_bench.run_one(task, 'team', 1, 5, team_version=1)
+    assert [cmd[cmd.index('--team-version') + 1] for cmd in seen] == ['2', '1']
 
 
 def test_acceptance_tests_are_opt_in():
@@ -619,3 +688,17 @@ def test_acceptance_tests_are_opt_in():
     assert ['--team-acceptance' in cmd for cmd in seen] == [False, True, False]
     runner = DelegatingTeamRunner(Scripted(), _registry(FakeTool('read_file', 'x')), ACC)
     assert runner.acceptance is False                                         # no run/write tools, no gate
+
+
+def test_bench_rows_name_the_static_guard_reason(monkeypatch):
+    # Live run 2026-11-05: a delivery was refused by the static guard and the row did not say why.
+    from types import SimpleNamespace
+    from bench import run_bench
+    from bench.graders import static_guard
+    assert {static_guard(c) for c in ('import os', 'open("x")', 'x.__class__', 'def (')} == run_bench._GUARD_REASONS
+    answer = 'import os\n\ndef parse_duration(text):\n    return 0\n'
+    monkeypatch.setattr(run_bench, 'launch_agent', lambda cmd, env, timeout: SimpleNamespace(
+        stdout=answer + '\nStatus: completed; executions: 1; replans: 0\n', stderr=''))
+    task = next(t for t in run_bench.load_tasks(['all']) if t['id'] == 'parse_duration')
+    row = run_bench.run_one(task, 'single', 1, 5)
+    assert row['passed'] is False and row['guard_reason'] == 'forbidden_import'

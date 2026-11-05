@@ -480,6 +480,37 @@
         "Current and historical regression unchanged."
       ],
       "evidence": "tests/test_team_v2.py 40 passed (opt-in test replaces the default-on test); current tests 135 passed/12 skipped; historical 9138ac1 1090 passed/2 skipped/3 known failures; init.ps1 PASS; bench dry run shows team_acceptance."
+    },
+    {
+      "id": "team-v2-evidence-001",
+      "name": "Host observes every V2 worker tool result",
+      "description": "User asked 2026-11-05 ('按你所说优化') after live runs where a worker's invalid final report (StepFormatError -> ValueError, the most frequent V2 failure) discarded a delivery that had already passed its tests: the runner's results are lost with the exception and the host marked the writes unknown. Each granted tool is now wrapped so the host records its results as they happen; a worker error keeps those results for the gate and the report (files_written, last_run, note). Only a write interrupted before its result stays unknown. A failed verifier's acceptance files also come from observation; the workspace listing remains the fallback. The single-mode step runner is unchanged: it still refuses to rewrite an invalid status contract.",
+      "status": "done",
+      "dependencies": [
+        "team-v2-acceptance-003"
+      ],
+      "acceptance": [
+        "A worker that writes, passes its run and then returns an invalid final report keeps a passing gate and reports its files and last run; the Lead can then finish.",
+        "A write after the passing run, or a write interrupted by an exception, still resets the gate.",
+        "A worker error with no tool results no longer resets an earlier passing gate.",
+        "ToolCallingStepRunner and single mode are untouched; current and historical regression unchanged."
+      ],
+      "evidence": "tests/test_team_v2.py 44 passed (3 new, 2 rewritten for the observed evidence); current tests 139 passed/12 skipped; historical 9138ac1 1090 passed/2 skipped/3 known failures; init.ps1 PASS. | Live (authorized 3, default V2, sandbox, parse_duration): strict 2/3. Run 1 passed 21/21 after worker-1 hit RemoteProtocolError (host kept its 3 observed results); run 2 delivery refused by the grader static guard (spec allows only re; reason was not recorded, bench rows now carry guard_reason); run 3 passed 21/21 in 91s with one worker. No StepFormatError occurred, so the main D-023 path was not exercised live."
+    },
+    {
+      "id": "team-v2-default-001",
+      "name": "Team V2 becomes the command-line and bench default",
+      "description": "User asked 2026-11-05 ('按你所说优化'). --team-version now defaults to 2 in app.agent and bench.run_bench; --team-version 1 keeps V1, which is not removed. The programmatic team_options_for keeps team_version=1 so existing V1 callers and tests are unchanged. The CLI parser moved into build_parser() so its default is testable; the bench always passes --team-version for team mode.",
+      "status": "done",
+      "dependencies": [
+        "team-v2-evidence-001"
+      ],
+      "acceptance": [
+        "app.agent parses --team-version 2 by default and accepts 1.",
+        "The bench passes --team-version 2 by default and 1 when asked.",
+        "V1 code and tests unchanged."
+      ],
+      "evidence": "test_command_line_and_bench_default_to_version_2; bench dry run shows team_version=2; current and historical regression as above."
     }
   ],
   "cleanup_2026_11_04": {

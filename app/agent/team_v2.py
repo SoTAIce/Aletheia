@@ -152,10 +152,54 @@ class _WriteGate:
 
 @dataclass(frozen=True, slots=True)
 class _UnseenWrite:
-    """Gate marker: a worker with write access failed, so its writes are unknown."""
+    """Gate marker: a write was interrupted before its result was seen, so its effect is unknown."""
     tool_name: str = 'write_file'
     success: bool = True
     content: str = ''
+    path: object = None
+
+
+@dataclass(frozen=True, slots=True)
+class _Seen:
+    """A tool result the host observed itself, kept even when the worker's final report is invalid."""
+    tool_name: str
+    success: bool
+    content: str
+    path: object = None
+
+
+class _Observed:
+    """Record every result of a worker's tool as it happens (D-023): a malformed final report then
+    loses only the report, never the host evidence of writes and runs."""
+
+    def __init__(self, tool, name, log):
+        self.tool, self.definition, self.name, self.log = tool, tool.definition, name, log
+
+    async def invoke(self, arguments):
+        path = arguments.get('path') if isinstance(arguments, dict) else None
+        try:
+            output = await self.tool.invoke(arguments)
+        except BaseException:
+            if self.name == 'write_file':
+                self.log.append(_UnseenWrite(path=path))
+            raise
+        self.log.append(_Seen(self.name, bool(output.success), output.content or '', path))
+        return output
+
+
+def _evidence(seen):
+    """Files written and the latest run, from host-observed results only."""
+    written, last_run = [], None
+    for result in seen:
+        if not isinstance(result, _Seen):
+            continue
+        if result.tool_name == 'write_file' and result.success:
+            if isinstance(result.path, str) and result.path not in written:
+                written.append(result.path)
+        if result.tool_name in ('run_tests', 'run_python'):
+            last_run = {'tool': result.tool_name, 'summary': result.content.splitlines()[0][:200]
+                        if result.content else ''}
+    return written, last_run
 
 
 def _encode(value):
@@ -326,12 +370,12 @@ class DelegatingTeamRunner:
         else:
             run.budget['delegations'] += 1
         name = f'{role}-{run.members}'
-        registry = ToolRegistry()
+        registry, seen = ToolRegistry(), []
         for tool_name in sorted(tools):
             tool = self.registry.get(tool_name)
             if tool_name == 'write_file' and self.acceptance:
                 tool = _WriteGate(tool, acceptance_only=role == 'verifier')
-            registry.register(tool)
+            registry.register(_Observed(tool, tool_name, seen))
         worker_context = replace(context, current_step=replace(
             context.current_step, description=self._worker_brief(task, role)))
         manager = _CompactingManager(self.context_manager) if self.context_manager is not None else None
@@ -344,14 +388,29 @@ class DelegatingTeamRunner:
         except StepRunError as exc:
             if manager is not None:
                 entry.update(compacted=manager.compacted, strong_compacted=manager.strong)
-            # The worker's tool results are lost with the exception: its writes are unknown.
-            # (A verifier can only write acceptance tests, which never count as deliverable writes.)
-            if tools & WORKER_ONLY_TOOLS and role != 'verifier':
-                run.gate_results.append(_UnseenWrite())
-                run.writes += 1
+            # The runner's results are lost with the exception, but the host observed every tool
+            # result itself; only interrupted writes stay unknown. (A verifier can only write
+            # acceptance tests, which never count as deliverable writes.)
+            run.budget['tool_calls'] += sum(isinstance(r, _Seen) for r in seen)
+            if role != 'verifier':
+                run.gate_results.extend(seen)
+                run.writes += sum(r.tool_name == 'write_file' and r.success for r in seen)
+            written, last_run = _evidence(seen)
             failure = failure_types(failure_details(exc))
-            entry.update(status='error', failure=failure)
+            entry.update(status='error', failure=failure, tool_calls=len(seen),
+                         tool_sequence=[[r.tool_name, bool(r.success)] for r in seen][-40:])
             report = {'member': name, 'status': 'error', 'failure': failure}
+            if seen:
+                report['note'] = ('the worker ended without a valid report; the host kept the tool results '
+                                  'it observed')
+            if written:
+                report['files_written'] = written
+            if last_run:
+                report['last_run'] = last_run
+            if role == 'verifier':
+                suite = [p for p in written if _is_acceptance(p)]
+                if suite:
+                    run.suite = suite
             message = str(getattr(exc, 'message', exc))
             if message.startswith(_UNAVAILABLE) and _TOOL_NAME.fullmatch(message[len(_UNAVAILABLE):]):
                 # Host-shaped identifier only; tells the Lead what to grant or forbid next time.
@@ -363,22 +422,15 @@ class DelegatingTeamRunner:
             return self._finish_report(run, report)
         self.format_repair_count += runner.format_repair_count
         status = output.outcome.value
-        written, last_run = [], None
         for call, result in zip(output.tool_calls, output.tool_results):
             run.calls.append(replace(call, call_id=f'{name}/{call.call_id}'))
             run.results.append(replace(result, call_id=f'{name}/{result.call_id}'))
             run.budget['tool_calls'] += 1
             if role != 'verifier':
                 run.gate_results.append(result)
-            if result.tool_name == 'write_file' and result.success:
-                if role != 'verifier':
-                    run.writes += 1
-                path = call.arguments.get('path')
-                if isinstance(path, str) and path not in written:
-                    written.append(path)
-            if result.tool_name in ('run_tests', 'run_python'):
-                last_run = {'tool': result.tool_name, 'summary': result.content.splitlines()[0][:200]
-                            if result.content else ''}
+            if result.tool_name == 'write_file' and result.success and role != 'verifier':
+                run.writes += 1
+        written, last_run = _evidence(seen)
         for ref in output.source_refs:
             if ref not in run.refs:
                 run.refs.append(ref)

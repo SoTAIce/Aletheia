@@ -19,6 +19,13 @@
 
 ## Session Record
 
+### 2026-11-05 — team-v2-evidence-001 / team-v2-default-001：保住格式出错时的交付，默认切到 V2
+
+- **Result**：宿主自己记录执行者的工具结果，最终报告格式出错不再丢掉已测通的交付（D-023）；命令行和评测器默认 V2，V1 保留（D-024）。
+- **Verification**：V2 测试 44 passed；当前 tests 139 passed；完整历史 1090 passed；init.ps1 PASS。
+- **Evidence**：[team-v2-2026-11-04.md](docs/harness/team-v2-2026-11-04.md)。**未提交**。
+- **Live（授权 3 次）**：严格 2/3；一次交付违反“只用 re”被评分器拒绝，评测器已补记 `guard_reason`。本批未出现格式错误，D-023 主路径未在真实运行中触发。
+
 ### 2026-11-04 — team-v2-acceptance-003：独立验收改为默认关闭
 
 - **Result**：沙盒 V2 默认回到执行者自测门槛；`--team-acceptance` 可选开启。决策 D-022。
