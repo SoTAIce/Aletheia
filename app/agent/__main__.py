@@ -10,6 +10,15 @@ from app.services.rag_agent_service import RagAgentService
 from app.tools.tool_loader import local_mcp_servers
 
 
+def team_options_for(execution_mode, write_root):
+    """Team stays read-only unless a write root is configured; then workers may write files."""
+    if execution_mode != 'team' or not write_root:
+        return None
+    from app.agent.team.models import TeamOptions
+    defaults = TeamOptions()
+    return TeamOptions(allowed_tools=defaults.allowed_tools | {'write_file'})
+
+
 async def main(args) -> int:
     async with AsyncExitStack() as stack:
         compressor = None
@@ -18,16 +27,18 @@ async def main(args) -> int:
                 raise ValueError('--compress-history requires CONVERSATION_STORAGE_DIR')
             from app.core.dependencies import open_conversation_compressor
             compressor = await stack.enter_async_context(open_conversation_compressor())
+        write_root = args.write_root or config.mcp_filesystem_write_root or None
         service = await stack.enter_async_context(RagAgentService(
             mcp_servers=local_mcp_servers(
                 filesystem_root=args.filesystem_root or config.mcp_filesystem_root or None,
-                write_root=args.write_root or config.mcp_filesystem_write_root or None,
+                write_root=write_root,
                 tavily_api_key=config.tavily_api_key,
             ),
             include_knowledge=not args.no_knowledge,
             max_executions=args.max_executions, max_replans=args.max_replans,
             conversation_compressor=compressor,
             execution_mode=getattr(args, 'execution_mode', 'single'),
+            team_options=team_options_for(getattr(args, 'execution_mode', 'single'), write_root),
         ))
         result = await service.query_result(args.goal, args.session_id)
     print(result.content)

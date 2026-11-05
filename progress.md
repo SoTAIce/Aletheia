@@ -19,6 +19,26 @@
 
 ## Session Record
 
+### 2026-11-04 — sandbox-step2-001：沙盒第二步，镜像与执行器
+
+- **Goal**：构建沙盒镜像，实现宿主侧执行器，并用破坏性测试证明限制有效（用户确认 Docker 已运行，并授权拉取基础镜像）。
+- **Completed**：`deploy/sandbox/Dockerfile`；`app/tools/sandbox/executor.py`（固定限制、请求预校验、读取时截断、超时删除容器、只清理自己标签的容器）；决策 D-016。
+- **Verification run**：执行器单元测试 12 passed、1 skipped；真实容器测试 10 passed（需显式开启）；全量回归 1146 passed、13 skipped；init.ps1 PASS。
+- **Evidence recorded**：feature_list.json → sandbox-step2-001；设计方案第 8 节实施状态
+- **Commits**：无
+- **Known risks**：执行器还没有交给模型使用；Docker 不防内核漏洞（设计第 10 节）；Windows 账户无法创建链接，所以链接测试被跳过
+- **Next best action**：第三步，把 `run_tests` / `run_python` 接入两种模式，只给执行成员
+
+### 2026-11-04 — sandbox-step1-001：沙盒第一步，受限写入
+
+- **Goal**：按沙盒设计第 5 节开放受限写入（用户采纳 Docker 方案后说“开始”）。
+- **Completed**：只有配置写根时团队模式才获得 `write_file`；审查成员不得获得写入或运行工具，并在负责人提示中说明；评测集新增 `--write` 文件交付模式；决策 D-015。
+- **Verification run**：新增测试 7 个，当前测试共 41 个全部通过；在提交版本上叠加本轮文件后跑全量测试，1134 passed、2 skipped。对照工作区跑历史测试有 3 个失败，原因是用户删除了 `scripts/`，以及仅复制测试目录导致的路径问题，与本轮改动无关。没有调用真实模型。
+- **Evidence recorded**：feature_list.json → sandbox-step1-001；[设计方案](docs/sandbox_execution_design.md) 第 5 节状态
+- **Commits**：无
+- **Known risks**：Docker 引擎当天无法连接（进程未运行），第二步无法开始
+- **Next best action**：用户确认 Docker Desktop 正常运行后，开始第二步（构建镜像、沙盒执行器、破坏性测试）
+
 ### 2026-11-04 — capability-phase1-001：第一轮真实评测（用户授权 6 次）
 
 - **Result**：严格 0/6。single 3/3 completed，但答案都夹带说明文字；宽松诊断：fix_inventory 16/16、parse_duration 20/21、todo_html 11/11，浏览器 9/9。team 3/3 failed（失败类型因运行器正则 bug 丢失，已修复）。

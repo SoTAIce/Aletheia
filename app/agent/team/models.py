@@ -47,6 +47,10 @@ class TeamOptions:
             raise TypeError('output_contract must be a host-owned JsonContract')
 
 
+# Tools that change files or execute code; the coordinator grants them to workers only.
+WORKER_ONLY_TOOLS = frozenset({'write_file', 'run_tests', 'run_python'})
+
+
 @dataclass(slots=True)
 class Budget:
     model_calls: int = 0

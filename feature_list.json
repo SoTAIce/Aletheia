@@ -300,6 +300,41 @@
       ],
       "evidence": "2026-11-04: deterministic tests/test_tool_argument_repair.py 9 passed and tests/test_bench_graders.py 16 passed; historical tests/agent from git 9138ac1 in TEMP 450 passed. First live benchmark (user-authorized, 6 runs, qwen3.8-flash): strict 0/6. single completed 3/3 but every answer wrapped code in prose (lenient: fix_inventory 16/16, parse_duration 20/21, todo_html 11/11 static + 9/9 browser checks); team failed 3/3 (failure types lost to a runner regex bug, now fixed). Grader false negative (localStorage via constant) fixed. Record: docs/harness/capability-phase1-2026-11-04.md",
       "evidence_kind": "deterministic_tests_plus_live_benchmark"
+    },
+    {
+      "id": "sandbox-step1-001",
+      "name": "Restricted write: team write toggle, worker-only write/run tools, file-based benchmark delivery",
+      "description": "Step 1 of docs/sandbox_execution_design.md (D-014, user said start 2026-11-04). When a write root is configured, team mode adds write_file to its allowlist; the coordinator refuses to grant write/run tools to reviewers; the benchmark can run in write mode where the agent writes the deliverable file into its own TEMP root and grading reads that file.",
+      "status": "done",
+      "dependencies": [
+        "capability-phase1-001"
+      ],
+      "acceptance": [
+        "Team default allowlist unchanged (read-only); write_file is added only when the CLI is given --write-root in team mode.",
+        "Coordinator rejects create_reviewer whose tools include write_file, run_tests or run_python, without side effects.",
+        "bench run_bench --write passes the TEMP root as both read and write root, asks for a deliverable file, and grades the file; missing file fails strictly.",
+        "Deterministic tests cover the above; full historical suite still passes; no live model calls in this step."
+      ],
+      "evidence": "2026-11-04 deterministic only: tests/test_sandbox_step1.py 7 passed; all current tests 41 passed. HEAD snapshot + this round's files in TEMP: 1134 passed, 2 skipped (includes the 1093 historical tests). Against the working tree the historical suite has 3 failures caused by the user's uncommitted deletion of scripts/ (test_summary_context x2) and the tests-only TEMP layout (test_mcp_integration), not by this change. No live model calls. Decision D-015.",
+      "evidence_kind": "deterministic_tests"
+    },
+    {
+      "id": "sandbox-step2-001",
+      "name": "Docker sandbox image and executor with escape tests",
+      "description": "Step 2 of docs/sandbox_execution_design.md (D-014; user confirmed Docker running 2026-11-04). Build aletheia-sandbox:py313 from python:3.13-slim + pinned pytest; add a host-side DockerSandbox executor with fixed limits (no network, read-only root, non-root, no capabilities, 512m memory, 1 cpu, 128 pids, 30s, no host env, 20000-char output) that runs a workspace file or pytest; prove the limits with escape tests.",
+      "status": "done",
+      "dependencies": [
+        "sandbox-step1-001"
+      ],
+      "acceptance": [
+        "Image builds locally from deploy/sandbox/Dockerfile; build download limited to the base image and pinned pytest.",
+        "Executor builds the exact docker argv with every design section 6.2 limit; paths outside the workspace, absolute paths, traversal and links are rejected before Docker runs.",
+        "Timeout kills and removes the container; output is capped while reading; result carries exit code, timeout flag and truncation flag only.",
+        "Escape tests (network, outside read/write, host env, infinite loop, memory, process bomb, huge output, uid, leftover containers) all blocked against the real image.",
+        "Not yet exposed to models (step 3); deterministic tests in tests/, Docker tests opt-in."
+      ],
+      "evidence": "2026-11-04: image aletheia-sandbox:py313 built (Python 3.13.18, pytest 8.3.4, uid 1000). tests/test_sandbox_executor.py 12 passed + 1 skipped (symlink needs privilege on Windows). tests/test_sandbox_docker.py with ALETHEIA_DOCKER_TESTS=1: 10 passed (network unreachable, host files invisible, only /work and /tmp writable, /tmp noexec, no host env, timeout kill + removal, 1GB alloc killed 137, fork capped at 127, output truncated to 20000, no leftover containers). HEAD snapshot + steps 1-2 files: 1146 passed, 13 skipped; init.ps1 PASS (53 passed, 11 skipped). Decision D-016. Not yet exposed to models.",
+      "evidence_kind": "deterministic_plus_real_container_tests"
     }
   ],
   "cleanup_2026_11_04": {
@@ -346,8 +381,15 @@
       "id": "team-failure-diagnosis-001",
       "authorized": false,
       "priority": 3,
-      "next_action": "Re-run bench team only (3 runs, needs authorization) with the fixed runner to capture failure type chains; add repair counts to the report.",
+      "next_action": "Re-run bench team only (3 runs, needs authorization) with the fixed runner to capture failure type chains; add repair counts to the report. Hypothesis to check: a Lead request for a tool outside the allowlist is fatal (TeamError), which fits fix_inventory/team failing after 1 model call and 0 tool calls.",
       "source": "docs/harness/capability-phase1-2026-11-04.md"
+    },
+    {
+      "id": "sandbox-execution",
+      "authorized": false,
+      "priority": 2,
+      "next_action": "Steps 1-2 done. Next: step 3 - wire run_tests/run_python as worker-only tools for single and team (workspace = write root), reviewer approval must cite a passing run; then step 4 live benchmark (needs authorization).",
+      "source": "docs/sandbox_execution_design.md"
     }
   ]
 }

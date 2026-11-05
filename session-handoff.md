@@ -18,6 +18,16 @@ Done when: 参数错误可有界修复、错误链可见、评测集与评分器
 
 **结果（2026-11-04）**：确定性验证通过（新增测试 25 个；历史 tests/agent 450 passed）。第一轮真实评测（6 次，已授权）**严格交付 0/6**：single 三项都 completed，代码基本正确（宽松诊断 16/16、20/21、11/11，浏览器实测 9/9），但答案前后夹带说明文字；team 三项都失败，失败类型因运行器 bug 丢失（已修复）。详见 [阶段 1 记录](docs/harness/capability-phase1-2026-11-04.md)。active_feature=null，**尚未提交**。
 
+**最新（2026-11-04）**：沙盒第二步 `sandbox-step2-001` 已完成：镜像 `aletheia-sandbox:py313` 已构建，执行器 `app/tools/sandbox/executor.py` 已实现，10 项真实容器破坏性测试全部通过（决策 D-016）；全量回归 1146 passed、13 skipped。第一、二步都**未提交**。下一步是第三步（接入运行工具）。真实容器测试命令：
+
+```powershell
+$env:ALETHEIA_DOCKER_TESTS='1'; .venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider tests/test_sandbox_docker.py --basetemp <新的 TEMP 目录>
+```
+
+沙盒第一步 `sandbox-step1-001` 已完成（受限写入、审查成员不得获得写入/运行工具、评测集 `--write` 文件交付；决策 D-015），确定性测试通过，**未提交**。第二步需要 Docker 引擎可用：当天进程未运行，命令行连不上 `dockerDesktopLinuxEngine`。
+
+**新增（2026-11-04）**：[沙盒执行设计方案](docs/sandbox_execution_design.md)（草案，未实现），等待用户审阅并回答第 12 节的问题；backlog 新增 `sandbox-execution`。
+
 下一步（backlog，均未授权）：`deliverable-format-001` 让最终答案只含交付物；`team-failure-diagnosis-001` 只跑 team 三项（3 次）以拿到失败类型。
 
 ```powershell
