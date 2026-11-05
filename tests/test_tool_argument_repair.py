@@ -18,7 +18,6 @@ from app.agent.step_executor import StepExecutor
 from app.agent.step_models import ModelTurn, SystemMessage, ToolDefinition, ToolOutput, UserMessage
 from app.agent.step_runner import StepModelError
 from app.agent.team.diagnostics import failure_details
-from app.agent.team.session import TeamSession
 from app.agent.tool_calling_model import (
     ModelRequestError, ModelResponseError, ModelToolArgumentsError, tool_argument_repair_instruction,
 )
@@ -142,33 +141,3 @@ async def test_single_runner_does_not_repair_other_model_errors():
     assert len(model.requests) == 1
 
 
-def _tools(tool):
-    @asynccontextmanager
-    async def open_tools():
-        registry = ToolRegistry()
-        registry.register(tool)
-        yield registry
-    return open_tools
-
-
-async def test_team_session_repairs_bad_arguments_then_completes():
-    tool, events = ReadTool(), asyncio.Queue()
-    model = Scripted(_bad_args(), ModelTurn('done'))
-    session = TeamSession('worker', model, _tools(tool), events, 'goal', max_format_repairs=2)
-    result = await session.run()
-    assert result.content == 'done' and tool.calls == []
-    assert (session.argument_repairs, session.format_repairs) == (1, 1)
-    kinds = [event.kind for event in session.events]
-    assert 'tool_arguments_rejected' in kinds
-    repair = model.requests[1][-1]
-    assert isinstance(repair, UserMessage) and repair.content.startswith('HOST PROTOCOL REJECTION')
-
-
-async def test_team_session_repair_is_bounded():
-    model = Scripted(_bad_args(), _bad_args())
-    session = TeamSession('worker', model, _tools(ReadTool()), asyncio.Queue(), 'goal',
-                          max_format_repairs=1)
-    with pytest.raises(ModelToolArgumentsError):
-        await session.run()
-    assert session.status == 'failed' and session.argument_repairs == 1
-    assert session.failure['reason'] == 'invalid_json' and session.failure['tool_name'] == 'read'

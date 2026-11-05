@@ -79,16 +79,13 @@ class RagAgentService:
                                     runner_requirements=runner_requirements)
         if execution_mode not in ('single', 'team'):
             raise ValueError('execution_mode must be single or team')
-        from app.agent.team.models import TeamOptions, TeamStore
         from app.agent.team_v2 import DelegationOptions
-        if team_options is not None and not isinstance(team_options, (TeamOptions, DelegationOptions)):
-            raise TypeError('team_options must be TeamOptions or DelegationOptions')
+        if team_options is not None and not isinstance(team_options, DelegationOptions):
+            raise TypeError('team_options must be DelegationOptions')
         if (execution_mode == 'team' or team_options is not None) and runner_registry is not None:
-            raise ValueError('use register_team_runner for custom registry assembly')
+            raise ValueError('use register_delegating_team_runner for custom registry assembly')
         self._execution_mode = execution_mode
-        self._team_options = team_options or (TeamOptions() if execution_mode == 'team' else None)
-        self._team_store = TeamStore()
-        self._team_v2 = isinstance(self._team_options, DelegationOptions)
+        self._team_options = team_options or (DelegationOptions() if execution_mode == 'team' else None)
         if execution_mode == 'team' and runner_requirements is None:
             from app.agent.runner_router import RunnerRequirements
             self._runner_options['runner_requirements'] = lambda context: RunnerRequirements(frozenset({'agent_team'}))
@@ -283,7 +280,7 @@ class RagAgentService:
                         context_manager=context_manager,
                     ) as registry:
                         # Team V2 owns the whole task: one fixed plan step, one team (DECISIONS D-019).
-                        if self._team_v2:
+                        if self._team_options is not None:
                             from app.agent.team_v2 import SingleStepPlanner
                             planner = SingleStepPlanner(planner_model, max_steps=1, context_manager=context_manager)
                         else:
@@ -291,7 +288,7 @@ class RagAgentService:
                         if runtime is None:
                             runner_options = dict(self._runner_options)
                             if self._team_options is not None:
-                                runner_options['runner_registry'] = self._team_registry(memory)
+                                runner_options['runner_registry'] = self._team_registry()
                             runtime = AgentRuntime(planner, model, memory, registry,
                                                    **self._limits, **runner_options, context_manager=context_manager)
                         else:
@@ -303,7 +300,6 @@ class RagAgentService:
                             self._tasks[(key, task.task_id)] = runtime
                         else:
                             self._tasks.pop((key, task.task_id), None)
-                            self._team_store.discard_task(task.task_id)
             except StaleExecutionError:
                 # This interaction no longer owns task state. Finish only its
                 # own durable turn; do not fail or remove the newer execution.
@@ -312,7 +308,6 @@ class RagAgentService:
                 await _durable(self._publish_outcome(conversation, outcome_key))
                 raise
             except (Exception, asyncio.CancelledError) as exc:
-                self._team_store.discard_task(task.task_id)
                 if outcome_key not in self._pending_outcomes:
                     status = TurnStatus.CANCELLED if isinstance(exc, asyncio.CancelledError) else TurnStatus.FAILED
                     content = ('Request cancelled; tool side effects may already exist' if status is TurnStatus.CANCELLED
@@ -326,49 +321,11 @@ class RagAgentService:
             await _durable(self._publish_outcome(conversation, outcome_key))
             return result
 
-    def _team_registry(self, parent_memory):
+    def _team_registry(self):
         from app.agent.runner_registry import default_runner_registry
-        if self._team_v2:
-            from app.agent.team_v2 import register_delegating_team_runner
-            registry = default_runner_registry()
-            register_delegating_team_runner(registry, options=self._team_options)
-            return registry
-        from app.agent.agent_team_runner import register_team_runner
-        from app.agent.team.models import TeamEnvironment
-        @asynccontextmanager
-        async def tools(memory, manager):
-            async with open_tool_registry(memory, mcp_servers=self._mcp_servers,
-                    include_knowledge=self._include_knowledge, knowledge_search=self._knowledge_search,
-                    context_manager=manager) as registry:
-                yield registry
-        def import_sources(members):
-            mapping = {}
-            for member in members:
-                used = {ref for r in member.session.tool_results for ref in r.source_refs}
-                for local_id in used:
-                    source = member.memory.resources.get(local_id)
-                    existing = next((r for r in parent_memory.resources.list_all() if r.ref == source.ref), None)
-                    if existing is None:
-                        rid = parent_memory.resources.register(source.ref, source.resource_type,
-                                                               source=f'team/{member.name}')
-                        if source.loaded:
-                            parent_memory.resources.mark_loaded(rid, summary=source.summary)
-                    else:
-                        rid = existing.resource_id
-                    mapping[(member.name, local_id)] = rid
-            return mapping
+        from app.agent.team_v2 import register_delegating_team_runner
         registry = default_runner_registry()
-        def capture_guard(context):
-            task = parent_memory.task_state
-            expected = (task.task_id, task.goal_revision, task.plan_revision,
-                        task.active_step_id, task.state_version)
-            requested = (context.task_id, context.goal_revision, context.plan_revision, context.current_step.step_id)
-            def current():
-                return (requested == expected[:4] and task.status is TaskStatus.RUNNING and expected ==
-                        (task.task_id, task.goal_revision, task.plan_revision, task.active_step_id, task.state_version))
-            return current
-        register_team_runner(registry, options=self._team_options, store=self._team_store,
-            environment=TeamEnvironment(parent_memory.task_state.user_id, tools, import_sources, capture_guard))
+        register_delegating_team_runner(registry, options=self._team_options)
         return registry
 
     async def _publish_outcome(self, conversation, outcome_key):
@@ -396,7 +353,6 @@ class RagAgentService:
     async def aclose(self, *, timeout_seconds=5.0):
         self._closed = True
         await self._summary_scheduler.aclose(timeout_seconds=timeout_seconds)
-        self._team_store.states.clear()
 
     async def query(self, question: str, session_id: str, *, user_id: str | None = None,
                     request_id: str | None = None, resume_task_id: str | None = None,

@@ -511,6 +511,21 @@
         "V1 code and tests unchanged."
       ],
       "evidence": "test_command_line_and_bench_default_to_version_2; bench dry run shows team_version=2; current and historical regression as above."
+    },
+    {
+      "id": "team-v1-removal-001",
+      "name": "Remove Team V1 and the team session prototype",
+      "description": "User decided 2026-11-05 ('将v1删除吧'). Deleted app/agent/agent_team_runner.py, app/agent/team/{coordinator,session,contracts,trace}.py and app/agent/team_poc/; app/agent/team/models.py keeps only what V2 and the sandbox gate use (TeamError, WORKER_ONLY_TOOLS, RUN_TOOLS, has_passing_run_after_last_write); diagnostics.py stays (the single-mode runner uses it). team_options_for always builds DelegationOptions in team mode; --team-version is gone from the CLI and the bench; RagAgentService accepts only DelegationOptions, defaults team mode to DelegationOptions() and drops TeamStore. V1-only tests were removed; mixed test files keep their non-V1 tests.",
+      "status": "done",
+      "dependencies": [
+        "team-v2-default-001"
+      ],
+      "acceptance": [
+        "No module imports the removed V1 or prototype code; --team-version is rejected.",
+        "Team mode, with or without a write root, binds the delegating team.",
+        "Current regression passes; historical regression differs only by the four V1/prototype test files that can no longer be collected."
+      ],
+      "evidence": "Current tests 108 passed/12 skipped (V1-only tests removed); tests/test_team_v2.py covers the removal; historical 9138ac1: 1022 passed/2 skipped/3 known failures plus 4 collection errors, exactly tests/agent/test_team_v1.py, test_team_contract_review.py, test_team_reliability.py, test_team_session_poc.py (68 tests); init.ps1 PASS."
     }
   ],
   "cleanup_2026_11_04": {

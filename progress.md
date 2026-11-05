@@ -19,6 +19,12 @@
 
 ## Session Record
 
+### 2026-11-05 — team-v1-removal-001：删除团队模式 V1
+
+- **Result**：V1 团队和早期原型代码已删除；团队模式只剩 V2，`--team-version` 移除。决策 D-025。
+- **Verification**：当前 tests 108 passed；init.ps1 PASS；历史回归 1022 passed，只多出 4 个 V1/原型测试文件无法收集。
+- **Evidence**：[team-v2-2026-11-04.md](docs/harness/team-v2-2026-11-04.md)。**未提交**。
+
 ### 2026-11-05 — team-v2-evidence-001 / team-v2-default-001：保住格式出错时的交付，默认切到 V2
 
 - **Result**：宿主自己记录执行者的工具结果，最终报告格式出错不再丢掉已测通的交付（D-023）；命令行和评测器默认 V2，V1 保留（D-024）。

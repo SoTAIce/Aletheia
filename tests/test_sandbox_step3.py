@@ -11,10 +11,8 @@ import pytest
 
 from app.agent.__main__ import sandbox_problem, team_options_for
 from app.agent.step_models import ModelTurn, ToolCall, ToolDefinition, ToolOutput, ToolResult
-from app.agent.team.coordinator import TeamCoordinator
-from app.agent.team.models import (
-    TeamEnvironment, TeamOptions, TeamStore, has_passing_run_after_last_write,
-)
+from app.agent.team.models import has_passing_run_after_last_write
+from app.agent.team_v2 import READ_TOOLS
 from app.tools.sandbox import server as sandbox_server
 from app.tools.sandbox.executor import DockerSandbox, RunResult, SandboxError
 from app.tools.tool_loader import local_mcp_servers
@@ -33,7 +31,7 @@ def test_cli_sandbox_enables_run_tools_gate_and_timeout():
     options = team_options_for('team', 'w', True, 400)
     assert {'write_file', 'run_tests', 'run_python'} <= options.allowed_tools
     assert options.require_passing_run is True and options.timeout_seconds == 400
-    assert team_options_for('team', None, False, 300).allowed_tools == TeamOptions().allowed_tools
+    assert team_options_for('team', None, False, 300).allowed_tools == READ_TOOLS
 
 
 def test_sandbox_is_refused_before_any_model_call(tmp_path, monkeypatch):
@@ -133,41 +131,3 @@ class FakeTool:
         return ToolOutput(True, self.content)
 
 
-async def test_team_finish_requires_passing_run_after_last_write():
-    write = FakeTool('write_file', 'File written successfully.')
-    run = FakeTool('run_tests', 'exit code 0; 1.0s\n3 passed')
-
-    @asynccontextmanager
-    async def tools(memory, manager):
-        registry = ToolRegistry()
-        registry.register(write)
-        registry.register(run)
-        yield registry
-
-    model = Scripted(
-        act('l1', 'create_worker', 'coder', tools='write_file,run_tests'),
-        act('l2', 'run_member', 'coder'),
-        call('w1', 'write_file', path='solution.py', content='x = 1'),
-        call('w2', 'submit_result', payload={'answer': 'solution.py'}),
-        act('l3', 'create_reviewer', 'checker'),
-        act('l4', 'review', 'checker', 'coder', version=1),
-        call('r1', 'submit_result', payload={'candidate_version': 1, 'decision': 'approve', 'feedback': 'ok'}),
-        act('l5', 'finish', 'coder', version=1),           # rejected: no passing run yet
-        act('l6', 'assign', 'coder', instruction='run the tests', version=1),
-        act('l7', 'run_member', 'coder'),
-        call('w3', 'run_tests', path=''),
-        call('w4', 'submit_result', payload={'answer': 'solution.py'}),
-        act('l8', 'review', 'checker', 'coder', version=2),
-        call('r2', 'submit_result', payload={'candidate_version': 2, 'decision': 'approve', 'feedback': 'ran'}),
-        act('l9', 'finish', 'coder', version=2))
-    ctx = _context()
-    options = TeamOptions(allowed_tools=TeamOptions().allowed_tools | {'write_file', 'run_tests', 'run_python'},
-                          require_passing_run=True)
-    state = TeamStore().get(ctx, options)
-    output = await TeamCoordinator(state, model, TeamEnvironment('u', tools, lambda members: {}), ctx).run()
-    assert json.loads(output.content) == {'answer': 'solution.py'}
-    assert len(write.calls) == 1 and len(run.calls) == 1 and model.turns == []
-    rejected = [m.content for r in model.requests for m in r if 'passing run_tests' in (m.content or '')]
-    assert any('host acceptance gate' in text for text in rejected)
-    assert 'Finish also requires the worker to have a passing run_tests' in '\n'.join(
-        m.content or '' for m in model.requests[0])

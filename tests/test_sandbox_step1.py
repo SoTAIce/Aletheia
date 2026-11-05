@@ -10,9 +10,8 @@ from types import SimpleNamespace
 import pytest
 
 from app.agent.__main__ import team_options_for
-from app.agent.step_models import ModelTurn, ToolCall
-from app.agent.team.coordinator import TeamCoordinator
-from app.agent.team.models import TeamEnvironment, TeamError, TeamOptions, TeamStore, WORKER_ONLY_TOOLS
+from app.agent.team.models import WORKER_ONLY_TOOLS
+from app.agent.team_v2 import READ_TOOLS
 from app.models.taskstate import TaskState
 from app.models.working_memory import WorkingMemory
 from app.agent.step_executor import StepExecutor
@@ -22,26 +21,10 @@ from test_bench_graders import FIXED_INVENTORY
 
 def test_team_write_toggle_only_with_write_root():
     assert team_options_for('single', 'D:/w') is None
-    assert team_options_for('team', None) is None
-    options = team_options_for('team', 'D:/w')
-    assert options.allowed_tools == TeamOptions().allowed_tools | {'write_file'}
-    assert 'write_file' not in TeamOptions().allowed_tools
+    assert team_options_for('team', None).allowed_tools == READ_TOOLS
+    assert team_options_for('team', 'D:/w').allowed_tools == READ_TOOLS | {'write_file'}
+    assert 'write_file' not in READ_TOOLS
     assert WORKER_ONLY_TOOLS == {'write_file', 'run_tests', 'run_python'}
-
-
-class Lead:
-    def __init__(self, *turns):
-        self.turns, self.requests = list(turns), []
-
-    async def generate(self, messages, tools):
-        self.requests.append(tuple(messages))
-        return self.turns.pop(0)
-
-
-def _command(action, member, tools, identity='c1'):
-    payload = {'action': action, 'member_id': member, 'target_id': '', 'instruction': 'do it',
-               'tools': tools, 'expected_version': 0}
-    return ModelTurn(tool_calls=(ToolCall(identity, 'submit_result', {'payload': payload}),))
 
 
 def _context():
@@ -52,50 +35,6 @@ def _context():
     step_id = wm.task_state.plan[0].step_id
     wm.begin_step(step_id)
     return StepExecutor(wm, AsyncMock()).build_context(step_id)
-
-
-def _text(messages):
-    return '\n'.join(m.content or '' for m in messages)
-
-
-async def _run(options, *turns):
-    ctx = _context()
-    state = TeamStore().get(ctx, options)
-    lead = Lead(*turns)
-    coordinator = TeamCoordinator(state, lead, TeamEnvironment('u', None, None), ctx)
-    with pytest.raises(TeamError, match='permission') as caught:
-        await coordinator.run()
-    return state, lead, caught.value
-
-
-async def test_reviewer_cannot_receive_write_tool():
-    # The gate rejects the command before any member exists; the Lead sees why and may retry.
-    options = TeamOptions(allowed_tools=TeamOptions().allowed_tools | {'write_file'})
-    ctx = _context()
-    state = TeamStore().get(ctx, options)
-    lead = Lead(_command('create_reviewer', 'checker', 'read_file,write_file'),
-                _command('create_reviewer', 'checker', 'read_file,write_file', 'c2'),
-                _command('fail', '', '', 'c3'))
-    with pytest.raises(TeamError, match='do it'):
-        await TeamCoordinator(state, lead, TeamEnvironment('u', None, None), ctx).run()
-    assert state.members == {}
-    assert [o['event'] for o in state.outcomes][:2] == ['command_rejected', 'command_rejected']
-    assert 'workers only' in state.outcomes[0]['reason']
-    assert 'workers only' in _text(lead.requests[1])
-    assert 'Workers only (never reviewers): ["write_file"]' in _text(lead.requests[0])
-
-
-async def test_worker_can_receive_write_tool_and_default_prompt_is_unchanged():
-    options = TeamOptions(allowed_tools=TeamOptions().allowed_tools | {'write_file'})
-    ctx = _context()
-    state = TeamStore().get(ctx, options)
-    lead = Lead(_command('create_worker', 'coder', 'read_file,write_file'))
-    coordinator = TeamCoordinator(state, lead, TeamEnvironment('u', None, None), ctx)
-    with pytest.raises(Exception):
-        await coordinator.run()  # the scripted Lead runs out of turns after creating the worker
-    assert state.members['coder'].tools == {'read_file', 'write_file'}
-    _, default_lead, _ = await _run(TeamOptions(), _command('create_worker', 'coder', 'write_file'))
-    assert 'Workers only' not in _text(default_lead.requests[0])
 
 
 def _fake_agent(writes=None, stdout='已写入 inventory.py\n\nStatus: completed; executions: 2; replans: 0\n'):

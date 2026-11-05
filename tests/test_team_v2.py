@@ -323,26 +323,13 @@ def test_options_are_validated():
             DelegationOptions(**bad)
 
 
-def test_cli_and_bench_select_version_2(monkeypatch):
-    from types import SimpleNamespace
+def test_cli_builds_delegation_options_for_team_mode():
     from app.agent.__main__ import team_options_for
-    from bench import run_bench
-    options = team_options_for('team', 'w', True, 400, team_version=2)
+    options = team_options_for('team', 'w', True, 400)
     assert isinstance(options, DelegationOptions) and options.require_passing_run
     assert {'write_file', 'run_tests', 'run_python'} <= options.allowed_tools and options.timeout_seconds == 400
-    assert team_options_for('team', None, team_version=2).allowed_tools == READ_TOOLS
-    assert type(team_options_for('team', 'w', True, 400)).__name__ == 'TeamOptions'   # programmatic V1 API kept
-    seen = {}
-
-    def fake(cmd, env, timeout):
-        seen['cmd'] = cmd
-        return SimpleNamespace(stdout='x\n\nStatus: failed; executions: 1; replans: 0\n', stderr='')
-    monkeypatch.setattr(run_bench, 'launch_agent', fake)
-    task = next(t for t in run_bench.load_tasks(['all']) if t['id'] == 'parse_duration')
-    run_bench.run_one(task, 'team', 1, 5, team_version=2)
-    assert seen['cmd'][seen['cmd'].index('--team-version') + 1] == '2'
-    run_bench.run_one(task, 'single', 1, 5, team_version=2)
-    assert '--team-version' not in seen['cmd']
+    assert team_options_for('team', None).allowed_tools == READ_TOOLS
+    assert team_options_for('single', 'w', True) is None
 
 
 def test_service_plans_one_step_and_binds_the_v2_runner():
@@ -350,8 +337,9 @@ def test_service_plans_one_step_and_binds_the_v2_runner():
     from app.services.context_manager import ContextManager
     from app.services.rag_agent_service import RagAgentService
     service = RagAgentService(execution_mode='team', team_options=SANDBOX, mcp_servers=())
-    assert service._team_v2 is True
-    registry = service._team_registry(None)
+    assert service._team_options is SANDBOX
+    assert isinstance(RagAgentService(execution_mode='team', mcp_servers=())._team_options, DelegationOptions)
+    registry = service._team_registry()
     assert [d.runner_id for d in registry.definitions()] == ['tool_calling', 'agent_team']
     bound = registry.bind(RunnerDependencies(Scripted(), _registry(*_sandbox_tools()), ContextManager(),
                                              RunnerLimits()))
@@ -650,20 +638,23 @@ async def test_ungranted_tool_is_named_in_the_report():
     assert 'not granted' in report['note']
 
 
-def test_command_line_and_bench_default_to_version_2(monkeypatch):
-    # D-024: V2 is the default team for the command line and the bench; --team-version 1 keeps V1.
+def test_v1_and_its_version_switch_are_gone(monkeypatch):
+    # D-025: V1 was removed; the command line and the bench no longer have a team version switch.
+    import importlib.util
     from types import SimpleNamespace
     from app.agent.__main__ import build_parser
     from bench import run_bench
-    assert build_parser().parse_args(['goal']).team_version == 2
-    assert build_parser().parse_args(['goal', '--team-version', '1']).team_version == 1
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(['goal', '--team-version', '1'])
+    for name in ('app.agent.agent_team_runner', 'app.agent.team.coordinator', 'app.agent.team.session',
+                 'app.agent.team_poc'):
+        assert importlib.util.find_spec(name) is None
     seen = []
     monkeypatch.setattr(run_bench, 'launch_agent', lambda cmd, env, timeout: seen.append(cmd) or SimpleNamespace(
         stdout='x\n\nStatus: failed; executions: 1; replans: 0\n', stderr=''))
     task = next(t for t in run_bench.load_tasks(['all']) if t['id'] == 'parse_duration')
     run_bench.run_one(task, 'team', 1, 5)
-    run_bench.run_one(task, 'team', 1, 5, team_version=1)
-    assert [cmd[cmd.index('--team-version') + 1] for cmd in seen] == ['2', '1']
+    assert '--team-version' not in seen[0]
 
 
 def test_acceptance_tests_are_opt_in():
@@ -671,18 +662,18 @@ def test_acceptance_tests_are_opt_in():
     from types import SimpleNamespace
     from app.agent.__main__ import team_options_for
     from bench import run_bench
-    assert team_options_for('team', 'w', True, 400, team_version=2).acceptance_tests is False
-    assert team_options_for('team', 'w', True, 400, team_version=2, acceptance=True).acceptance_tests is True
-    assert team_options_for('team', 'w', False, 400, team_version=2, acceptance=True).acceptance_tests is False
+    assert team_options_for('team', 'w', True, 400).acceptance_tests is False
+    assert team_options_for('team', 'w', True, 400, acceptance=True).acceptance_tests is True
+    assert team_options_for('team', 'w', False, 400, acceptance=True).acceptance_tests is False
     seen = []
     monkeypatch_target = run_bench.launch_agent
     run_bench.launch_agent = lambda cmd, env, timeout: seen.append(cmd) or SimpleNamespace(
         stdout='x\n\nStatus: failed; executions: 1; replans: 0\n', stderr='')
     try:
         task = next(t for t in run_bench.load_tasks(['all']) if t['id'] == 'parse_duration')
-        run_bench.run_one(task, 'team', 1, 5, team_version=2)
-        run_bench.run_one(task, 'team', 1, 5, team_version=2, team_acceptance=True)
-        run_bench.run_one(task, 'single', 1, 5, team_version=2, team_acceptance=True)
+        run_bench.run_one(task, 'team', 1, 5)
+        run_bench.run_one(task, 'team', 1, 5, team_acceptance=True)
+        run_bench.run_one(task, 'single', 1, 5, team_acceptance=True)
     finally:
         run_bench.launch_agent = monkeypatch_target
     assert ['--team-acceptance' in cmd for cmd in seen] == [False, True, False]

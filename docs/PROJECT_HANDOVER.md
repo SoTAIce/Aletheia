@@ -5,7 +5,7 @@
 ## 1. 接手时先知道这六件事
 
 1. Aletheia 是 Python Agent/RAG 项目，主执行链为 Plan–Execute–Replan；单 Agent 和 Team 是平级 Runner。
-2. Team V1 已实现和本地冻结，但不能宣称团队更准确：最近三组真实任务严格交付是普通模式 2/3、Team 0/3。
+2. 团队模式只剩 V2（2026-11-05 删除 V1，决策 D-025）：负责人委派给全新上下文的执行者，宿主判定完成。在 parse_duration、fix_inventory 上严格交付好于普通模式，但样本少，见第 7 节。
 3. ConversationMemory、WorkingMemory、长期记忆和 ContextManager 各有职责；不要再建一套重复 Memory 框架。
 4. 历史原文可恢复；运行中任务只能在同一服务实例暂停恢复，不能跨进程恢复执行。
 5. 用户刚清理了 tests、验证脚本与临时产物。1093 passed/2 skipped 是清理前的历史回归；当前可直接运行的是 init.ps1（静态/入口 + 最小 pytest `tests/test_harness_smoke.py`）。
@@ -90,7 +90,7 @@ Filesystem：`app/tools/filesystem/file_access.py`、`server.py`；WebSearch：`
 
 RAG：`knowledge_registry_tool.py` → `rag_search_service.py` → query rewrite、向量/BM25/hybrid、RRF、rerank、context builder；证据进入 Resources。
 基础设施在 `vector_embedding_service.py`、`vector_index_service.py`、`vector_store_manager.py`、`app/core/milvus_client.py`。已有 Milvus 全局 alias 兼容逻辑，不能随意断开共享连接。
-不要为了长期记忆或 Team 建第二套工具注册/模型框架。`app/agent/aiops`、`mcp_demo` 和 `team_poc` 是旧实现/示例/兼容与实验入口，不是当前主链替代品。
+不要为了长期记忆或 Team 建第二套工具注册/模型框架。`app/agent/aiops`、`mcp_demo` 是旧实现/示例/兼容与实验入口，不是当前主链替代品。
 
 ## 5. Memory + Context 的职责划分
 
@@ -143,21 +143,15 @@ BLOCKED 只结束这次交互。保持同一个服务实例，使用 `resume_tas
 
 已通过受控 stand-in 复现的跨库边界：数据库较新更新之后，较旧索引写可能晚到；forget 后也可能出现迟到旧向量。CAS 不排序后续 Milvus 写。Retriever 回查权威行可挡住孤儿内容返回，但不能保证召回正确或索引同步。无 outbox/跨库事务或通用补偿；本轮不修业务代码。
 
-## 7. Agent Team V1
+## 7. Agent Team（V2；V1 已于 2026-11-05 删除）
 
-`app/agent/agent_team_runner.py` 平级注册 `agent_team`；`app/agent/team/coordinator.py` 确定性驱动 Lead 发出的命令，`session.py` 负责成员连续循环，`models.py` 管配置/预算/状态，`contracts.py` 管宿主契约，`diagnostics.py` 管安全异常信息。
+`app/agent/team_v2.py` 注册 runner `agent_team`。团队模式下服务用 `SingleStepPlanner` 只产生一步计划，整件任务交给团队。负责人只能调用 `delegate`（可选 `review`；开启独立验收时还有 `verify`），每次委派都新建一个普通模式执行器（`ToolCallingStepRunner`），只拿到授予的工具，上下文是全新的。
 
-机制：动态创建 Worker/Reviewer，分配任务；成员中途反馈，Lead 调整同一成员任务版本/分工；独立 Reviewer 对当前版本审查，定向返工后重新审查。顺序调度，不嵌套 Runtime；不是固定一次性 Worker–Reviewer 流水线。
+完成由宿主判定：开启沙盒时要求最后一次写入之后有一次通过的 `run_tests`/`run_python`；工具结果由宿主自己记录，执行者最终报告出错也不丢证据（D-023）。独立验收默认关闭，`--team-acceptance` 开启（D-022）。执行者上下文按两档压缩，防止超窗（`model_view.py`）。
 
-三个契约必须分开：宿主最终结果和语义验收不可被 Lead 覆盖；Lead 可组织内部任务；成员必须通过 submit_result 协议。默认宿主最终 JSON 为 `{"answer":"非空文本"}`，这只校验形状，不证明事实。
+默认上限（`DelegationOptions`）：6 次委派、2 次验收、负责人 16 轮、执行者 12 轮/24 次工具调用、180 秒。`app/agent/team/` 只剩 `models.py`（`TeamError`、`WORKER_ONLY_TOOLS`、通过门槛函数）和 `diagnostics.py`（安全异常类型链）。
 
-权限是宿主允许工具、实际工具和 Lead 请求的交集。成员拥有私有 WorkingMemory/ContextManager；不把父会话或长期记忆全量广播。
-默认限制（`models.py:63-69`，由 tests/test_team_contracts.py 固化）：最多 4 成员、32 commands/actions、48 模型调用、32 业务工具、每个非 Lead Session 最多 12 次修订（版本号 1→13）、180s 团队时间、共享估算 token 预算 500,000；Lead 使用 actions 上限，12 不是全团队共享修改次数。每个 Session 另有模型 48 / 工具 96 / 单次 180s 的上限，团队级上限先触发；被拒的 Lead 命令也消耗预算；没有 Reviewer approve 就不能 finish。详见 [Team 一致性审查](harness/team-audit-2026-11-04.md)。父 Runtime/Step 超时仍生效，不能只调 TeamOptions 后忽略外层期限。
-工具连接按成员运行边界关闭；暂停后恢复同一 Session 历史/计数，版本绑定审查失效后必须重审；父任务失效保护与 StepExecutor 提交门仍在外层。
-
-Reviewer 反馈上限 2000 字符；过长或明确 provider length 可用有限 submit-only 修复，不能再次执行业务工具。安全诊断保留有界嵌套异常类型和 token 数，不能记录原始响应/私有错误。
-
-不支持：递归团队、复杂并行、跨进程检查点、LLM 自动路由、任意同伴广播、一般 exactly-once。新 ID 的模型重复调用不被一概消除；不确定副作用不自动回放。
+真实评测和已知短板见 [V2 实现记录](harness/team-v2-2026-11-04.md)；V1 的设计与证据见历史报告和提交 `e20a6e1` 及更早版本。
 
 ## 8. 证据矩阵：不要把机制成功当成质量优势
 
