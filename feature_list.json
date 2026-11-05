@@ -367,6 +367,39 @@
       ],
       "evidence": "2026-11-04: strict single 2/2 (parse_duration 21/21 after 7 sandbox runs, fix_inventory 16/16 after 7 sandbox runs); team 0/2 (parse_duration: ModelToolArgumentsError after repairs exhausted; fix_inventory: failure type lost to runner filter, now widened with tests). Team runs started no sandbox container. Record: docs/harness/sandbox-live-2026-11-04.md",
       "evidence_kind": "live_benchmark"
+    },
+    {
+      "id": "team-diagnosis-001",
+      "name": "Safe team execution trace and root cause of team benchmark failures",
+      "description": "User asked 2026-11-04 to investigate why team mode fails while single passes. Hypothesis from code: each TeamSession has a lifetime format-repair budget of 2 (never reset), shared by command/submission/truncation/argument repairs, while single resets per step; the long-lived Lead is most exposed. Add a host-authored trace (actions, events, per-session counters, repair counts, failure types; no model text) logged on every team run and captured by bench; then an authorized team-only rerun to confirm.",
+      "status": "done",
+      "dependencies": [
+        "sandbox-step4-001"
+      ],
+      "acceptance": [
+        "Trace contains only enum/regex-validated names, host-authored reasons, counters and exception type names; test proves model text never appears.",
+        "bench rows include the trace for team runs.",
+        "Root cause stated with trace evidence from an authorized rerun, or recorded as unconfirmed."
+      ],
+      "evidence": "Authorized team-only rerun (2 runs, sandbox): both failed inside the first run_member; the worker session hit 3 undecodable tool-argument turns and exhausted its 2 lifetime format repairs; coordinator re-raises member failure so the whole team dies. Lead repairs 0/2 and 2/2. Likely culprit submit_result with embedded code (inferred; trace now records rejected tool name/size). Trace fixed for nested ExceptionGroup. tests/test_team_trace.py 4 passed. See docs/harness/team-diagnosis-2026-11-04.md",
+      "evidence_kind": "live+deterministic"
+    },
+    {
+      "id": "team-recovery-001",
+      "name": "Hand member protocol failures back to the Lead and reset format repairs per run",
+      "description": "User asked 2026-11-04 to implement fixes 1 and 2 from team-diagnosis-001. (1) A member session that fails only from member-local protocol errors (SessionError, ModelToolArgumentsError, ContractError) no longer ends the team: the Lead receives a member_failed event with failure type names and may create a replacement or fail; a team-wide cap max_member_failures (default 2) keeps it bounded. Provider/runtime errors, output-limit, team budget, permission, tool side-effect, stale and cancellation failures stay terminal. (2) Format repairs reset for each member run and each Lead command, bounded by a team-wide max_format_repairs total (default 8).",
+      "status": "done",
+      "dependencies": [
+        "team-diagnosis-001"
+      ],
+      "acceptance": [
+        "A worker that exhausts argument repairs yields member_failed to the Lead; the Lead can create a replacement worker and the team can complete.",
+        "Exceeding max_member_failures is a terminal TeamError; non-recoverable failures stay terminal (historical 9138ac1 team tests pass).",
+        "Format repairs reset per run but the team total never exceeds max_format_repairs.",
+        "Full deterministic regression passes; no live calls in this item."
+      ],
+      "evidence": "tests/test_team_recovery.py 7 + test_team_trace 4 = 11 passed; historical team+routing (9138ac1) 84 passed; full historical 1090 passed/2 skipped/3 known pre-existing failures; current tests 82 passed/12 skipped. Live effect not measured. See docs/harness/team-recovery-2026-11-04.md, DECISIONS D-018. Live rerun (2, authorized): both workers completed write/test loops and submitted candidates; both teams then ended on a create_reviewer host gate TeamError (gate not recorded; likely reviewer given worker-only tools). Bench failure-text bug fixed (file content no longer replaces CLI failure); trace now records whitelisted host gate texts. 0/2 delivered. Reviewer worker-only tool gate is now a recoverable _CommandRejected (tests 86 passed; historical 1090 passed). Live rerun (2, authorized): both failed on the Lead first model call with KeyError: Lead called an unregistered tool (reproduced deterministically); gate change not yet exercised live. Unknown tool names are now a bounded repair; Lead system message no longer mentions request_coordination (tests 88 passed; historical 1090 passed). Live rerun (2, authorized): parse_duration reached reviewer approve after recovering from an unknown tool, a reviewer tool-gate rejection and a reviewer member_failed; then ended on team tool budget 32/32 during rework. fix_inventory hit bench 600s timeout (no trace). 0/2 delivered. Sandbox-only team budgets raised (96 tools/120 model calls/1.5M tokens); bench keeps partial stderr on timeout and gives team runs team_timeout+300s (tests 90 passed; historical 1090 passed). Live rerun (2, authorized): both failed ~390s with ContextBudgetError (32768-token window; long-lived member sessions keep full write_file arguments); Lead never attempted finish after reviewer approvals. 0/2 delivered. Model-view compaction of superseded write_file bodies/older outputs above 60% window and host finish_ready flag (tests 93 passed). Live rerun (2, authorized): both hit bench 700s timeout with files written but no trace: successful team traces were INFO (CLI shows WARNING+) and team time is per plan step. Bench now sets ALETHEIA_TEAM_TRACE=1, keeps per-step traces and grades written files on failure as diagnostics (tests 95 passed; historical 1090 passed).",
+      "evidence_kind": "deterministic"
     }
   ],
   "cleanup_2026_11_04": {

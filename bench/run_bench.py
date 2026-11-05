@@ -23,6 +23,7 @@ from bench.graders import extract_code, grade_html_todo, grade_python, split_cli
 BENCH = Path(__file__).resolve().parent
 REPO = BENCH.parent
 _SAFE_FAILURE = re.compile(r'^[A-Za-z]+(Error|Exception)(: [A-Za-z][\w :().,>-]{0,200})?$', re.ASCII)
+_TEAM_TRACE = re.compile(r'Team trace: (\{.*\})')
 _TEAM_COUNTS = re.compile(r'"model_calls": (\d+), "tool_calls": (\d+)')
 
 
@@ -59,6 +60,12 @@ def _pycache_dirs():
     return {p for p in (REPO / 'app').rglob('__pycache__')}
 
 
+def _text(value):
+    if isinstance(value, bytes):
+        return value.decode('utf-8', errors='replace')
+    return value or ''
+
+
 def launch_agent(cmd, env, timeout):
     """Start one agent process (tests replace this; graders keep using subprocess directly)."""
     return subprocess.run(cmd, cwd=REPO, env=env, capture_output=True, text=True,
@@ -85,7 +92,8 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
     try:
         for name in task['files']:
             shutil.copyfile(task['dir'] / name, root / name)
-        env = dict(os.environ, TAVILY_API_KEY='', PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8')
+        env = dict(os.environ, TAVILY_API_KEY='', PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8',
+                   ALETHEIA_TEAM_TRACE='1')
         goal = task['write_goal'] if write else task['goal']
         if sandbox:
             goal += SANDBOX_HINT
@@ -99,16 +107,32 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             cmd.append('--sandbox')
         if team_timeout is not None and mode == 'team':
             cmd += ['--team-timeout', str(team_timeout)]
+        if team_timeout is not None and mode == 'team':
+            # Planning and teardown run outside the team budget; never kill a team that is still in time.
+            timeout = max(timeout, team_timeout + 300)
         started = time.monotonic()
         try:
             done = launch_agent(cmd, env, timeout)
             stdout, stderr, timed_out = done.stdout, done.stderr, False
-        except subprocess.TimeoutExpired:
-            stdout, stderr, timed_out = '', '', True
+        except subprocess.TimeoutExpired as exc:
+            # Keep what the child already logged (the team trace, if the team ended).
+            stdout, stderr, timed_out = '', _text(exc.stderr), True
         seconds = round(time.monotonic() - started, 1)
         content, status, executions, replans = split_cli_output(stdout)
+        cli_content = content  # failure text comes from the CLI, never from the written file
         row = {'task': task['id'], 'mode': mode, 'run': index, 'status': 'timeout' if timed_out else status,
                'executions': executions, 'replans': replans, 'seconds': seconds}
+        traces = _TEAM_TRACE.findall(stderr)
+        if traces:
+            parsed = []
+            for text in traces:  # host-authored, no model text; one per team step
+                try:
+                    parsed.append(json.loads(text))
+                except ValueError:
+                    parsed.append('unparsable')
+            row['team_trace'] = parsed[-1]
+            if len(parsed) > 1:
+                row['team_traces'] = parsed
         counts = _TEAM_COUNTS.search(stderr)
         if counts:
             row['team_model_calls'], row['team_tool_calls'] = int(counts.group(1)), int(counts.group(2))
@@ -132,7 +156,11 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
                 Path(keep_dir).mkdir(parents=True, exist_ok=True)
                 (Path(keep_dir) / f'{task["id"]}-{mode}-{index}{suffix}').write_text(content, encoding='utf-8')
         else:
-            first = content.splitlines()[0] if content else ''
+            if write and written is not None and written != original:
+                # Diagnostic only: how good the file was when the run stopped. Never a pass.
+                passed, total, _ = summarize(grade(task, written))
+                row['file_checks_passed'], row['file_checks_total'] = passed, total
+            first = cli_content.splitlines()[0] if cli_content else ''
             row['failure'] = first if _SAFE_FAILURE.match(first) else ('timeout' if timed_out else 'unrecognized')
             row['passed'] = False
         return row

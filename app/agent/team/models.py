@@ -33,6 +33,10 @@ class TeamOptions:
     output_contract: JsonContract = field(default_factory=lambda: JsonContract('team-final', (('answer', str),), _answer_check))
     # When true, finish needs a passing run_tests/run_python after the worker's last write_file.
     require_passing_run: bool = False
+    # Member-local protocol failures handed back to the Lead before the team fails.
+    max_member_failures: int = 2
+    # Format repairs reset for every member run / Lead command; this bounds the team total.
+    max_format_repairs: int = 8
 
     def __post_init__(self):
         for name in ('max_members', 'max_actions', 'max_model_calls', 'max_tool_calls',
@@ -45,6 +49,9 @@ class TeamOptions:
         if not isinstance(self.allowed_tools, frozenset) or any(
                 not isinstance(n, str) or not n.strip() or n != n.strip() for n in self.allowed_tools):
             raise ValueError('allowed_tools must be a frozenset of nonempty tool names')
+        for name in ('max_member_failures', 'max_format_repairs'):
+            if type(getattr(self, name)) is not int or getattr(self, name) < 0:
+                raise ValueError(f'{name} must be a nonnegative integer')
         if type(self.require_passing_run) is not bool:
             raise TypeError('require_passing_run must be a bool')
         if not isinstance(self.output_contract, JsonContract):
@@ -75,6 +82,8 @@ class Budget:
     tool_calls: int = 0
     estimated_tokens: int = 0
     active_seconds: float = 0
+    format_repairs: int = 0
+    member_failures: int = 0
 
 
 @dataclass(slots=True)
@@ -102,6 +111,7 @@ class TeamState:
     used_answers: set[str] = field(default_factory=set)
     last_event: dict = field(default_factory=lambda: {'event': 'team_started'})
     history: list[dict] = field(default_factory=list)
+    outcomes: list[dict] = field(default_factory=list)  # safe per-action outcomes for diagnosis
     output: object = None
     owner_user_id: str | None = None
     failure: dict | None = None

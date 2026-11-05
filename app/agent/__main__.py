@@ -13,7 +13,8 @@ from app.tools.tool_loader import local_mcp_servers
 def team_options_for(execution_mode, write_root, sandbox=False, timeout_seconds=None):
     """Team stays read-only unless a write root is configured; then workers may write files.
 
-    With the sandbox, workers may also run code and finish needs a passing run.
+    With the sandbox, workers may also run code and finish needs a passing run; write -> test -> fix
+    loops need larger team budgets than the read-only defaults (team-recovery-001).
     """
     if execution_mode != 'team' or (not write_root and timeout_seconds is None):
         return None
@@ -24,8 +25,13 @@ def team_options_for(execution_mode, write_root, sandbox=False, timeout_seconds=
         tools = tools | {'write_file'}
     if sandbox:
         tools = tools | {'run_tests', 'run_python'}
+    budgets = SANDBOX_TEAM_BUDGETS if sandbox else {}
     return TeamOptions(allowed_tools=tools, require_passing_run=bool(sandbox),
-                       timeout_seconds=defaults.timeout_seconds if timeout_seconds is None else timeout_seconds)
+                       timeout_seconds=defaults.timeout_seconds if timeout_seconds is None else timeout_seconds,
+                       **budgets)
+
+
+SANDBOX_TEAM_BUDGETS = {'max_tool_calls': 96, 'max_model_calls': 120, 'max_estimated_tokens': 1_500_000}
 
 
 def sandbox_problem(write_root, sandbox):

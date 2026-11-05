@@ -38,10 +38,10 @@ class Lead:
         return self.turns.pop(0)
 
 
-def _command(action, member, tools):
+def _command(action, member, tools, identity='c1'):
     payload = {'action': action, 'member_id': member, 'target_id': '', 'instruction': 'do it',
                'tools': tools, 'expected_version': 0}
-    return ModelTurn(tool_calls=(ToolCall('c1', 'submit_result', {'payload': payload}),))
+    return ModelTurn(tool_calls=(ToolCall(identity, 'submit_result', {'payload': payload}),))
 
 
 def _context():
@@ -69,9 +69,19 @@ async def _run(options, *turns):
 
 
 async def test_reviewer_cannot_receive_write_tool():
+    # The gate rejects the command before any member exists; the Lead sees why and may retry.
     options = TeamOptions(allowed_tools=TeamOptions().allowed_tools | {'write_file'})
-    state, lead, error = await _run(options, _command('create_reviewer', 'checker', 'read_file,write_file'))
-    assert 'workers only' in str(error) and state.members == {}
+    ctx = _context()
+    state = TeamStore().get(ctx, options)
+    lead = Lead(_command('create_reviewer', 'checker', 'read_file,write_file'),
+                _command('create_reviewer', 'checker', 'read_file,write_file', 'c2'),
+                _command('fail', '', '', 'c3'))
+    with pytest.raises(TeamError, match='do it'):
+        await TeamCoordinator(state, lead, TeamEnvironment('u', None, None), ctx).run()
+    assert state.members == {}
+    assert [o['event'] for o in state.outcomes][:2] == ['command_rejected', 'command_rejected']
+    assert 'workers only' in state.outcomes[0]['reason']
+    assert 'workers only' in _text(lead.requests[1])
     assert 'Workers only (never reviewers): ["write_file"]' in _text(lead.requests[0])
 
 

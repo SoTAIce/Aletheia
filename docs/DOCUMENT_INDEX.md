@@ -13,6 +13,9 @@
 | [clean-state 清单](harness/clean-state-checklist.md)、[evaluator-rubric](harness/evaluator-rubric.md)、[质量文档](harness/quality-document.md) | 会话退出检查、评审打分、领域/层质量与可观测性 |
 | [合规审查 2026-11-04](harness/conformance-audit-2026-11-04.md) | 对照 Learn Harness Engineering 的逐项结论与剩余缺口 |
 | [沙盒真实评测 2026-11-04](harness/sandbox-live-2026-11-04.md) | 写文件 + 沙盒运行：普通模式 2/2 严格通过（各运行沙盒 7 次），团队模式 0/2（参数 JSON 错误、类型未采集） |
+| [团队模式失败诊断 2026-11-04](harness/team-diagnosis-2026-11-04.md) | 执行轨迹显示：工作成员连续产生无法解码的工具参数并用完修复次数，成员失败直接终结团队；附修复建议 |
+| [团队恢复能力 2026-11-04](harness/team-recovery-2026-11-04.md) | 成员的协议失败交回负责人（最多 2 次）；修复次数按每次运行重置（团队合计最多 8 次）；决策 D-018 |
+| [团队模式重新设计方案 2026-11-04](harness/team-redesign-proposal-2026-11-04.md) | 待决定：V1 的结构缺陷与改为“编排者—执行者，执行者即工具”的 V2 方案 |
 | [沙盒执行设计方案](sandbox_execution_design.md) | 阶段二受限写入 + 阶段三沙盒运行：Docker 限制参数、工具接口、按角色分权、安全测试、实施步骤和待决问题；未实现 |
 | [能力增强阶段 1 2026-11-04](harness/capability-phase1-2026-11-04.md) | 工具参数错误可有界修复、失败带类型链；评测集 bench/（3 任务 + 自动评分）；确定性测试 20 个，历史 450 passed |
 | [评测集说明](../bench/README.md) | 任务、运行命令、授权与上限、判定口径 |
