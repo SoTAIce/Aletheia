@@ -160,7 +160,7 @@ async def test_service_blocked_task_resumes_in_new_turn_without_repeating_comple
         await s.query_result('destination', 'other', resume_task_id=blocked.task_id)
     done = await s.query_result('  destination A\n', 's', request_id='second', resume_task_id=blocked.task_id)
     assert done.task_id == blocked.task_id and done.status is TaskStatus.COMPLETED
-    assert done.execution_count == 3 and done.replan_count == 1
+    assert done.execution_count == 3 and done.replan_count == 0   # answering a question replans without spending the budget (D-033)
     assert s.model.generate.await_count == 4
     assert len(done.steps[0].tool_results) == 1 and done.steps[0].tool_results[0].call_id == 'clock'
     prompt = s._planner_model.generate.call_args.args[0]

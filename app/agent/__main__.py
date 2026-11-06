@@ -34,6 +34,20 @@ def team_options_for(execution_mode, write_root, sandbox=False, timeout_seconds=
                              else timeout_seconds)
 
 
+def step_timeout_for(sandbox, team_options):
+    """A step must outlast one sandbox call, so the sandbox's own timeout result is seen (D-033).
+
+    None keeps the configured default (the service still widens it for the team).
+    """
+    if not sandbox:
+        return None
+    from app.tools.sandbox.executor import host_call_timeout_seconds
+    seconds = max(config.agent_step_timeout_seconds, host_call_timeout_seconds() + 30)
+    if team_options is not None:
+        seconds = max(seconds, team_options.timeout_seconds + 5)
+    return seconds
+
+
 def sandbox_problem(write_root, sandbox):
     """Reason the sandbox cannot be used, checked before any model call; None when fine."""
     if not sandbox:
@@ -63,6 +77,9 @@ async def main(args) -> int:
         if problem:
             print(f'SandboxUnavailableError: {problem}')
             return 2
+        team_options = team_options_for(getattr(args, 'execution_mode', 'single'), write_root, sandbox,
+                                        getattr(args, 'team_timeout', None),
+                                        getattr(args, 'team_acceptance', False))
         service = await stack.enter_async_context(RagAgentService(
             mcp_servers=local_mcp_servers(
                 filesystem_root=args.filesystem_root or config.mcp_filesystem_root or None,
@@ -73,12 +90,14 @@ async def main(args) -> int:
             max_executions=args.max_executions, max_replans=args.max_replans,
             conversation_compressor=compressor,
             execution_mode=getattr(args, 'execution_mode', 'single'),
-            team_options=team_options_for(getattr(args, 'execution_mode', 'single'), write_root, sandbox,
-                                          getattr(args, 'team_timeout', None),
-                                          getattr(args, 'team_acceptance', False)),
+            team_options=team_options,
+            step_timeout_seconds=step_timeout_for(sandbox, team_options),
         ))
         result = await service.query_result(args.goal, args.session_id)
     print(result.content)
+    if getattr(result, 'user_message', None):
+        # The first line stays the English diagnostic the bench parses; this explains it (D-033).
+        print(f"\n说明：{result.user_message}")
     print(f"\nStatus: {result.status.value}; executions: {result.execution_count}; replans: {result.replan_count}")
     return 0 if result.status is TaskStatus.COMPLETED else (2 if result.status is TaskStatus.BLOCKED else 1)
 

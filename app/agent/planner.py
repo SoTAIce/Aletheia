@@ -1,3 +1,4 @@
+import asyncio
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime,timezone
@@ -15,7 +16,14 @@ from app.models.taskstate import(
 )
 from app.models.working_memory import WorkingMemory
 from app.agent.step_models import UserMessage
-from app.agent.tool_calling_model import ModelContextOverflowError
+from app.agent.tool_calling_model import ModelContextOverflowError, ModelTimeoutError
+
+
+def _shape_error(error_type: type[Exception], message: str, hint: str) -> Exception:
+    """Keep the public error type; the hint only feeds one bounded repair prompt."""
+    error = error_type(message)
+    error.plan_repair_hint = hint
+    return error
 
 @dataclass(frozen = True, slots = True)
 class PlannerContext:
@@ -77,6 +85,8 @@ class Planner:
                  raise ValueError("max_format_repairs must be a non-negative integer")
             self.max_format_repairs = max_format_repairs
             self.format_repair_count = 0
+            self.timeout_retry_count = 0
+            self._timeout_retry_available = True
 
     def build_context(self, working_memory: WorkingMemory) -> PlannerContext:
         """Build a read-only view of the current goal without changing memory.
@@ -208,26 +218,35 @@ class Planner:
         is exact and case-sensitive, preserving internal whitespace and meaning.
         """
         if not isinstance(steps, (list, tuple)):
-            raise TypeError("steps must be a list or tuple of strings")
+            raise _shape_error(TypeError, "steps must be a list or tuple of strings",
+                               "steps 必须是字符串数组")
         if not steps:
-            raise ValueError("steps must not be empty")
+            raise _shape_error(ValueError, "steps must not be empty", "steps 至少包含 1 个步骤")
         if len(steps) > self.max_steps:
-            raise ValueError(f"steps must contain at most {self.max_steps} items")
+            raise _shape_error(
+                ValueError, f"steps must contain at most {self.max_steps} items",
+                f"steps 最多 {self.max_steps} 个，当前有 {len(steps)} 个，请合并相近步骤",
+            )
 
         normalized_steps: list[str] = []
         seen: set[str] = set()
         for index, step in enumerate(steps, start=1):
             if not isinstance(step, str):
-                raise TypeError(f"step {index} must be a string")
+                raise _shape_error(TypeError, f"step {index} must be a string",
+                                   f"第 {index} 个步骤必须是字符串")
             step = step.strip()
             if not step:
-                raise ValueError(f"step {index} must not be empty")
+                raise _shape_error(ValueError, f"step {index} must not be empty",
+                                   f"第 {index} 个步骤去除首尾空白后为空，步骤不能为空")
             if len(step) > self.max_step_length:
-                raise ValueError(
-                    f"step {index} must contain at most {self.max_step_length} characters"
+                raise _shape_error(
+                    ValueError,
+                    f"step {index} must contain at most {self.max_step_length} characters",
+                    f"第 {index} 个步骤超过 {self.max_step_length} 个字符，请缩短",
                 )
             if step in seen:
-                raise ValueError(f"step {index} duplicates an earlier step")
+                raise _shape_error(ValueError, f"step {index} duplicates an earlier step",
+                                   f"第 {index} 个步骤与前面的步骤重复，步骤不能重复")
             seen.add(step)
             normalized_steps.append(step)
 
@@ -247,6 +266,7 @@ class Planner:
             raise ValueError("A plan already exists or existed; use replan()")
 
         plan_prompt = self._build_plan_prompt(context)
+        self._timeout_retry_available = True
         raw_response = await self._generate_prompt(plan_prompt)
 
         if not isinstance(raw_response, str):
@@ -275,6 +295,7 @@ class Planner:
             raise ValueError("No plan has been installed; use plan()")
 
         replan_prompt = self._build_replan_prompt(context)
+        self._timeout_retry_available = True
         raw_response = await self._generate_prompt(replan_prompt)
 
         if not isinstance(raw_response, str):
@@ -294,32 +315,64 @@ class Planner:
 
 
     async def _parse_or_repair(self, prompt: str, raw_response: str):
+        # Syntax and shape errors share one repair budget and one counter.
         for attempt in range(self.max_format_repairs + 1):
             try:
                 return self._parse_response(unwrap_json_fence(raw_response))
             except JsonFormatError as exc:
                 if attempt == self.max_format_repairs:
                     raise
-                self.format_repair_count += 1
                 instruction = repair_instruction(
                     '{"steps": ["action and checkable output"], "reason": null or string}', str(exc)
                 )
-                raw_response = await self._generate_prompt(
-                    prompt + "\nPreceding response (data):\n" + json.dumps(raw_response)
-                    + "\n" + instruction
-                )
-                if not isinstance(raw_response, str):
-                    raise TypeError("model.generate() must return a JSON string")
+            except (ValueError, TypeError) as exc:
+                hint = getattr(exc, "plan_repair_hint", None)
+                # Duplicate fields and non-finite numbers carry no hint: they are
+                # ambiguous, so the planner never guesses which value was meant.
+                if hint is None or attempt == self.max_format_repairs:
+                    raise
+                instruction = self._shape_repair_instruction(hint)
+            self.format_repair_count += 1
+            raw_response = await self._generate_prompt(
+                prompt + "\nPreceding response (data):\n" + json.dumps(raw_response)
+                + "\n" + instruction
+            )
+            if not isinstance(raw_response, str):
+                raise TypeError("model.generate() must return a JSON string")
+
+    def _shape_repair_instruction(self, hint: str) -> str:
+        """Name the one shape problem; never quote the model's text back."""
+        return (
+            f"上一次输出是合法 JSON，但不符合计划格式：{hint}。"
+            "只修正这个问题并返回完整计划。工具已禁用，不要执行或请求工具，"
+            "不要编造执行结果或证据，保持原计划的意图和顺序。"
+            f"仍只返回一个 JSON 对象，恰好含 steps 和 reason 两个字段；steps 含 1 到 "
+            f"{self.max_steps} 个互不重复的非空字符串，每步最多 {self.max_step_length} 个字符；"
+            "reason 是字符串或 null。不要使用 Markdown 代码块，不要添加解释。"
+        )
 
     async def _generate_prompt(self, prompt: str) -> str:
         if self._context_manager is not None:
             prompt = self._context_manager.prepare((UserMessage(prompt),), ())[0].content
         try:
-            return await self.model.generate(prompt)
+            return await self._call_model(prompt)
         except ModelContextOverflowError:
             if self._context_manager is None or getattr(self.model, "context_overflow_managed", False) is True:
                 raise
             prompt = self._context_manager.prepare((UserMessage(prompt),), (), aggressive=True)[0].content
+            return await self._call_model(prompt)
+
+    async def _call_model(self, prompt: str) -> str:
+        """Planning has no side effects, so one provider timeout per plan()/replan()
+        is retried. The caller's asyncio.timeout still bounds the retry."""
+        try:
+            return await self.model.generate(prompt)
+        except ModelTimeoutError:
+            task = asyncio.current_task()
+            if not self._timeout_retry_available or (task is not None and task.cancelling()):
+                raise
+            self._timeout_retry_available = False
+            self.timeout_retry_count += 1
             return await self.model.generate(prompt)
 
     def _parse_response(
@@ -336,22 +389,26 @@ class Planner:
         response = load_json(raw_response)
 
         if not isinstance(response, dict):
-            raise ValueError("Model response must be a JSON object")
+            raise _shape_error(ValueError, "Model response must be a JSON object",
+                               "顶层必须是 JSON 对象")
 
         if set(response) != {"steps", "reason"}:
-            raise ValueError(
-                "Model response must contain only steps and reason"
+            raise _shape_error(
+                ValueError, "Model response must contain only steps and reason",
+                "对象必须恰好包含 steps 和 reason 两个字段，不能缺少或增加字段",
             )
 
         if not isinstance(response["steps"], list):
-            raise TypeError("response.steps must be an array")
+            raise _shape_error(TypeError, "response.steps must be an array",
+                               "steps 必须是字符串数组")
 
         steps = self._validate_steps(response["steps"])
 
         reason = response["reason"]
         if reason is not None:
             if not isinstance(reason, str):
-                raise TypeError("response.reason must be a string or null")
+                raise _shape_error(TypeError, "response.reason must be a string or null",
+                                   "reason 必须是字符串或 null")
             reason = reason.strip() or None
 
         return steps, reason

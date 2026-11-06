@@ -6,7 +6,7 @@
 
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1218 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
+- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1287 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
 - **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
 
@@ -18,6 +18,13 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-06 — reliability-001：执行可靠性
+
+- **Result**：步骤结果和计划的形状错误进入有上限的修复，规划超时重试一次（D-031，规划器部分由并行会话完成）；写入或运行类工具出错、或用过它们后超时，任务直接失败不再重新规划，普通模式的未授权工具在本轮反馈（D-032）；失败分类和中文说明、次数用完时保留根因、异常只记类型名、澄清不占重新规划次数、开沙盒时单步时限 120 秒（D-033）。
+- **Verification**：新增可靠性测试 24 项和规划器修复测试；init.ps1 PASS，1287 passed、16 skipped。
+- **Known issue**：`tests/agent/test_summary_lifecycle_e2e.py` 用 0.03～0.15 秒的时限，在提交版本上也约 5 次失败 2 次，与本次改动无关，未修。
+- **Not done**：失败步骤保留已观察到的工具结果（core P1-2）、整件任务的总时限和令牌预算（core P1-5）、runner 声明式契约（core P1-7）；真实模型复测未做。已按用户“提交”提交。
 
 ### 2026-11-06 — tests-restore-001 和 security-boundary-001：补测试和安全边界
 

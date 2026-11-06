@@ -65,7 +65,7 @@ def test_init_and_rebind_use_same_factory_inputs_and_atomic_replacement():
     assert runtime._runner is old
     reject = False
     runtime.rebind(Planner(planner), replacement_model, tools, context_manager=manager)
-    assert seen[-1].model is replacement_model and seen[-1].tool_registry is tools
+    assert seen[-1].model is replacement_model and seen[-1].tool_registry.inner is tools   # side-effect watch (D-032)
     assert seen[-1].context_manager is manager and seen[-1].limits == seen[0].limits
     assert seen[-1].limits.max_tool_rounds == 2
     assert seen[-1].limits.max_total_tool_calls == 3
@@ -84,7 +84,7 @@ async def test_rebind_after_blocked_uses_new_clients_preserves_counts_and_diagno
     replacement.generate.return_value = ModelTurn('{"status":"succeeded","content":"new client result","reason":null}')
     runtime.rebind(Planner(planner), replacement, ToolRegistry(), context_manager=ContextManager())
     result = await runtime.run()
-    assert result.status is TaskStatus.COMPLETED and result.execution_count == 2 and result.replan_count == 1
+    assert result.status is TaskStatus.COMPLETED and result.execution_count == 2 and result.replan_count == 0   # answering a question replans without spending the budget (D-033)
     assert model.generate.await_count == 1 and replacement.generate.await_count == 1
     assert isinstance(runtime._runner, RoutingStepRunner)
     assert [d.runner_id for d in runtime.routing_decisions] == ['tool_calling', 'tool_calling']

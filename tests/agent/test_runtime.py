@@ -159,7 +159,8 @@ async def test_raw_tool_exception_is_a_step_failure_then_replanned():
     )
     result = await runtime.run()
     assert result.status is TaskStatus.COMPLETED and result.replan_count == 1
-    assert "disconnected" in memory.task_state.scratchpad.failure_history[0].message
+    message = memory.task_state.scratchpad.failure_history[0].message
+    assert "ConnectionError" in message and "disconnected" not in message   # type name only (D-033)
     assert len(memory.task_state.scratchpad.intermediate_results) == 1
     assert tool.invoke.await_count == 2
 
@@ -201,7 +202,7 @@ async def test_blocked_step_waits_for_answer_then_resumes_with_same_budget():
     memory.task_state.resolve_question(question.question_id, "actual.txt")
     result = await runtime.run()
     assert result.status is TaskStatus.COMPLETED
-    assert result.execution_count == 2 and result.replan_count == 1
+    assert result.execution_count == 2 and result.replan_count == 0   # answering a question replans without spending the budget (D-033)
     assert "actual.txt" in planner_model.generate.call_args_list[1].args[0]
     context = json.loads(model.generate.call_args_list[1].args[0][1].content)
     assert context["resolved_questions"][0]["answer"] == "actual.txt"

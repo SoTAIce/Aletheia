@@ -115,7 +115,7 @@ class RunnerRegistry:
 def _tool_calling_factory(deps: RunnerDependencies) -> StepRunner:
     return ToolCallingStepRunner(deps.model, deps.tool_registry,
         deps.limits.max_tool_rounds, deps.limits.max_total_tool_calls,
-        require_step_outcome=True, context_manager=deps.context_manager)
+        require_step_outcome=True, context_manager=deps.context_manager, unavailable_tool_feedback=True)
 
 
 def default_runner_registry() -> RunnerRegistry:

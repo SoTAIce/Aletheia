@@ -628,6 +628,23 @@
         "Sandbox tools wait 90 s; other MCP tools keep the 30 s default."
       ],
       "evidence": "tests/tools/test_protected_paths.py 28 passed; real-container test test_secrets_are_masked_and_auto_run_paths_are_frozen passed (13/13 container tests), no leftover containers; init.ps1 PASS 1218 passed. Known limits: new auto-run directories can still be created by read-write runs; single-mode step timeout (60 s) is shorter than the 90 s sandbox call."
+    },
+    {
+      "id": "reliability-001",
+      "name": "Execution reliability: envelope and plan repair, uncertain side effects, failure kinds",
+      "description": "User asked 2026-11-06 ('先按照第一阶段开始'), phase 1 of the maturity review. Step outcomes and plans that parse but have the wrong shape get the bounded format repair (status conflicts still fail); planning retries one model timeout. A raised write/run or a timeout after one fails the task as side_effect instead of replanning; single mode answers an unavailable tool in the same round. AgentRunResult carries failure_kind and a Chinese user_message; limit messages keep the last failure; exception text is reduced to type names; answering a question does not spend max_replans; the CLI step timeout outlasts a sandbox call. The planner part was done in a parallel session. DECISIONS D-031..D-033.",
+      "status": "done",
+      "dependencies": [
+        "security-boundary-001",
+        "tests-restore-001"
+      ],
+      "acceptance": [
+        "An answer object returned as the step result is re-wrapped by one repair; status conflicts are never repaired.",
+        "A raised write or a timeout after a write fails with failure_kind side_effect and no replan; read-only failures still replan.",
+        "Every failure has a failure_kind with a Chinese message; completed runs have none.",
+        "Two answered questions with max_replans=0 still complete."
+      ],
+      "evidence": "tests/agent/test_execution_reliability.py 24 passed; tests/agent/test_planner_repair.py passed; init.ps1 PASS 1287 passed, 16 skipped. Known flaky: tests/agent/test_summary_lifecycle_e2e.py fails about 2 in 5 runs on HEAD too (0.03-0.15 s timing). Live runs not done."
     }
   ],
   "cleanup_2026_11_04": {

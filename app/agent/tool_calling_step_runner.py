@@ -19,6 +19,10 @@ from app.agent.team.diagnostics import failure_details, failure_types
 from app.tools.tool_registry import ToolRegistry
 
 
+class _ShapeError(ValueError):
+    """The final reply parsed as JSON but is not the step-outcome envelope (D-031)."""
+
+
 class ToolCallingStepRunner:
     def __init__(self,
                  model: ToolCallingModel,
@@ -26,7 +30,7 @@ class ToolCallingStepRunner:
                  max_tool_rounds: int = 4,
                  max_total_tool_calls: int = 8,
                  *, require_step_outcome: bool = False, max_format_repairs: int = 2,
-                 context_manager=None):
+                 context_manager=None, unavailable_tool_feedback: bool = False):
         if not callable(getattr(model, "generate", None)):
             raise TypeError("model must provide generate()")
         if not isinstance(tool_registry, ToolRegistry):
@@ -45,6 +49,9 @@ class ToolCallingStepRunner:
         if not isinstance(require_step_outcome, bool):
             raise TypeError("require_step_outcome must be a bool")
         self._require_step_outcome = require_step_outcome
+        # Single mode answers an unavailable tool in the same round (D-032); team workers keep
+        # failing the step so the team report can name the ungranted tool.
+        self._unavailable_tool_feedback = bool(unavailable_tool_feedback)
         if type(max_format_repairs) is not int or max_format_repairs < 0:
             raise ValueError("max_format_repairs must be a non-negative integer")
         self._max_format_repairs = max_format_repairs
@@ -127,48 +134,73 @@ class ToolCallingStepRunner:
             raise StepModelError("Model generation failed: " + failure_types(failure_details(exc)),
                                  tuple(source_refs)) from exc
 
+    @staticmethod
+    def _parse_outcome(payload):
+        """Read the step-outcome envelope (D-031).
+
+        _ShapeError: the reply is not the envelope (an answer object, missing or extra keys, a
+        non-text content); the meaning is intact, so the model may re-wrap it.
+        ValueError: the envelope's own status contract conflicts; it is never repaired (D-023).
+        """
+        if not isinstance(payload, dict) or "status" not in payload:
+            raise _ShapeError("the reply is not the step outcome object; if your answer is JSON, "
+                              "put the whole answer as a string in content")
+        if set(payload) != {"status", "content", "reason"}:
+            raise _ShapeError("expected exactly the keys status, content and reason")
+        content, reason = payload["content"], payload["reason"]
+        if isinstance(content, (dict, list)) and content:
+            # A structured answer placed in content: serialize it, the meaning is unchanged.
+            content = json.dumps(content, ensure_ascii=False)
+        elif not isinstance(content, str):
+            raise _ShapeError("content must be a string")
+        outcome = StepOutcome(payload["status"])
+        if not content.strip():
+            raise ValueError("content must be non-empty")
+        if outcome is StepOutcome.SUCCEEDED:
+            if reason is not None:
+                raise ValueError("succeeded reason must be null")
+        elif not isinstance(reason, str) or not reason.strip():
+            raise ValueError("failed/blocked reason must be non-empty")
+        return content, outcome, reason
+
     async def _final_outcome(self, turn, messages, source_refs):
         # Retain the completed calls and replies, and never return to the tool loop.
         history = list(messages)
         for attempt in range(self._max_format_repairs + 1):
             try:
                 payload = load_json(unwrap_json_fence(turn.content or ""))
+                problem = None
             except JsonFormatError as exc:
-                if attempt == self._max_format_repairs:
-                    raise StepFormatError("Invalid final step outcome: " + str(exc), tuple(source_refs)) from exc
-                if turn.content and turn.content.strip():
-                    history.append(turn.to_assistant_message())
-                history.append(SystemMessage(repair_instruction(
-                    '{"status":"succeeded|failed|blocked","content":"string","reason":null or string}',
-                    str(exc),
-                )))
-                self.format_repair_count += 1
-                turn = await self._generate(history, (), source_refs)
-                if (not isinstance(turn, ModelTurn) or not isinstance(turn.tool_calls, tuple)
-                        or turn.tool_calls):
-                    raise StepFormatError("Format repair must return text without tool calls", tuple(source_refs))
-                if turn.content is not None and not isinstance(turn.content, str):
-                    raise StepRunnerContractError("Repair content must be a string or None")
-                continue
+                problem, cause = str(exc), exc
             except (ValueError, TypeError) as exc:
                 # Duplicate keys/non-finite values are ambiguous; do not rewrite them.
                 raise StepFormatError("Invalid final step outcome: " + str(exc), tuple(source_refs)) from exc
-            try:
-                if not isinstance(payload, dict) or set(payload) != {"status", "content", "reason"}:
-                    raise ValueError("expected status, content and reason")
-                outcome = StepOutcome(payload["status"])
-                content, reason = payload["content"], payload["reason"]
-                if not isinstance(content, str) or not content.strip():
-                    raise ValueError("content must be non-empty")
-                if outcome is StepOutcome.SUCCEEDED:
-                    if reason is not None:
-                        raise ValueError("succeeded reason must be null")
-                elif not isinstance(reason, str) or not reason.strip():
-                    raise ValueError("failed/blocked reason must be non-empty")
-                return content, outcome, reason
-            except (ValueError, TypeError) as exc:
-                # Valid JSON with an invalid status contract is not syntax damage.
-                raise StepFormatError("Invalid final step outcome: " + str(exc), tuple(source_refs)) from exc
+            if problem is None:
+                try:
+                    return self._parse_outcome(payload)
+                except _ShapeError as exc:
+                    # Parsable JSON in the wrong shape gets the same bounded repair as broken JSON
+                    # (D-031); the model, not the host, still decides the status.
+                    problem, cause = str(exc), exc
+                except (ValueError, TypeError) as exc:
+                    # Valid JSON with an invalid status contract is not syntax damage.
+                    raise StepFormatError("Invalid final step outcome: " + str(exc), tuple(source_refs)) from exc
+            if attempt == self._max_format_repairs:
+                raise StepFormatError("Invalid final step outcome: " + problem, tuple(source_refs)) from cause
+            if turn.content and turn.content.strip():
+                history.append(turn.to_assistant_message())
+            history.append(SystemMessage(repair_instruction(
+                '{"status":"succeeded|failed|blocked","content":"string (the full answer, even when it is JSON)",'
+                '"reason":null or string}',
+                problem,
+            )))
+            self.format_repair_count += 1
+            turn = await self._generate(history, (), source_refs)
+            if (not isinstance(turn, ModelTurn) or not isinstance(turn.tool_calls, tuple)
+                    or turn.tool_calls):
+                raise StepFormatError("Format repair must return text without tool calls", tuple(source_refs))
+            if turn.content is not None and not isinstance(turn.content, str):
+                raise StepRunnerContractError("Repair content must be a string or None")
 
     async def run(self, context: StepExecutionContext) -> StepRunOutput:
         messages = list(self._build_initial_messages(context))
@@ -180,6 +212,7 @@ class ToolCallingStepRunner:
         seen_call_ids: set[str] = set()
         tool_rounds = 0
         self.argument_repair_count = 0
+        unavailable_replies = 0
 
         while True:
             request_tools = tools
@@ -234,6 +267,7 @@ class ToolCallingStepRunner:
                     f"total tool call limit exceeded: {self._max_total_tool_calls}", tuple(source_refs)
                 )
             batch_ids: set[str] = set()
+            unavailable = []
             for call in turn.tool_calls:
                 if not isinstance(call, ToolCall):
                     raise StepRunnerContractError("tool_calls must contain ToolCall objects")
@@ -245,9 +279,29 @@ class ToolCallingStepRunner:
                 if not isinstance(call.arguments, dict) or not all(isinstance(k, str) for k in call.arguments):
                     raise StepRunnerContractError("tool arguments must be a dict with string keys")
                 if call.tool_name not in available_names:
-                    raise StepRunError(f"Model requested unavailable tool: {call.tool_name}", tuple(source_refs))
-                self._tool_registry.get(call.tool_name)
+                    unavailable.append(call.tool_name)
+                else:
+                    self._tool_registry.get(call.tool_name)
                 batch_ids.add(call.call_id)
+
+            if unavailable:
+                # Nothing in the batch runs. Tell the model in this round instead of failing the step
+                # (D-032); a small bound keeps a model that insists from looping.
+                if (not self._unavailable_tool_feedback or not self._require_step_outcome
+                        or unavailable_replies >= self._max_format_repairs):
+                    raise StepRunError(f"Model requested unavailable tool: {unavailable[0]}", tuple(source_refs))
+                unavailable_replies += 1
+                messages.append(turn.to_assistant_message())
+                tool_rounds += 1
+                seen_call_ids.update(batch_ids)
+                offered = sorted(available_names)
+                for call in turn.tool_calls:
+                    reason = (f"tool {call.tool_name} is not available in this task" if call.tool_name in unavailable
+                              else "not executed because the same batch requested an unavailable tool")
+                    messages.append(ToolMessage(call_id=call.call_id, content=json.dumps({
+                        "success": False, "content": "", "error": reason + f"; available tools: {offered}",
+                        "source_refs": []}, ensure_ascii=False)))
+                continue
 
             messages.append(turn.to_assistant_message())
             tool_rounds += 1
@@ -260,8 +314,9 @@ class ToolCallingStepRunner:
                 except Exception as exc:
                     if not self._require_step_outcome:
                         raise
+                    # Only the type name: exception text may carry host paths (D-033).
                     raise StepToolError(
-                        f"Tool {call.tool_name} raised {type(exc).__name__}: {exc}", tuple(source_refs)
+                        f"Tool {call.tool_name} raised {type(exc).__name__}", tuple(source_refs)
                     ) from exc
                 all_tool_calls.append(call)
                 all_tool_results.append(result)

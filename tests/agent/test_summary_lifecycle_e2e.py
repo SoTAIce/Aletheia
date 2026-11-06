@@ -92,7 +92,7 @@ async def test_full_agent_lifecycle_with_background_summary_faults(tmp_path, mod
         done = await asyncio.wait_for(service.query_result('  Markdown\n', 's', request_id='answer',
                                                           resume_task_id=blocked.task_id), 5)
         assert done.status is TaskStatus.COMPLETED and done.task_id == blocked.task_id
-        assert done.execution_count == 3 and done.replan_count == 1
+        assert done.execution_count == 3 and done.replan_count == 0   # answering a question replans without spending the budget (D-033)
         assert model.generate.await_count == 4
         calls = [c for receipt in done.steps for c in receipt.tool_calls]
         assert [(c.call_id, c.tool_name) for c in calls] == [('clock-once', 'get_current_time')]

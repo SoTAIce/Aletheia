@@ -174,7 +174,8 @@ async def test_invalid_final_report_keeps_the_host_observed_delivery():
         delegate('l1'),
         call('w1', 'write_file', path='parse_duration.py', content='code'),
         call('w2', 'run_tests', path='test_parse_duration.py'),
-        ModelTurn(content='{"status": "succeeded", "content": "done"}'),   # valid JSON, missing reason
+        # Valid JSON whose status contract conflicts (D-031 still refuses to repair it).
+        ModelTurn(content='{"status": "succeeded", "content": "done", "reason": "unsure"}'),
         final('implemented; the host saw the passing run'))
     output = await DelegatingTeamRunner(model, _registry(*_sandbox_tools()), SANDBOX).run(_context())
     assert output.outcome is StepOutcome.SUCCEEDED
@@ -191,7 +192,7 @@ async def test_invalid_final_report_after_a_late_write_does_not_pass():
         delegate('l1'),
         call('w1', 'run_tests', path='t.py'),
         call('w2', 'write_file', path='p.py', content='late'),
-        ModelTurn(content='{"status": "succeeded", "content": "done"}'),
+        ModelTurn(content='{"status": "succeeded", "content": "done", "reason": "unsure"}'),
         final('done'), ModelTurn(content='FAILED: unverified'))
     with pytest.raises(TeamError, match='lead reported failure'):
         await DelegatingTeamRunner(model, _registry(*_sandbox_tools()), SANDBOX).run(_context())

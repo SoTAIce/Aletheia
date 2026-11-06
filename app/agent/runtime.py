@@ -9,7 +9,9 @@ from app.agent.executor import Executor
 from app.agent.planner import Planner
 from app.agent.step_executor import StepExecutor
 from app.agent.step_models import StepExecutionReceipt
-from app.agent.step_runner import StepBlockedError, StepRunError, StepFormatError, StepModelError, StepRoutingError
+from app.agent.side_effects import SideEffectWatch
+from app.agent.step_runner import (StepBlockedError, StepRunError, StepFormatError, StepModelError, StepRoutingError,
+                                   StepToolError)
 from app.agent.tool_calling_model import ToolCallingModel
 from app.agent.runner_registry import RunnerRegistry, RunnerDependencies, RunnerLimits, default_runner_registry
 from app.agent.runner_router import RoutingPolicy, RequirementsProvider
@@ -24,6 +26,21 @@ from app.tools.tool_registry import ToolRegistry
 from app.services.context_manager import ContextManager
 
 
+# Why a task failed, for callers and for the user-facing message (D-033).
+FAILURE_MESSAGES = {
+    'limit': '已达到执行步数或重新规划次数的上限，任务停止。',
+    'planning': '模型没有给出可用的计划，任务停止。',
+    'format': '模型多次没有按要求的格式给出步骤结果，任务停止。',
+    'model': '调用模型失败（服务出错或请求超时），任务停止，可以稍后重试。',
+    'routing': '这一步没有可用的执行方式，任务停止。',
+    'side_effect': '一个会修改文件或运行代码的操作没有正常结束，结果不确定。为避免重复执行，任务已停止，请先检查工作区。',
+    'timeout': '执行超时，为避免重复已完成的操作，任务已停止。',
+    'rejected': '任务结果没有通过完成检查，任务停止。',
+    'business': '任务无法完成。',
+    'internal': '运行时内部出错，任务停止。',
+}
+
+
 @dataclass(frozen=True, slots=True)
 class AgentRunResult:
     task_id: str
@@ -32,6 +49,12 @@ class AgentRunResult:
     steps: tuple[StepExecutionReceipt, ...]
     execution_count: int
     replan_count: int
+    failure_kind: str | None = None    # a FAILURE_MESSAGES key when status is FAILED
+
+    @property
+    def user_message(self) -> str | None:
+        """A Chinese explanation for the user; content keeps the English diagnostic."""
+        return FAILURE_MESSAGES.get(self.failure_kind) if self.failure_kind else None
 
 
 class AgentRuntime:
@@ -76,6 +99,7 @@ class AgentRuntime:
         self._max_executions, self._max_replans = max_executions, max_replans
         self._step_timeout, self._planning_timeout = step_timeout_seconds, planning_timeout_seconds
         self._execution_count = self._replan_count = 0
+        self._answers_seen = 0      # resolved questions already planned for (D-033)
         self._steps: list[StepExecutionReceipt] = []
         self._lock = asyncio.Lock()
         self._reported_version: int | None = None
@@ -86,7 +110,8 @@ class AgentRuntime:
 
     def _assemble_runner(self, model, registry, context_manager):
         """The sole construction path for both initial and resumed bindings."""
-        dependencies = RunnerDependencies(model, registry, context_manager, self._runner_limits)
+        self._watch = SideEffectWatch(registry)   # side effects of the current step (D-032)
+        dependencies = RunnerDependencies(model, self._watch, context_manager, self._runner_limits)
         runner = RoutingStepRunner(self._runner_registry.bind(dependencies), routing_policy=self._routing_policy,
                                    requirements_provider=self._runner_requirements, events=self._routing_events)
         return runner, StepExecutor(self.memory, runner)
@@ -189,9 +214,14 @@ class AgentRuntime:
             if task.status is TaskStatus.PLANNING:
                 if self._execution_count >= self._max_executions:
                     return self._fail("Agent execution limit reached")
-                if task.plan_revision:
+                answers = sum(1 for q in task.scratchpad.open_questions
+                              if q.goal_revision == task.goal_revision and q.resolved_at is not None)
+                if task.plan_revision and answers > self._answers_seen:
+                    # Planning again after the user answered is the normal flow, not a failure (D-033).
+                    self._answers_seen = answers
+                elif task.plan_revision:
                     if self._replan_count >= self._max_replans:
-                        return self._fail("Agent replanning limit reached")
+                        return self._fail("Agent replanning limit reached" + self._last_failure(), 'limit')
                     self._replan_count += 1
                 try:
                     context = self._planner.build_context(self.memory)
@@ -200,17 +230,19 @@ class AgentRuntime:
                                           else self._planner.plan(context))
                     self._executor.accept_plan(proposal)
                 except Exception as exc:
-                    return self._fail(f"Planning failed: {type(exc).__name__}: {exc}")
+                    # Planner validation messages are host-authored (see bench _SAFE_FAILURE).
+                    return self._fail(f"Planning failed: {type(exc).__name__}: {exc}", 'planning')
             next_step = next((step for step in task.plan if step.status is StepStatus.PENDING), None)
             if next_step is None:
                 try:
                     self.memory.complete_task()
                 except Exception as exc:
-                    return self._fail(f"Task completion rejected: {exc}")
+                    return self._fail(f"Task completion rejected: {type(exc).__name__}", 'rejected')
                 break
             if self._execution_count >= self._max_executions:
-                return self._fail("Agent execution limit reached")
+                return self._fail("Agent execution limit reached", 'limit')
             self._execution_count += 1
+            self._watch.reset()
             try:
                 async with asyncio.timeout(self._step_timeout):
                     receipt = await self._step_executor.execute(next_step.step_id)
@@ -220,7 +252,15 @@ class AgentRuntime:
             except (StepFormatError, StepModelError, StepRoutingError) as exc:
                 # Local format repair is exhausted, or the provider failed.
                 # Replanning would repeat completed tools without fixing either.
-                return self._fail(f"{type(exc).__name__}: {exc.message}")
+                kind = ('format' if isinstance(exc, StepFormatError) else
+                        'routing' if isinstance(exc, StepRoutingError) else 'model')
+                return self._fail(f"{type(exc).__name__}: {exc.message}", kind)
+            except StepToolError as exc:
+                if self._watch.uncertain:
+                    # A write or run raised: it may have taken effect, so never replay it (D-032).
+                    return self._fail(f"{type(exc).__name__}: {exc.message}; automatic replanning is disabled",
+                                      'side_effect')
+                continue          # a read-only tool failed; StepExecutor recorded it for replanning
             except StepRunError:
                 # StepExecutor has recorded the failure and returned to PLANNING.
                 continue
@@ -230,27 +270,42 @@ class AgentRuntime:
             except TimeoutError:
                 if self.routing_decisions and self.routing_decisions[-1].runner_id == 'agent_team':
                     # A team owns many side effects; an outer deadline must not replay it.
-                    return self._fail('Team execution timed out; automatic replanning is disabled')
+                    return self._fail('Team execution timed out; automatic replanning is disabled', 'timeout')
                 if self._context_manager.overflow_recovery_interrupted:
-                    return self._fail("Context overflow recovery timed out; completed tools will not be repeated")
-                self.memory.record_failure("Step execution timed out; side effects may already exist")
+                    return self._fail("Context overflow recovery timed out; completed tools will not be repeated",
+                                      'timeout')
+                if self._watch.touched:
+                    # The step started a write or run before the deadline (D-032).
+                    return self._fail("Step execution timed out after a write or run; automatic replanning "
+                                      "is disabled", 'side_effect')
+                self.memory.record_failure("Step execution timed out; only read-only tools had run")
             except Exception as exc:
                 # Contract/implementation errors are terminal, not retry instructions.
-                return self._fail(f"Execution failed: {type(exc).__name__}: {exc}")
+                # Only the type name: arbitrary exception text may carry host paths or provider output.
+                return self._fail(f"Execution failed: {type(exc).__name__}", 'internal')
 
         if task.status is TaskStatus.FAILED:
-            return self._result(task.scratchpad.failure_history[-1].message)
+            return self._result(task.scratchpad.failure_history[-1].message, 'business')
         # The planner ends with one combined delivery step, so its result is the answer;
         # earlier step results stay in the scratchpad and the trace (D-027).
         results = [r.content for r in task.scratchpad.intermediate_results
                    if r.valid and r.goal_revision == task.goal_revision]
         return self._result(results[-1] if results else "")
 
-    def _fail(self, message: str) -> AgentRunResult:
-        self.memory.task_state.fail_task(message)
-        return self._result(message)
+    def _last_failure(self) -> str:
+        """The latest recorded step failure, so a limit message keeps its root cause (D-033)."""
+        history = self.memory.task_state.scratchpad.failure_history
+        if not history:
+            return ""
+        text = " ".join(history[-1].message.split())
+        return "; last failure: " + (text[:300] + "..." if len(text) > 300 else text)
 
-    def _result(self, content: str) -> AgentRunResult:
+    def _fail(self, message: str, kind: str = 'internal') -> AgentRunResult:
+        self.memory.task_state.fail_task(message)
+        return self._result(message, kind)
+
+    def _result(self, content: str, failure_kind: str | None = None) -> AgentRunResult:
         task = self.memory.task_state
+        kind = failure_kind if task.status is TaskStatus.FAILED else None
         return AgentRunResult(task.task_id, task.status, content, tuple(self._steps),
-                              self._execution_count, self._replan_count)
+                              self._execution_count, self._replan_count, kind)
