@@ -240,9 +240,11 @@ class AgentRuntime:
 
         if task.status is TaskStatus.FAILED:
             return self._result(task.scratchpad.failure_history[-1].message)
+        # The planner ends with one combined delivery step, so its result is the answer;
+        # earlier step results stay in the scratchpad and the trace (D-027).
         results = [r.content for r in task.scratchpad.intermediate_results
                    if r.valid and r.goal_revision == task.goal_revision]
-        return self._result("\n\n".join(results))
+        return self._result(results[-1] if results else "")
 
     def _fail(self, message: str) -> AgentRunResult:
         self.memory.task_state.fail_task(message)

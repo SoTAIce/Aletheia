@@ -1,0 +1,11 @@
+{
+  "id": "billing_qa",
+  "goal": "这是一个只读问答任务，不要修改或新建任何文件。阅读根目录下的 billing.py，回答：1）付款最多重试几次；2）计算滞纳金的函数名；3）金额 200、逾期 15 天的滞纳金；4）金额 200、逾期 60 天的滞纳金；5）每次重试前等待的秒数列表。最终答案只输出一个 JSON 对象，不要附加解释，键依次为 max_retries、fee_function、fee_200_15、fee_200_60、retry_delays。",
+  "files": [
+    "billing.py"
+  ],
+  "grader": "answer_json",
+  "expected": "expected.json",
+  "delivery": "answer",
+  "expected_route": "single"
+}

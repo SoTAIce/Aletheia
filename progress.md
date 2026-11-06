@@ -19,6 +19,25 @@
 
 ## Session Record
 
+### 2026-11-05 — answer-readonly-001：最终答案只取最后一步，只读任务收回写入工具
+
+- **Result**：普通模式最终答案改为最后一步的结果；auto 路由同时判断是否需要写文件，不需要时宿主收回 `write_file`、`run_tests`、`run_python`。决策 D-027。
+- **Verification**：路由测试 28 passed；当前 tests 160 passed；init.ps1 PASS；历史回归新增 1 项预期失败（旧测试断言拼接答案），其余与基线相同。
+- **Live**：授权 6 次，严格通过 3/6（改前 0/6），工作区全部未改动；2 次 `fee_200_15` 算错（没有运行工具），1 次 `StepFormatError`（模型直接输出答案 JSON）。
+- **Evidence**：[route-auto-2026-11-05.md](docs/harness/route-auto-2026-11-05.md)。**未提交**。
+
+### 2026-11-05 — bench-qa-001 补充：只取最后一步的对照
+
+- **Result**：评测器新增“只取最后一步”的对照评分（不改运行时）。真实 6 次 billing_qa：拼接答案 0/6，只取最后一步 5/6；但 4/6 次在只读任务里改动了工作区，完整严格通过只有 1/6。
+- **Verification**：问答测试 24 passed；当前 tests 152 passed；历史回归基线不变；init.ps1 PASS。
+- **Evidence**：[route-auto-2026-11-05.md](docs/harness/route-auto-2026-11-05.md)。**未提交**。
+
+### 2026-11-05 — bench-qa-001：只读问答任务与路由真实评测
+
+- **Result**：新增只读问答任务 `billing_qa` 和 `answer_json` 评分器，评测器统计路由是否正确。真实 6 次（auto、沙盒）：**路由 6/6 正确**；parse_duration 3/3 严格通过；billing_qa 0/3，原因是普通模式把所有步骤结果拼成最终答案，JSON 前面混有说明文字，另有 1 次在只读任务里写了文件。
+- **Verification**：问答测试 18 passed；当前 tests 146 passed；历史回归基线不变；init.ps1 PASS。
+- **Evidence**：[route-auto-2026-11-05.md](docs/harness/route-auto-2026-11-05.md)。**未提交**。待决定：普通模式最终答案是否改为只取最后一步。
+
 ### 2026-11-05 — route-auto-001：按任务动态选择执行模式
 
 - **Result**：新增 `--execution-mode auto`，每个任务先按宿主规则、再用一次模型判断选择普通或团队，任何异常退回普通模式。决策 D-026。顺带删除评测器遗留的 `--team-version`。

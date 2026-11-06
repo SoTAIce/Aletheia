@@ -146,7 +146,8 @@ def test_runner_requires_confirmation_and_caps_runs(capsys, monkeypatch):
     assert 'DRY RUN' in capsys.readouterr().out
     with pytest.raises(SystemExit):
         run_bench.main(['--runs', '2', '--confirm-live'])  # 3 tasks x 2 modes x 2 runs > 6
-    assert {t['id'] for t in run_bench.load_tasks(['all'])} == {'todo_html', 'parse_duration', 'fix_inventory'}
+    assert {t['id'] for t in run_bench.load_tasks(['all'])} == {'todo_html', 'parse_duration', 'fix_inventory',
+                                                               'billing_qa'}
 
 
 def test_html_grader_accepts_constant_storage_key():

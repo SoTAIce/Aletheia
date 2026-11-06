@@ -1,0 +1,7 @@
+{
+  "max_retries": 3,
+  "fee_function": "late_fee",
+  "fee_200_15": 10.0,
+  "fee_200_60": 20.0,
+  "retry_delays": [1, 2, 4]
+}

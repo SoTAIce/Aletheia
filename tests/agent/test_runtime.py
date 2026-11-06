@@ -138,7 +138,7 @@ async def test_failed_tool_replans_and_preserves_prior_valid_results(tmp_path):
     assert result.status is TaskStatus.COMPLETED
     assert result.execution_count == 4 and result.replan_count == 1
     assert len(result.steps) == 3
-    assert "Valid prior finding" in result.content
+    assert result.content == "Final verified summary"   # the last step answers (D-027)
     assert "Could not read" not in result.content
     failures = memory.task_state.scratchpad.failure_history
     assert len(failures) == 1 and "File missing" in failures[0].message

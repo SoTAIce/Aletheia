@@ -7,5 +7,6 @@
   "grader": "python_checks",
   "checker": "checker.py",
   "deliverable": "parse_duration.py",
-  "write_goal": "读取根目录下的 spec.md，按其中规则实现 parse_duration，并用 write_file 把完整源码写入根目录下的 parse_duration.py。最终答案只需说明写入的文件路径。"
+  "write_goal": "读取根目录下的 spec.md，按其中规则实现 parse_duration，并用 write_file 把完整源码写入根目录下的 parse_duration.py。最终答案只需说明写入的文件路径。",
+  "expected_route": "team"
 }

@@ -18,7 +18,8 @@ import tempfile
 import time
 from pathlib import Path
 
-from bench.graders import extract_code, grade_html_todo, grade_python, split_cli_output, summarize
+from bench.graders import (extract_code, grade_answer_json, grade_html_todo, grade_python, json_objects, last_block,
+                           split_cli_output, summarize)
 
 BENCH = Path(__file__).resolve().parent
 REPO = BENCH.parent
@@ -50,6 +51,8 @@ def grade(task, content):
         return grade_html_todo(content)
     if task['grader'] == 'python_checks':
         return grade_python(content, task['dir'] / task['checker'])
+    if task['grader'] == 'answer_json':
+        return grade_answer_json(content, task['dir'] / task['expected'])
     raise ValueError(f'unknown grader {task["grader"]}')
 
 
@@ -76,6 +79,12 @@ def launch_agent(cmd, env, timeout):
                           encoding='utf-8', errors='replace', timeout=timeout)
 
 
+def _snapshot(root: Path):
+    """Names and bytes of every file under the run root; read-only tasks must leave it unchanged."""
+    return {str(p.relative_to(root)): (None if p.is_symlink() else p.read_bytes())
+            for p in sorted(root.rglob('*')) if p.is_file() or p.is_symlink()}
+
+
 def _read_deliverable(root: Path, name: str, limit: int = 1_000_000):
     """Read the agent-written file as untrusted data: no links, bounded size."""
     path = root / name
@@ -91,6 +100,9 @@ SANDBOX_HINT = ('写完后先写测试，再用 run_tests 或 run_python 在沙�
 def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=False, team_timeout=None,
             team_acceptance=False):
     write = write or sandbox
+    # Answer tasks are graded on the final answer even when write and sandbox tools are offered;
+    # offering them is what lets auto routing consider the team (D-026).
+    answer_only = task.get('delivery') == 'answer'
     work = Path(tempfile.mkdtemp(prefix='aletheia-bench-'))
     root = work / 'root'
     root.mkdir()
@@ -99,9 +111,10 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             shutil.copyfile(task['dir'] / name, root / name)
         env = dict(os.environ, TAVILY_API_KEY='', PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8',
                    ALETHEIA_TEAM_TRACE='1')
-        goal = task['write_goal'] if write else task['goal']
-        if sandbox:
+        goal = task['write_goal'] if write and not answer_only else task['goal']
+        if sandbox and not answer_only:
             goal += SANDBOX_HINT
+        before = _snapshot(root) if answer_only else None
         cmd = [sys.executable, '-B', '-m', 'app.agent', goal,
                '--session-id', f'bench-{task["id"]}-{mode}-{index}', '--filesystem-root', str(root),
                '--no-knowledge', '--execution-mode', mode]
@@ -147,10 +160,14 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
                 row['route'] = json.loads(route.group(1))   # host values only (D-026)
             except ValueError:
                 row['route'] = 'unparsable'
+        if mode == 'auto' and 'expected_route' in task:
+            row['route_correct'] = isinstance(row.get('route'), dict) and row['route'].get('mode') == task['expected_route']
         counts = _TEAM_COUNTS.search(stderr)
         if counts:
             row['team_model_calls'], row['team_tool_calls'] = int(counts.group(1)), int(counts.group(2))
-        if write:
+        if answer_only:
+            row['delivery'] = 'answer'
+        elif write:
             row['delivery'] = 'file'
             original = ((task['dir'] / task['deliverable']).read_text(encoding='utf-8')
                         if task['deliverable'] in task['files'] else None)
@@ -162,17 +179,19 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             content = written if written is not None else content
         if status == 'completed':
             checks = grade(task, content)
+            if answer_only:
+                checks['workspace_unchanged'] = _snapshot(root) == before
             row['checks_passed'], row['checks_total'], row['passed'] = summarize(checks)
             row['failed_checks'] = sorted(k for k, v in checks.items() if v is not True)
             if checks.get('_reason') in _GUARD_REASONS:
                 row['guard_reason'] = checks['_reason']  # host enum: why the static guard refused
             row.update(lenient(task, content))
             if keep_dir is not None:
-                suffix = '.html' if task['grader'] == 'html_todo' else '.py'
+                suffix = {'html_todo': '.html', 'answer_json': '.json'}.get(task['grader'], '.py')
                 Path(keep_dir).mkdir(parents=True, exist_ok=True)
                 (Path(keep_dir) / f'{task["id"]}-{mode}-{index}{suffix}').write_text(content, encoding='utf-8')
         else:
-            if write and written is not None and written != original:
+            if write and not answer_only and written is not None and written != original:
                 # Diagnostic only: how good the file was when the run stopped. Never a pass.
                 passed, total, _ = summarize(grade(task, written))
                 row['file_checks_passed'], row['file_checks_total'] = passed, total
@@ -186,6 +205,16 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
 
 def lenient(task, content):
     """Diagnostic score after extracting code from prose; never counts as a pass."""
+    if task['grader'] == 'answer_json':
+        checks = grade_answer_json(content, task['dir'] / task['expected'], lenient=True)
+        passed, total, ok = summarize(checks)
+        tail = last_block(content)
+        last_passed, _, last_ok = summarize(grade(task, tail)) if tail is not None else (0, 0, False)
+        # Host counts only, never the text: how many JSON objects the answer held and its length.
+        return {'answer_is_code_only': '_parse' not in grade(task, content),
+                'last_step_checks_passed': last_passed, 'last_step_all_passed': last_ok,
+                'answer_json_objects': len(json_objects(content)), 'answer_chars': len(content),
+                'lenient_checks_passed': passed, 'lenient_checks_total': total, 'lenient_all_passed': ok}
     kind = 'html' if task['grader'] == 'html_todo' else 'python'
     code = extract_code(content, kind)
     passed, total, ok = summarize(grade(task, code))
@@ -201,6 +230,13 @@ def summary(rows):
         cell['runs'] += 1
         cell['passed'] += bool(row.get('passed'))
         cell['lenient_passed'] += bool(row.get('lenient_all_passed'))
+        if 'last_step_all_passed' in row:
+            cell['last_step_passed'] = cell.get('last_step_passed', 0) + bool(row['last_step_all_passed'])
+        if 'route_correct' in row:
+            cell['route_correct'] = cell.get('route_correct', 0) + bool(row['route_correct'])
+            routes = cell.setdefault('routes', {})
+            chosen = row['route'].get('mode', '?') if isinstance(row.get('route'), dict) else '?'
+            routes[chosen] = routes.get(chosen, 0) + 1
     return table
 
 
@@ -229,11 +265,12 @@ def main(argv=None):
     plan = (f'{planned} agent run(s): tasks={[t["id"] for t in tasks]} modes={args.modes} runs={args.runs} '
             f'team_acceptance={args.team_acceptance} '
             f'delivery={"file" if args.write or args.sandbox else "answer"} sandbox={args.sandbox}')
+    if not args.confirm_live:
+        over = f' (exceeds --max-runs {args.max_runs}; a live run would be refused)' if planned > args.max_runs else ''
+        print('DRY RUN (no model calls). Add --confirm-live to execute ' + plan + over)
+        return 2
     if planned > args.max_runs:
         parser.error(f'{plan} exceeds --max-runs {args.max_runs}')
-    if not args.confirm_live:
-        print('DRY RUN (no model calls). Add --confirm-live to execute ' + plan)
-        return 2
     before = _pycache_dirs()
     rows = []
     try:

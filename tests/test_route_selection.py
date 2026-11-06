@@ -143,7 +143,7 @@ class FakeRuntime:
     created = []
 
     def __init__(self, planner, model, memory, registry, **options):
-        self.planner, self.memory, self.options = planner, memory, options
+        self.planner, self.memory, self.registry, self.options = planner, memory, registry, options
         FakeRuntime.created.append(self)
 
     async def run(self):
@@ -184,8 +184,8 @@ async def test_a_blocked_task_keeps_its_route_for_the_resume(monkeypatch):
                        execution_mode='auto', team_options=SANDBOX)
     async with service:
         result = await service.query_result('implement it', 's')
-        assert list(service._routes.values()) == ['team']
-        assert service._routes == {(service._session_key(None, 's'), result.task_id): 'team'}
+        assert [c.mode for c in service._routes.values()] == ['team']
+        assert list(service._routes) == [(service._session_key(None, 's'), result.task_id)]
 
 
 async def test_fixed_modes_keep_their_runner_and_log_a_user_decision(monkeypatch, caplog):
@@ -204,3 +204,87 @@ def test_auto_rejects_a_custom_runner_registry():
         RagAgentService(execution_mode='auto', runner_registry=default_runner_registry(), mcp_servers=())
     with pytest.raises(ValueError, match='single, team or auto'):
         RagAgentService(execution_mode='parallel', mcp_servers=())
+
+
+# ---- read-only tasks and the final answer (D-027) -------------------------------------------
+
+@pytest.mark.parametrize('extra, read_only', [({'writes': False}, True), ({'writes': True}, False), ({}, False)])
+async def test_the_model_can_mark_a_single_task_read_only(extra, read_only, caplog):
+    caplog.set_level(logging.INFO, logger='app.agent.route_selection')
+    choice = await choose_mode('what does late_fee return?', SANDBOX, Model(reply('single', **extra)))
+    assert choice == ModeChoice('single', 'model', 'code_delivery_with_sandbox', read_only=read_only)
+    assert ('"read_only": true' in caplog.text) is read_only
+
+
+@pytest.mark.parametrize('turn', [reply('team', writes=False), reply('single', writes='no')])
+async def test_contradictory_or_invalid_writes_fall_back_with_every_tool(turn):
+    choice = await choose_mode('implement it', SANDBOX, Model(turn))
+    assert (choice.mode, choice.source, choice.read_only) == ('single', 'fallback', False)
+
+
+class FakeTool:
+    def __init__(self, name):
+        from app.agent.step_models import ToolDefinition
+        self.definition = ToolDefinition(name, f'{name} tool', {'type': 'object'})
+
+    async def invoke(self, call):
+        raise AssertionError('not called')
+
+
+def _tools(*names):
+    from app.tools.tool_registry import ToolRegistry
+    registry = ToolRegistry()
+    for name in names:
+        registry.register(FakeTool(name))
+    return registry
+
+
+def test_the_read_only_registry_hides_write_and_run_tools_only():
+    from app.agent.route_selection import read_only_registry
+    full = _tools('read_file', 'write_file', 'run_tests', 'run_python', 'list_dir')
+    view = read_only_registry(full)
+    assert [d.name for d in view.list_definitions()] == ['read_file', 'list_dir']
+    assert view.get('read_file') is full.get('read_file')
+    assert len(full.list_definitions()) == 5                          # the shared registry is untouched
+
+
+async def test_a_read_only_task_runs_without_write_tools(monkeypatch):
+    from contextlib import asynccontextmanager
+    from app.services import rag_agent_service as module
+
+    @asynccontextmanager
+    async def registry(memory, **kw):
+        yield _tools('read_file', 'write_file', 'run_python')
+    monkeypatch.setattr(module, 'open_tool_registry', registry)
+    service = _service(monkeypatch, Model(reply('single', writes=False), reply('single')),
+                       execution_mode='auto', team_options=SANDBOX)
+    async with service:
+        await service.query_result('what does late_fee return?', 's')
+        await service.query_result('fix late_fee', 's')
+    read_only, writer = FakeRuntime.created
+    assert [d.name for d in read_only.registry.list_definitions()] == ['read_file']
+    assert [d.name for d in writer.registry.list_definitions()] == ['read_file', 'write_file', 'run_python']
+
+
+async def test_single_mode_answers_with_the_last_step_result():
+    from datetime import datetime, timezone
+    from app.agent.planner import Planner, PlanProposal
+    from app.agent.runtime import AgentRuntime
+    from app.models.taskstate import TaskState
+    from app.models.working_memory import WorkingMemory
+
+    class TwoSteps(Planner):
+        async def plan(self, context):
+            return PlanProposal(steps=('read billing.py', 'answer as one JSON object'),
+                                goal_revision=context.goal_revision, base_state_version=context.state_version,
+                                reason=None, created_at=datetime.now(timezone.utc), task_id=context.task_id,
+                                base_resource_context_version=context.resource_context_version)
+
+    def done(content):
+        return ModelTurn(content=json.dumps({'status': 'succeeded', 'content': content, 'reason': None}))
+    model = Model(done('read billing.py: MAX_RETRIES = 3'), done('{"max_retries": 3}'))
+    memory = WorkingMemory(TaskState('u', 'how many retries?'))
+    result = await AgentRuntime(TwoSteps(None), model, memory, _tools('read_file')).run()
+    assert result.status is TaskStatus.COMPLETED and result.content == '{"max_retries": 3}'
+    assert [r.content for r in memory.task_state.scratchpad.intermediate_results] == [
+        'read billing.py: MAX_RETRIES = 3', '{"max_retries": 3}']     # earlier results are kept

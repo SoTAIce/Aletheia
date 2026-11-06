@@ -8,6 +8,7 @@ security sandbox, so only run the benchmark on your own machine.
 
 import ast
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -193,6 +194,70 @@ def grade_python(code: str, checker: Path, timeout: float = 10.0) -> dict:
             return {'_bad_output': False}
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+_MISSING = object()
+
+
+def _same(got, want) -> bool:
+    if isinstance(want, bool) or isinstance(got, bool):
+        return type(got) is type(want) and got == want
+    if isinstance(want, (int, float)) and isinstance(got, (int, float)):
+        return math.isclose(got, want, rel_tol=0, abs_tol=1e-9)
+    if isinstance(want, list):
+        return isinstance(got, list) and len(got) == len(want) and all(map(_same, got, want))
+    return got == want
+
+
+def json_objects(text: str) -> list:
+    """Every top-level JSON object embedded in text, in order (diagnostic extraction)."""
+    decoder, found, index = json.JSONDecoder(), [], 0
+    while (index := text.find('{', index)) >= 0:
+        try:
+            value, end = decoder.raw_decode(text, index)
+        except ValueError:
+            index += 1
+            continue
+        if isinstance(value, dict):
+            found.append(value)
+        index = end
+    return found
+
+
+def last_block(text: str):
+    """Shortest trailing run of blank-line-separated blocks that is one JSON object (a fence is allowed).
+
+    Single mode joins step results with a blank line, so this approximates 'the final answer is
+    only the last step' without changing the runtime. None when no trailing block parses."""
+    blocks = text.strip().split('\n\n')
+    for count in range(1, len(blocks) + 1):
+        tail = '\n\n'.join(blocks[-count:])
+        try:
+            value = json.loads(strip_fence(tail))
+        except ValueError:
+            continue
+        if isinstance(value, dict):
+            return tail
+    return None
+
+
+def grade_answer_json(text: str, expected: Path, lenient: bool = False) -> dict:
+    """One check per expected key. Strict: the answer is one JSON object (a fence is allowed).
+    Lenient (diagnostic only): the last JSON object embedded anywhere in the answer."""
+    want = json.loads(expected.read_text(encoding='utf-8'))
+    if lenient:
+        objects = json_objects(text)
+        if not objects:
+            return {'_parse': False}
+        payload = objects[-1]
+    else:
+        try:
+            payload = json.loads(strip_fence(text))
+        except ValueError:
+            return {'_parse': False}
+    if not isinstance(payload, dict):
+        return {'_parse': False}
+    return {key: _same(payload.get(key, _MISSING), value) for key, value in want.items()}
 
 
 def summarize(checks: dict) -> tuple[int, int, bool]:

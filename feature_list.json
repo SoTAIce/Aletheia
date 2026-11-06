@@ -541,7 +541,38 @@
         "Auto binds the team planner, registry and capability requirement only for tasks routed to the team; a blocked task keeps its route.",
         "The decision log carries no model text; current and historical regression unchanged."
       ],
-      "evidence": "tests/test_route_selection.py 20 passed; current tests 128 passed/12 skipped; historical 9138ac1 1022 passed/2 skipped/3 known failures plus the 4 V1 collection errors (baseline unchanged); init.ps1 PASS. Live routing accuracy not measured."
+      "evidence": "tests/test_route_selection.py 20 passed; current tests 128 passed/12 skipped; historical 9138ac1 1022 passed/2 skipped/3 known failures plus the 4 V1 collection errors (baseline unchanged); init.ps1 PASS. Live routing 6/6 correct (bench-qa-001)."
+    },
+    {
+      "id": "bench-qa-001",
+      "name": "Read-only question task billing_qa and route accuracy in the bench",
+      "description": "User asked 2026-11-05 ('测一下吧，可以补一个只读问答类任务'). New bench task billing_qa (answer one JSON object about billing.py; hidden expected.json checked against the public module) with grader answer_json (strict: the whole answer is one JSON object; lenient diagnostic: the last embedded JSON object). Answer-delivery tasks keep write/run tools in sandbox runs so auto routing really asks the model, but use the plain goal, skip the sandbox test hint, grade the final answer and add a workspace_unchanged check. Tasks carry expected_route; auto rows record route_correct and the summary counts routes. Dry runs over --max-runs only warn; live runs still refuse. Answer rows record answer_json_objects and answer_chars (host counts, no text). Comparison metric (user 2026-11-05 '先比较下只去最后一步结果的准确率'): last_block() takes the shortest trailing blank-line-separated block that is one JSON object, approximating 'final answer = last step' without changing the runtime (an upper bound); rows record last_step_checks_passed/last_step_all_passed and the summary counts last_step_passed.",
+      "status": "done",
+      "dependencies": [
+        "route-auto-001"
+      ],
+      "acceptance": [
+        "The answer key matches the public module; strict and lenient grading behave as documented.",
+        "A read-only task fails when the workspace changes.",
+        "Auto rows report route correctness and the summary counts routes."
+      ],
+      "evidence": "tests/test_bench_qa.py 18 passed; current tests 146 passed/12 skipped; historical baseline unchanged (1022 passed, 3 known failures, 4 V1 collection errors); init.ps1 PASS. Live (authorized 6, auto, sandbox): routing 6/6 correct (all by the model); parse_duration 3/3 strict (run 1 survived a worker StepFormatError); billing_qa 0/3: single mode joins every step result into the final answer, so the JSON came after earlier step text and could not be parsed; 1 run also wrote a file in the read-only task. The lenient grader then only took the first '{' to the last '}' and could not tell whether the content was right; it now takes the last embedded object. Comparison live (authorized 6, billing_qa, auto, sandbox): joined answer 0/6, last step 5/6 (run 1 had one wrong value); 4/6 runs changed the workspace, so a strict pass with last-step answers would be 1/6; routing 6/6 single."
+    },
+    {
+      "id": "answer-readonly-001",
+      "name": "Single mode answers with the last step; read-only tasks lose write and run tools",
+      "description": "User asked 2026-11-05 ('两项一起改') after the bench-qa-001 comparison. The single-mode final answer is the last valid step result instead of every result joined; earlier results stay in the scratchpad for later steps and replanning. In auto mode the routing call also returns writes; writes=false marks the task read-only and the host hands the runtime a registry without write_file, run_tests and run_python (same tool objects), kept for a blocked task's resume. A missing writes keeps every tool; a non-boolean writes or a team route with writes=false falls back to single with every tool. Fixed modes and rule-only decisions are unchanged. DECISIONS D-027.",
+      "status": "done",
+      "dependencies": [
+        "bench-qa-001",
+        "route-auto-001"
+      ],
+      "acceptance": [
+        "A two-step plan answers with the last step only and keeps the earlier result in the scratchpad.",
+        "writes=false hides exactly write_file, run_tests and run_python for that task; code tasks keep them.",
+        "Missing, invalid or contradictory writes never removes tools."
+      ],
+      "evidence": "tests/test_route_selection.py 28 passed (8 new); current tests 160 passed/12 skipped; init.ps1 PASS. Historical 9138ac1: 1021 passed, 1 new expected failure (agent/test_runtime.py::test_failed_tool_replans_and_preserves_prior_valid_results asserts the joined answer), 3 known failures and 4 V1 collection errors unchanged. Live (authorized 6, billing_qa, auto, sandbox): strict 3/6 (was 0/6); all 6 routed single and read-only; the 5 completed runs answered one JSON object and left the workspace unchanged (was 4/6 changed); 2 runs miscomputed fee_200_15 without run tools; 1 run failed with StepFormatError because the model returned the answer JSON instead of the step outcome object."
     }
   ],
   "cleanup_2026_11_04": {

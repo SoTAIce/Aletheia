@@ -93,7 +93,7 @@ class RagAgentService:
         self._team_options = team_options or (DelegationOptions() if execution_mode == 'team' else None)
         if execution_mode == 'team' and runner_requirements is None:
             self._runner_options['runner_requirements'] = _team_requirements
-        self._routes: dict[tuple[object, str], str] = {}   # task -> mode chosen at its start (D-026)
+        self._routes: dict[tuple[object, str], object] = {}   # task -> ModeChoice made at its start (D-026)
         self._mcp_servers = tuple(mcp_servers) if mcp_servers is not None else local_mcp_servers(
             filesystem_root=config.mcp_filesystem_root or None,
             write_root=config.mcp_filesystem_write_root or None,
@@ -285,10 +285,15 @@ class RagAgentService:
                         context_manager=context_manager,
                     ) as registry:
                         # The mode is chosen once per task and kept when a blocked task resumes (D-026).
-                        route = self._routes.get((key, task.task_id)) if runtime is not None else None
-                        if route is None:
-                            route = await self._choose_route(question, model)
-                        self._routes[(key, task.task_id)] = route
+                        choice = self._routes.get((key, task.task_id)) if runtime is not None else None
+                        if choice is None:
+                            choice = await self._choose_route(question, model)
+                        self._routes[(key, task.task_id)] = choice
+                        route = choice.mode
+                        if choice.read_only:
+                            # The routing call said no file changes: hide write and run tools (D-027).
+                            from app.agent.route_selection import read_only_registry
+                            registry = read_only_registry(registry)
                         # Team V2 owns the whole task: one fixed plan step, one team (DECISIONS D-019).
                         if route == 'team':
                             from app.agent.team_v2 import SingleStepPlanner
@@ -341,8 +346,8 @@ class RagAgentService:
         if self._execution_mode != 'auto':
             choice = ModeChoice(TEAM if self._team_options is not None else SINGLE, 'user', self._execution_mode)
             log_choice(choice)
-            return choice.mode
-        return (await choose_mode(question, self._team_options, model)).mode
+            return choice
+        return await choose_mode(question, self._team_options, model)
 
     def _team_registry(self):
         from app.agent.runner_registry import default_runner_registry
