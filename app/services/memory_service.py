@@ -7,7 +7,7 @@ from app.services.memory_retriever import MemoryRetriever
 from app.services.memory_resolver import MemoryResolver
 from app.services.memory_store import MemoryStore
 from app.services.memory_vector_index import MemoryVectorIndex
-from app.models.longterm_memory import MemoryAction, MemoryDecision, MemoryRecord, MemoryHit
+from app.models.longterm_memory import MemoryAction, MemoryCategory, MemoryDecision, MemoryRecord, MemoryHit
 
 
 class MemoryIndexSyncError(RuntimeError):
@@ -120,6 +120,36 @@ class LongTermMemoryService:
                 # SKIP and CONFLICT are observable decisions with no database writes.
             decisions.append(decision)
         return decisions
+
+    async def remember_explicit(self, user_id: str, content: str,
+                                category: MemoryCategory = MemoryCategory.FACT,
+                                source: str = 'user_explicit') -> MemoryRecord:
+        """Save exactly what the user asked to keep: no extraction, no model call (D-042).
+
+        The text is stored as given, so nothing is rewritten into an instruction by a model.
+        """
+        self._validate_text("user_id", user_id, 256)
+        self._validate_text("content", content, 2000)
+        self._validate_text("source", source)
+        if not isinstance(category, MemoryCategory):
+            raise TypeError("category must be a MemoryCategory")
+        proposed = MemoryRecord(user_id=user_id, content=content.strip(), category=category, source=source)
+        saved = await self._store.add(proposed)
+        self._validate_record(saved, user_id, proposed.memory_id)
+        await self._index_record(saved)
+        return saved
+
+    async def list_memories(self, user_id: str, limit: int = 20, offset: int = 0) -> list[MemoryRecord]:
+        """The user's own memories, for viewing and choosing what to forget."""
+        self._validate_text("user_id", user_id, 256)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if type(offset) is not int or offset < 0:
+            raise ValueError("offset must be a non-negative integer")
+        records = await self._store.list_by_user(user_id=user_id, limit=limit, offset=offset)
+        for record in records:
+            self._validate_record(record, user_id, record.memory_id)
+        return records
 
     async def recall(self, user_id: str, query: str, limit: int = 5) -> list[MemoryHit]:
         self._validate_text("user_id", user_id, 256)

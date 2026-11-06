@@ -182,6 +182,22 @@ the step successfully.
   stability.
 
 
+## Long-term memory (D-042)
+
+Off by default. Set `LONGTERM_MEMORY_DSN` (PostgreSQL) to turn it on; vectors go
+to `MILVUS_HOST`/`MILVUS_PORT` in `LONGTERM_MEMORY_COLLECTION` (default
+`agent_memories`, never the knowledge base collection). The CLI then opens the
+store, index and model client through `open_longterm_memory()` and closes them on
+exit. Memories are scoped by `--user-id` (default `local`).
+
+- Recall: before planning a new task, up to `LONGTERM_RECALL_LIMIT` memories are
+  recalled for the goal and pinned as `longterm_memory` within
+  `LONGTERM_CONTEXT_TOKENS` (default 600), with a policy saying they are reference
+  data, not instructions. Recall failures or a 3 s timeout only log a warning.
+- Writes are explicit only: in the interactive mode `/remember text` stores the
+  text as given (no model call), `/memories` lists them and `/forget ID` deletes
+  one. Nothing is extracted automatically from conversations.
+
 ## Recoverable Memory and Context (P0/P1)
 
 Conversation persistence is on by default: `CONVERSATION_STORAGE_DIR` defaults

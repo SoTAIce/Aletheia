@@ -79,14 +79,46 @@ def report(result, write=print) -> None:
 
 
 INTERACTIVE_HELP = ('直接输入目标开始一个任务；任务等待回答时，直接输入回答即可继续。'
-                    '命令：/help 显示帮助，/new 放弃正在等待回答的任务，/exit 退出（Ctrl+D、Ctrl+Z 回车同样退出）。')
+                    '命令：/help 显示帮助，/new 放弃正在等待回答的任务，/exit 退出（Ctrl+D、Ctrl+Z 回车同样退出）；'
+                    '长期记忆：/remember 内容 记住一条，/memories 查看，/forget 编号 删除。')
+MEMORY_OFF = '长期记忆没有开启：在 .env 里设置 LONGTERM_MEMORY_DSN 后可用。'
+
+
+async def memory_command(command, memory, user_id, write=print) -> None:
+    """/remember, /memories and /forget against the user's own long-term memory (D-042)."""
+    name, _, rest = command.partition(' ')
+    rest = rest.strip()
+    if memory is None:
+        write(MEMORY_OFF)
+        return
+    try:
+        if name == '/remember':
+            if not rest:
+                write('用法：/remember 要记住的内容')
+                return
+            saved = await memory.remember_explicit(user_id, rest)
+            write(f'已记住，编号 {saved.memory_id}。')
+        elif name == '/memories':
+            records = await memory.list_memories(user_id)
+            if not records:
+                write('还没有长期记忆。')
+            for record in records:
+                write(f'{record.memory_id}  [{record.category.value}]  {record.content}')
+        else:
+            if not rest:
+                write('用法：/forget 编号（编号见 /memories）')
+                return
+            write('已删除。' if await memory.forget(user_id, rest) else '没有这条记忆。')
+    except Exception as exc:
+        # Type name only: store and index errors may carry connection details.
+        write(f'长期记忆操作失败：{type(exc).__name__}')
 
 
 async def _read_line(prompt):
     return await asyncio.to_thread(input, prompt)
 
 
-async def interactive(service, args, read_line=None, write=print) -> int:
+async def interactive(service, args, read_line=None, write=print, memory=None) -> int:
     """Keep one service and session open across turns (D-040).
 
     A blocked task lives only in this process, so the next line answers it unless /new
@@ -94,6 +126,7 @@ async def interactive(service, args, read_line=None, write=print) -> int:
     service records the interrupted turn as cancelled.
     """
     read_line = read_line or _read_line
+    user_id = getattr(args, 'user_id', None)
     write('Aletheia 交互模式，会话：' + args.session_id + '。' + INTERACTIVE_HELP)
     waiting = None          # task id of a blocked task waiting for an answer
     queued = args.goal      # a goal given on the command line is the first turn
@@ -118,6 +151,9 @@ async def interactive(service, args, read_line=None, write=print) -> int:
             write('已放弃正在等待回答的任务。' if waiting else '当前没有等待回答的任务。')
             waiting = None
             continue
+        if command.split(' ', 1)[0] in ('/remember', '/memories', '/forget'):
+            await memory_command(command, memory, user_id, write)
+            continue
         if command.startswith('/'):
             write(f'未知命令：{command}。' + INTERACTIVE_HELP)
             continue
@@ -125,7 +161,8 @@ async def interactive(service, args, read_line=None, write=print) -> int:
                          timeout_seconds=getattr(args, 'max_seconds', None))
         try:
             with metering(meter):
-                result = await service.query_result(line, args.session_id, resume_task_id=waiting)
+                result = await service.query_result(line, args.session_id, user_id=user_id,
+                                                    resume_task_id=waiting)
         except Exception as exc:
             # Host-side refusals (for example no resumable task); never print provider text.
             write(f'请求没有执行：{type(exc).__name__}')
@@ -172,6 +209,12 @@ async def main(args) -> int:
         if problem:
             print(f'SandboxUnavailableError: {problem}')
             return 2
+        memory = None
+        if config.longterm_memory_dsn:
+            from app.services.longterm_memory_setup import open_longterm_memory
+            memory = await stack.enter_async_context(open_longterm_memory())
+        # A user id scopes long-term memory; the local CLI user is 'local' unless given.
+        args.user_id = getattr(args, 'user_id', None) or ('local' if memory is not None else None)
         team_options = team_options_for(getattr(args, 'execution_mode', 'single'), write_root, sandbox,
                                         getattr(args, 'team_timeout', None),
                                         getattr(args, 'team_acceptance', False))
@@ -187,13 +230,14 @@ async def main(args) -> int:
             execution_mode=getattr(args, 'execution_mode', 'single'),
             team_options=team_options,
             step_timeout_seconds=step_timeout_for(sandbox, team_options),
+            longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
         ))
         if args.goal is None or getattr(args, 'interactive', False):
-            return await interactive(service, args)
+            return await interactive(service, args, memory=memory)
         meter = RunMeter(max_total_tokens=getattr(args, 'max_tokens', None),
                          timeout_seconds=getattr(args, 'max_seconds', None))
         with metering(meter):
-            result = await service.query_result(args.goal, args.session_id)
+            result = await service.query_result(args.goal, args.session_id, user_id=args.user_id)
     if getattr(args, 'result_json', None):
         write_result(args.result_json, result)
     report(result)
@@ -219,6 +263,8 @@ def build_parser():
     parser.add_argument('-i', '--interactive', action='store_true',
                         help='Keep the session open: run several tasks and answer blocked ones (D-040)')
     parser.add_argument("--session-id", default="cli")
+    parser.add_argument('--user-id', help="Scope for long-term memory and archives (default 'local' when "
+                                          'long-term memory is on; D-042)')
     parser.add_argument("--filesystem-root", help="Directory exposed by the filesystem MCP server")
     parser.add_argument("--write-root", help="Optional writable directory; omitted means read-only")
     parser.add_argument("--no-knowledge", action="store_true", help="Disable RAG when no knowledge store is configured")

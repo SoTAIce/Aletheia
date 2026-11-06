@@ -63,6 +63,12 @@ class Settings(BaseSettings):
     # Archived by default; an explicit empty value keeps the in-memory mode.
     # Relative paths are anchored at the project root, not the working directory.
     conversation_storage_dir: str = Field(default="data/conversations", validate_default=True)
+    # Long-term memory (D-042): empty DSN keeps it off. PostgreSQL holds the records,
+    # Milvus the vectors in a collection separate from the knowledge base.
+    longterm_memory_dsn: str = ""
+    longterm_memory_collection: str = "agent_memories"
+    longterm_context_tokens: int = Field(default=600, gt=0)
+    longterm_recall_limit: int = Field(default=5, ge=1, le=100)
     context_window_tokens: int = Field(default=32768, gt=0)
     # Per-call output cap; 2048 cut off whole modules and pages in the bench (D-036).
     context_output_tokens: int = Field(default=8192, gt=0)

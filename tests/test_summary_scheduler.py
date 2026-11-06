@@ -148,7 +148,7 @@ async def test_compressor_client_and_cli_use_explicit_lifetimes(monkeypatch, tmp
             return self
         async def __aexit__(self, *exc):
             closed.append('service')
-        async def query_result(self, *args):
+        async def query_result(self, *args, **kwargs):   # the CLI also passes user_id (D-042)
             return SimpleNamespace(content='done', status=TaskStatus.COMPLETED, execution_count=1, replan_count=0)
     monkeypatch.setattr(cli, 'RagAgentService', Service)
     monkeypatch.setattr(cli.config, 'conversation_storage_dir', str(tmp_path))

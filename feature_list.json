@@ -777,6 +777,23 @@
         "Bench children and tests never write to data/conversations."
       ],
       "evidence": "tests/test_archive_default.py passed; init.ps1 PASS 1409 passed, 16 skipped; data/conversations absent before and after the run."
+    },
+    {
+      "id": "longterm-memory-001",
+      "name": "Long-term memory wired in: assembly, configurable recall budget with a policy, explicit writes, CLI commands",
+      "description": "User asked 2026-11-06 ('接着你的改动做'), building on the user's uncommitted recall wiring. LONGTERM_MEMORY_DSN (empty = off) enables open_longterm_memory(), which owns the PostgreSQL pool, Milvus client and model client. Recall uses LONGTERM_CONTEXT_TOKENS (default 600), slim entries and an untrusted-data policy; a dedupe bug was fixed. remember_explicit stores the user's text as given without a model; list_memories returns the user's records. The CLI gains --user-id (default 'local' when memory is on) and interactive /remember, /memories, /forget. DECISIONS D-042.",
+      "status": "done",
+      "dependencies": [
+        "interactive-cli-001"
+      ],
+      "acceptance": [
+        "Recalled memories reach the planner as pinned reference data with the policy; other users, duplicates and expired records are left out.",
+        "Recall timeouts and errors never stop the task and log only the exception type.",
+        "A missing user_id is refused when memory is on.",
+        "Assembly yields None without a DSN and closes everything it opened, also after a failed initialization.",
+        "remember_explicit makes no model call; memory commands report only exception types on failure."
+      ],
+      "evidence": "tests/test_longterm_memory_wiring.py 19 passed; init.ps1 PASS 1428 passed, 16 skipped. No real PostgreSQL or Milvus contacted."
     }
   ],
   "cleanup_2026_11_04": {

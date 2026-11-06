@@ -1,14 +1,12 @@
 {
   "created": "2026-11-06",
-  "base_commit": "adf656ce3e664ff40b71fc92fd8640aae95aa30d",
-  "purpose": "User-chosen uncommitted delta after the authorized commits of 2026-11-06 (README, Chinese docstrings, long-term memory hunks, three deleted scripts). Everything else must be committed. Replaces baseline-2026-11-04.json, whose hashes predate the docstrings and whose deleted tests were restored (D-030).",
+  "base_commit": "3003c2886c32597990e2eb81239b33b879c50f80",
+  "purpose": "User-chosen uncommitted delta after the long-term memory commit of 2026-11-06 (README, Chinese docstrings in three agent files, three deleted scripts). Everything else must be committed. Refreshed when the user long-term memory hunks were committed with longterm-memory-001.",
   "modified_tracked": {
     "README.md": "2b917b14b8c098babd342f0c442d6e76c2f91eaae829d28574b77d7cb6348e38",
     "app/agent/planner.py": "2255925811ad5700890e9f83753ccc486b6f2a08bc8fe01d7bcbe5633eaf6c85",
     "app/agent/step_executor.py": "86f8ca77ebd86d964f1dbc31b2dcf8cfcbb0596ba85c12d086368fdb304b1f1d",
-    "app/agent/tool_calling_step_runner.py": "345cd64effe7cb939587c4f2caadca7ef2304443bd11236f34ae75f5db29c48b",
-    "app/services/context_manager.py": "848304f62f2a863961d6cb3a6e48d7e99fc0e85fc76647d3d68c894c3b6bf30b",
-    "app/services/rag_agent_service.py": "c90ac8505b8f86f2e4d5a5368221503748d6cbee5bdd28009bd83891bee15cf3"
+    "app/agent/tool_calling_step_runner.py": "345cd64effe7cb939587c4f2caadca7ef2304443bd11236f34ae75f5db29c48b"
   },
   "untracked": {},
   "deleted_tracked": [

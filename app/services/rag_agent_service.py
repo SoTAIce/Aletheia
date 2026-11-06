@@ -3,13 +3,16 @@
 import asyncio
 import json
 import logging
+import math
 from dataclasses import asdict
 from datetime import datetime, timezone
 from uuid import uuid4
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+if TYPE_CHECKING:
+    from app.services.memory_service import LongTermMemoryService
 
 from mcp import StdioServerParameters
 from openai import AsyncOpenAI
@@ -72,6 +75,9 @@ class RagAgentService:
         max_executions: int = 16, max_replans: int = 2,
         step_timeout_seconds: float | None = None, planning_timeout_seconds: float | None = None,
         memory_directory=None, conversation_compressor=None,
+        longterm_memory:"LongTermMemoryService | None" = None,
+        longterm_recall_limit: int = 5,
+        longterm_timeout_seconds: float = 3.0,
         runner_registry: RunnerRegistry | None = None, routing_policy: RoutingPolicy | None = None,
         runner_requirements: RequirementsProvider | None = None,
         execution_mode: str = 'single', team_options=None,
@@ -116,9 +122,25 @@ class RagAgentService:
         self._pending_outcomes: dict[tuple[object, str], tuple] = {}
         self._summary_scheduler = SummaryScheduler(self._conversations)
         self._closed = False
+        if type(longterm_recall_limit) is not int or not 1 <= longterm_recall_limit <=100:
+            raise ValueError("longterm_recall_limit must be between 1 and 100")
+
+        if (
+            isinstance(longterm_timeout_seconds, bool)
+            or not isinstance(longterm_timeout_seconds, (int, float))
+            or not math.isfinite(longterm_timeout_seconds)
+            or longterm_timeout_seconds <= 0
+        ):
+            raise ValueError("longterm_timeout_seconds must be positive and finite")
+
+        self._longterm_memory = longterm_memory
+        self._longterm_recall_limit = longterm_recall_limit
+        self._longterm_timeout_seconds = longterm_timeout_seconds
 
     def _validate_identity(self, user_id: str | None) -> None:
         if user_id is None:
+            if self._longterm_memory is not None:
+                raise ValueError("user_id is required when long-term memory is enabled")
             return
 
         if not isinstance(user_id, str) or not user_id.strip():
@@ -276,6 +298,17 @@ class RagAgentService:
                 else:
                     history = await context_manager.prepare_conversation(conversation, task.active_goal)
                     task.pin_content(history, 'conversation_memory')
+                    if self._longterm_memory is not None:
+                        try:
+                            async with asyncio.timeout(self._longterm_timeout_seconds):
+                                hits = await self._longterm_memory.recall(
+                                    user_id=user_id, query=question, limit=self._longterm_recall_limit)
+                            payload = context_manager.longterm_context(
+                                hits=hits, user_id=user_id, token_budget=config.longterm_context_tokens)
+                            if json.loads(payload)['entries']:
+                                task.pin_content(payload, 'longterm_memory')
+                        except Exception as exc:
+                            logger.warning('Long-term recall unavailable: %s', type(exc).__name__)
                 async with self._models() as (planner_model, model):
                     if self._planner_model is None:
                         planner_model = PlanningModel(ContextManagedModel(model, context_manager))

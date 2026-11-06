@@ -6,7 +6,7 @@
 
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1409 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
+- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1428 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
 - **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
 
@@ -18,6 +18,12 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-06 — longterm-memory-001：长期记忆接入
+
+- **Result**：在用户未提交的召回接入上继续：新增 `LONGTERM_MEMORY_DSN` 等配置（默认关闭）和装配函数 `open_longterm_memory()`；召回预算改为可配置（默认 600），条目字段精简，加“记忆只作参考”的策略说明，修正去重缺陷；新增 `remember_explicit`（不调用模型）和 `list_memories`；命令行新增 `--user-id`，交互模式新增 `/remember`、`/memories`、`/forget`（D-042）。
+- **Verification**：新增 `tests/test_longterm_memory_wiring.py` 19 项（召回、降级、缺用户、超限删除、显式写入、装配与关闭、交互命令、入口）；一处旧测试的替身改为接受关键字参数；init.ps1 PASS，1428 passed、16 skipped。
+- **Not done**：没有连接真实 PostgreSQL 和 Milvus；按用户删除全部记忆、数据库与向量库对账、召回质量（关键词通道、相关性阈值）未做。已按用户“只带长期记忆部分”提交：`context_manager.py`、`rag_agent_service.py` 里用户的长期记忆改动随本次一起提交；README、三个文件的中文注释和三个脚本的删除仍未提交，基线清单已刷新。
 
 ### 2026-11-06 — interactive-cli-001、archive-default-001：产品形态（交互与归档）
 

@@ -1,7 +1,7 @@
 # 已记录基线（Recorded Baseline）
 
 课程 L05/L06 要求一个已提交的 git checkpoint。2026-11-04 经用户授权，harness 管理文件、docs 和最小测试已在本地提交，提交的父提交是 `9138ac1`（Agent Team V1 冻结）。
-用户选择暂不提交的未验收差异（长期记忆源码、README、旧 tests/scripts 删除项）记录在 [baseline-2026-11-06.json](history/baseline-2026-11-06.json) 中（2026-11-06 刷新：中文注释和后续提交改变了哈希，旧清单中被删的测试已按 D-030 恢复；旧清单 [baseline-2026-11-04.json](history/baseline-2026-11-04.json) 只作历史保留）：修改文件和未跟踪文件的 SHA-256，以及已删除路径列表。
+用户选择暂不提交的差异（README、三个文件的中文注释、三个脚本的删除；长期记忆源码已于 2026-11-06 提交）记录在 [baseline-2026-11-06.json](history/baseline-2026-11-06.json) 中（2026-11-06 刷新：中文注释和后续提交改变了哈希，旧清单中被删的测试已按 D-030 恢复；旧清单 [baseline-2026-11-04.json](history/baseline-2026-11-04.json) 只作历史保留）：修改文件和未跟踪文件的 SHA-256，以及已删除路径列表。
 
 核对内容：`base_commit` 是否为 HEAD 的祖先；用户差异是否原样；其余文件是否全部已提交（git status 中没有清单以外的条目）。清单不能防止工作区丢失；剩余批次的提交由用户授权。
 
