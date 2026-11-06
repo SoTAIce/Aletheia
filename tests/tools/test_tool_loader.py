@@ -59,7 +59,8 @@ def test_configured_mcp_servers_do_not_expose_unrequested_write_access(tmp_path)
     servers = local_mcp_servers(filesystem_root=tmp_path, tavily_api_key="test-key")
     assert len(servers) == 2
     assert "--write-root" not in servers[0].args
-    assert servers[1].env == {"TAVILY_API_KEY": "test-key"}
+    assert servers[1].env == {"TAVILY_API_KEY": "test-key", "PYTHONDONTWRITEBYTECODE": "1"}
+    assert servers[0].env == {"PYTHONDONTWRITEBYTECODE": "1"}       # no API keys for the filesystem server
     with pytest.raises(ValueError, match="filesystem_root"):
         local_mcp_servers(write_root=tmp_path)
 

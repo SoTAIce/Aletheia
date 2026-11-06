@@ -49,7 +49,7 @@ def server_parameters(status=200, empty=False):
     return StdioServerParameters(
         command=sys.executable, args=["-c", bootstrap],
         cwd=str(Path(__file__).resolve().parents[2]),
-        env={"TAVILY_API_KEY": "test-tavily-key"},
+        env={"TAVILY_API_KEY": "test-tavily-key", "PYTHONDONTWRITEBYTECODE": "1"},
     )
 
 

@@ -600,6 +600,34 @@
         "AGENTS.md, PROJECT_HANDOVER.md and progress.md describe the current tests/ directory."
       ],
       "evidence": "git status shows no untracked files; tmp/ has 0 entries; docker ps label aletheia.sandbox=1 lists none."
+    },
+    {
+      "id": "tests-restore-001",
+      "name": "Restore the deleted historical tests into tests/",
+      "description": "User asked 2026-11-06 ('先补测试和安全') after the maturity review. The 48 test files deleted from the working tree were restored from HEAD; two tests that only exercised the deleted scripts/validate_summary_context.py were removed; MCP subprocesses started by tests and by local_mcp_servers get PYTHONDONTWRITEBYTECODE=1 so no __pycache__ lands in app/. init.ps1 runs them by default. DECISIONS D-030 supersedes D-011.",
+      "status": "done",
+      "dependencies": [],
+      "acceptance": [
+        "init.ps1 runs the restored suite and passes.",
+        "A full run leaves no __pycache__ outside .venv."
+      ],
+      "evidence": "init.ps1 PASS: 1218 passed, 16 skipped (42 s). With ALETHEIA_DOCKER_TESTS=1: 1231 passed, 3 skipped (62 s). No __pycache__ outside .venv and no sandbox containers afterwards."
+    },
+    {
+      "id": "security-boundary-001",
+      "name": "Protected paths for file tools and the sandbox; longer MCP timeout for sandbox tools",
+      "description": "User asked 2026-11-06 ('先补测试和安全'). FileAccess refuses secrets and VCS internals for read, list and write (and hides them in listings) and refuses writes to auto-run locations. The sandbox masks secret files and directories with empty read-only mounts and mounts existing auto-run paths read-only on read-write runs. Sandbox tools get a 90 s MCP read timeout so the sandbox's own timeout result reaches the model. DECISIONS D-029.",
+      "status": "done",
+      "dependencies": [
+        "readonly-run-001"
+      ],
+      "acceptance": [
+        ".env, .git/config, *.pem and nested .env cannot be read or listed; .env.example, .github and conftest.py stay readable.",
+        "Writes to secrets, .git, .github, .vscode, sitecustomize.py and *.pth are refused; conftest.py and ordinary files are writable.",
+        "In a real container secrets read as empty, .git lists as empty and writes to protected paths fail.",
+        "Sandbox tools wait 90 s; other MCP tools keep the 30 s default."
+      ],
+      "evidence": "tests/tools/test_protected_paths.py 28 passed; real-container test test_secrets_are_masked_and_auto_run_paths_are_frozen passed (13/13 container tests), no leftover containers; init.ps1 PASS 1218 passed. Known limits: new auto-run directories can still be created by read-write runs; single-mode step timeout (60 s) is shorter than the 90 s sandbox call."
     }
   ],
   "cleanup_2026_11_04": {

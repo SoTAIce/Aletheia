@@ -22,7 +22,7 @@ async def test_filesystem_stdio_registry(tmp_path, writable):
         args += ["--write-root", str(output), "--max-write-bytes", "32"]
     parameters = StdioServerParameters(
         command=sys.executable, args=args,
-        cwd=str(Path(__file__).resolve().parents[2]),
+        cwd=str(Path(__file__).resolve().parents[2]), env={"PYTHONDONTWRITEBYTECODE": "1"},
     )
     registry = ToolRegistry()
     async with MCPClient.connect(parameters) as client:

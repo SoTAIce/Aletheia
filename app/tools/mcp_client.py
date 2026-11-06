@@ -9,6 +9,13 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import CallToolResult, Tool
 
+from app.tools.sandbox.executor import SANDBOX_TOOLS, host_call_timeout_seconds
+
+DEFAULT_READ_TIMEOUT = timedelta(seconds=30)
+# A sandbox run may legitimately take its full limit plus container removal; with the
+# default 30 s the transport timed out first and the model never saw "timed out".
+SANDBOX_READ_TIMEOUT = timedelta(seconds=host_call_timeout_seconds())
+
 
 class MCPClient:
     """Use connect() in the same task for the entire tool execution lifetime.
@@ -28,7 +35,7 @@ class MCPClient:
     ) -> AsyncIterator["MCPClient"]:
         async with stdio_client(parameters) as (read, write):
             async with ClientSession(
-                read, write, read_timeout_seconds=timedelta(seconds=30)
+                read, write, read_timeout_seconds=DEFAULT_READ_TIMEOUT
             ) as session:
                 await session.initialize()
                 client = cls(session)
@@ -60,4 +67,5 @@ class MCPClient:
         self, name: str, arguments: dict[str, Any]
     ) -> CallToolResult:
         self._require_open()
-        return await self._session.call_tool(name, arguments=arguments)
+        timeout = SANDBOX_READ_TIMEOUT if name in SANDBOX_TOOLS else None   # None: session default
+        return await self._session.call_tool(name, arguments=arguments, read_timeout_seconds=timeout)

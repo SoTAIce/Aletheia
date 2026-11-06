@@ -54,7 +54,7 @@ runpy.run_module("app.tools.web_search.server", run_name="__main__")
 '''
     return StdioServerParameters(command=sys.executable, args=["-c", script],
                                  cwd=str(Path(__file__).resolve().parents[2]),
-                                 env={"TAVILY_API_KEY": "test-key"})
+                                 env={"TAVILY_API_KEY": "test-key", "PYTHONDONTWRITEBYTECODE": "1"})
 
 
 async def knowledge_search(query, history):

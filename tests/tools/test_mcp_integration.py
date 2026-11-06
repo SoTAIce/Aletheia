@@ -18,7 +18,7 @@ async def test_real_stdio_registry_and_cleanup():
     server = Path(__file__).resolve().parents[2] / "app/agent/mcp_demo/time_server.py"
     registry = ToolRegistry()
     async with MCPClient.connect(StdioServerParameters(
-        command=sys.executable, args=[str(server)]
+        command=sys.executable, args=[str(server)], env={"PYTHONDONTWRITEBYTECODE": "1"}
     )) as client:
         for tool in await client.list_tools():
             registry.register(MCPToolAdapter(client, tool))

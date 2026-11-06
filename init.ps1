@@ -59,7 +59,7 @@ print(f'Management state valid; syntax PASS: {len(sources)} Python files')
             Remove-Item -LiteralPath ('\\?\' + $baseTemp) -Recurse -Force -Confirm:$false
         }
     }
-    Write-Output 'Health check PASS (static/import + deterministic pytest suite; historical 1093-test regression and live services NOT verified)'
+    Write-Output 'Health check PASS (static/import + deterministic pytest suite; live models, MCP services and real-container tests NOT verified)'
     # Print-only, never executed here (course init: show the standard paths).
     Write-Output 'START (needs live model/MCP + authorization): .venv/Scripts/python.exe -m app.agent "<goal>" --filesystem-root . --no-knowledge'
     Write-Output 'VERIFY: .venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp <fresh TEMP dir>'

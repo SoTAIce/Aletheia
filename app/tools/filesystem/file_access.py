@@ -6,6 +6,39 @@ import tempfile
 import re
 
 
+# Host-fixed names the model may never read, list or write, whatever the root (D-029).
+# Credentials and VCS internals: a read would send them to the model provider and the archive.
+_SECRET_DIRS = frozenset({".git", ".ssh", ".aws", ".gnupg", ".azure", ".kube", ".docker"})
+_SECRET_FILES = frozenset({".env", ".netrc", ".npmrc", ".pypirc", ".git-credentials",
+                           "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "credentials.json"})
+_SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".keystore")
+# Places the host itself runs later (hooks, CI, IDE tasks, interpreter start-up): written
+# there, model code would run outside the sandbox. Reading them is harmless.
+_AUTORUN_DIRS = frozenset({".github", ".vscode", ".idea", ".devcontainer"})
+_AUTORUN_FILES = frozenset({"sitecustomize.py", "usercustomize.py"})
+_AUTORUN_SUFFIXES = (".pth",)
+PROTECTED_MESSAGE = "path is protected: secrets, VCS internals and auto-run files are off limits"
+
+
+def _is_secret_name(name: str) -> bool:
+    lower = name.lower()
+    return (lower in _SECRET_FILES or lower.endswith(_SECRET_SUFFIXES)
+            or (lower.startswith(".env.") and lower != ".env.example"))
+
+
+def is_secret_path(parts) -> bool:
+    """True when a root-relative path is or lies inside a secret file or directory."""
+    parts = [p.lower() for p in parts]
+    return any(p in _SECRET_DIRS for p in parts) or bool(parts and _is_secret_name(parts[-1]))
+
+
+def is_protected_write_path(parts) -> bool:
+    """Secrets plus the places the host runs automatically."""
+    lowered = [p.lower() for p in parts]
+    return (is_secret_path(parts) or any(p in _AUTORUN_DIRS for p in lowered)
+            or bool(lowered and (lowered[-1] in _AUTORUN_FILES or lowered[-1].endswith(_AUTORUN_SUFFIXES))))
+
+
 class FileAccess:
     def __init__(
         self,
@@ -81,6 +114,9 @@ class FileAccess:
         if not resolved_path.is_relative_to(self._root):
             raise PermissionError("path is outside the allowed root")
 
+        if is_secret_path(resolved_path.relative_to(self._root).parts):
+            raise PermissionError(PROTECTED_MESSAGE)
+
         if not resolved_path.is_file():
             raise ValueError("path must point to a regular file")
 
@@ -138,6 +174,9 @@ class FileAccess:
         if not resolved_path.is_relative_to(self._root):
             raise PermissionError("path is outside the allowed root")
 
+        if is_secret_path(resolved_path.relative_to(self._root).parts):
+            raise PermissionError(PROTECTED_MESSAGE)
+
         if not resolved_path.is_dir():
             raise ValueError("path must point to a directory")
 
@@ -153,6 +192,8 @@ class FileAccess:
         resolved_path = self.resolve_directory_path(path)
         entries = []
         for child in resolved_path.iterdir():
+            if is_secret_path((child.name,)):
+                continue            # never reveal that a secret exists (D-029)
             if child.is_file() and not child.is_symlink():
                 entries.append({
                     "name": child.name,
@@ -351,6 +392,8 @@ class FileAccess:
             raise ValueError("alternate data streams are not allowed")
         if path.endswith(("/", "\\")):
             raise ValueError("path must name a file, not a directory")
+        if is_protected_write_path(relative_path.parts):
+            raise PermissionError(PROTECTED_MESSAGE)
 
         # Reject Windows device names and ambiguous filename normalization.
         reserved = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}

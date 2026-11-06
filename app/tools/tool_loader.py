@@ -31,7 +31,8 @@ def local_mcp_servers(*, filesystem_root: str | Path | None = None,
         args = ["-m", "app.tools.filesystem.server", "--root", str(Path(filesystem_root).resolve())]
         if write_root:
             args += ["--write-root", str(Path(write_root).resolve())]
-        servers.append(StdioServerParameters(command=sys.executable, args=args, cwd=project_root))
+        servers.append(StdioServerParameters(command=sys.executable, args=args, cwd=project_root,
+                                              env={"PYTHONDONTWRITEBYTECODE": "1"}))
     if sandbox:
         # The child inherits only MCP's minimal default env (PATH, USERPROFILE, ...) for the docker CLI;
         # no API keys. The container itself receives none of it.
@@ -43,7 +44,7 @@ def local_mcp_servers(*, filesystem_root: str | Path | None = None,
     if tavily_api_key.strip():
         servers.append(StdioServerParameters(
             command=sys.executable, args=["-m", "app.tools.web_search.server"],
-            cwd=project_root, env={"TAVILY_API_KEY": tavily_api_key},
+            cwd=project_root, env={"TAVILY_API_KEY": tavily_api_key, "PYTHONDONTWRITEBYTECODE": "1"},
         ))
     return tuple(servers)
 

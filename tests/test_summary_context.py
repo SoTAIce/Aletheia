@@ -124,17 +124,3 @@ async def test_service_planner_and_runner_receive_body_without_tool_lookup(tmp_p
     assert 'Alpha secret decision AX-904' in planner.generate.call_args.args[0]
     assert 'Alpha secret decision AX-904' in model.generate.call_args.args[0][1].content
     assert result.steps[0].tool_calls == ()
-
-
-def test_live_control_gate_does_not_treat_id_digits_as_known_numeric_facts():
-    from scripts.validate_summary_context import contains_fact
-    assert not contains_fact('"2026-05-05T15:05:05.555555Z" "a5ba-55ab"', 5)
-    assert contains_fact('"replicas": 5', 5)
-    assert contains_fact('副本为5个', 5)
-    assert contains_fact('PostgreSQL port 6432', 6432)
-
-
-async def test_live_context_only_registry_cannot_recover_answers_with_tools():
-    from scripts.validate_summary_context import context_only_registry
-    async with context_only_registry(None, local_tools=('not admitted',)) as registry:
-        assert registry.list_definitions() == ()

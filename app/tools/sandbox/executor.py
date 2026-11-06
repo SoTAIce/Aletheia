@@ -8,6 +8,8 @@ read, a timeout kills and removes the container, and results carry no host
 details beyond exit code, flags and capped output.
 run_python_code runs a short inline snippet with the workspace mounted read-only,
 so read-only tasks can compute values without changing any file (D-028).
+Secret files and directories inside the workspace are masked with empty mounts, and
+existing auto-run locations (.github, .vscode, ...) are mounted read-only (D-029).
 
 This is isolation against faulty or ordinary malicious code, not against
 kernel exploits (see design section 10).
@@ -15,17 +17,33 @@ kernel exploits (see design section 10).
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from app.tools.filesystem.file_access import is_protected_write_path, is_secret_path
+
 DEFAULT_IMAGE = 'aletheia-sandbox:py313'
 LABEL = 'aletheia.sandbox=1'
+MASK_SCAN_LIMIT = 20_000                     # workspace entries checked for secrets per run
+SANDBOX_TOOLS = frozenset({'run_tests', 'run_python', 'run_python_code'})
+_SCAN_SKIP = frozenset({'.venv', 'venv', 'node_modules', '__pycache__'})
 _ARG = re.compile(r'[\w .,:=+@/-]{0,200}')
+
+
+def host_call_timeout_seconds(limits: 'SandboxLimits | None' = None) -> float:
+    """How long a caller must wait for one run so the sandbox's own timeout result arrives.
+
+    Run limit, then up to 30 s for `docker rm -f` and 10 s for the CLI to exit (see _execute),
+    plus room for container start-up on Docker Desktop.
+    """
+    return (limits or SandboxLimits()).timeout_seconds + 30 + 10 + 20
 
 
 class SandboxError(RuntimeError):
@@ -104,11 +122,50 @@ class DockerSandbox:
             raise SandboxError('arguments must be a few short plain strings')
         return args
 
+    # ---- protected paths inside the workspace (D-029) ----
+    def protected_mounts(self, empty_file: str | None, *, workspace_mode: str = 'rw') -> list[str]:
+        """Mount flags that hide secrets and freeze existing auto-run paths for one run."""
+        flags, seen, stack = [], 0, [(self.workspace, (), False)]
+        while stack:
+            directory, parts, frozen = stack.pop()   # frozen: already inside a read-only mount
+            try:
+                children = sorted(os.scandir(directory), key=lambda e: e.name)
+            except OSError:
+                continue
+            for entry in children:
+                seen += 1
+                if seen > MASK_SCAN_LIMIT:
+                    raise SandboxError('workspace has too many files to check for secrets')
+                rel = (*parts, entry.name)
+                target = str(PurePosixPath('/work', *rel))
+                if entry.is_symlink():
+                    continue
+                if entry.is_dir():
+                    if entry.name.lower() in _SCAN_SKIP:
+                        continue
+                    if is_secret_path(rel):
+                        flags += ['--tmpfs', f'{target}:ro,size=4k']     # an empty, unwritable directory
+                        continue
+                    freeze = workspace_mode == 'rw' and not frozen and is_protected_write_path(rel)
+                    if freeze:
+                        flags += ['--volume', f'{entry.path}:{target}:ro']
+                    stack.append((entry.path, rel, frozen or freeze))   # secrets inside still get masked
+                elif entry.is_file():
+                    if is_secret_path(rel):
+                        if empty_file is None:
+                            raise SandboxError('an empty mask file is required')
+                        flags += ['--volume', f'{empty_file}:{target}:ro']
+                    elif workspace_mode == 'rw' and not frozen and is_protected_write_path(rel):
+                        flags += ['--volume', f'{entry.path}:{target}:ro']
+        return flags
+
     # ---- docker command ----
-    def build_command(self, argv: list[str], name: str, *, workspace_mode: str = 'rw') -> list[str]:
+    def build_command(self, argv: list[str], name: str, *, workspace_mode: str = 'rw',
+                      empty_file: str | None = None) -> list[str]:
         lim = self.limits
         if workspace_mode not in ('rw', 'ro'):
             raise SandboxError('workspace mode must be rw or ro')
+        masks = self.protected_mounts(empty_file, workspace_mode=workspace_mode)
         return [
             self.docker, 'run', '--rm', '--name', name, '--label', LABEL,
             '--network', 'none',
@@ -117,7 +174,7 @@ class DockerSandbox:
             '--memory', lim.memory, '--memory-swap', lim.memory, '--cpus', lim.cpus,
             '--pids-limit', str(lim.pids),
             '--env', 'PYTHONDONTWRITEBYTECODE=1', '--env', 'HOME=/tmp',
-            '--volume', f'{self.workspace}:/work:{workspace_mode}', '--workdir', '/work',
+            '--volume', f'{self.workspace}:/work:{workspace_mode}', *masks, '--workdir', '/work',
             self.image, *argv,
         ]
 
@@ -143,8 +200,15 @@ class DockerSandbox:
 
     # ---- execution ----
     def _execute(self, argv: list[str], *, workspace_mode: str = 'rw') -> RunResult:
+        # The empty file that masks secrets lives outside the workspace and only for this run.
+        with tempfile.TemporaryDirectory(prefix='aletheia-sbx-mask-') as mask_dir:
+            empty = Path(mask_dir, 'empty')
+            empty.write_bytes(b'')
+            return self._execute_with(argv, workspace_mode, str(empty))
+
+    def _execute_with(self, argv: list[str], workspace_mode: str, empty_file: str) -> RunResult:
         name = 'aletheia-sbx-' + uuid.uuid4().hex[:12]
-        cmd = self.build_command(argv, name, workspace_mode=workspace_mode)
+        cmd = self.build_command(argv, name, workspace_mode=workspace_mode, empty_file=empty_file)
         # The docker CLI itself needs the host env (DOCKER_HOST etc.); the container gets none of it.
         started = time.monotonic()
         try:

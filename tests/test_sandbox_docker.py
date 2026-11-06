@@ -169,3 +169,27 @@ def test_inline_code_can_import_but_not_change_the_workspace(box):
     assert result.output.split() == ['42', 'DENIED', 'OSError', 'DENIED', 'OSError', 'ok']
     assert sorted(p.name for p in box.work.iterdir()) == ['calc.py']
     assert (box.work / 'calc.py').read_text(encoding='utf-8') == source
+
+
+def test_secrets_are_masked_and_auto_run_paths_are_frozen(box):
+    for name, text in {'.env': 'API_KEY=topsecret', 'sub/.env': 'NESTED=topsecret',
+                       '.git/config': '[remote] token=topsecret', '.github/workflows/ci.yml': 'on: push'}.items():
+        path = box.work / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding='utf-8')
+    result = box.run(
+        'import os\n'
+        'print("ENV", repr(open(".env").read()), repr(open("sub/.env").read()))\n'
+        'print("GIT", sorted(os.listdir(".git")))\n'
+        'for p in (".env", ".git/hooks", ".github/workflows/ci.yml", ".github/new.yml"):\n'
+        '    try:\n'
+        '        open(p, "w").write("x"); print("WROTE", p)\n'
+        '    except OSError as e: print("DENIED", p)\n'
+        'open("ok.txt", "w").write("fine"); print("WROTE ok.txt")\n')
+    assert result.exit_code == 0, result.output
+    out = result.output
+    assert "ENV '' ''" in out and 'GIT []' in out and 'topsecret' not in out
+    assert out.count('DENIED') == 4 and 'WROTE ok.txt' in out
+    assert (box.work / '.env').read_text(encoding='utf-8') == 'API_KEY=topsecret'
+    assert (box.work / '.github/workflows/ci.yml').read_text(encoding='utf-8') == 'on: push'
+    assert not (box.work / '.github/new.yml').exists() and (box.work / 'ok.txt').exists()

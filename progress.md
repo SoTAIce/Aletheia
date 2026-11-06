@@ -6,7 +6,7 @@
 
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-05 为 167 passed、13 skipped）；历史 Team 测试按 DECISIONS D-011 从 git 取到 TEMP 运行；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
+- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1218 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
 - **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
 
@@ -18,6 +18,13 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-06 — tests-restore-001 和 security-boundary-001：补测试和安全边界
+
+- **Result**：恢复 48 个历史测试文件（D-030，取代 D-011）；文件工具拒绝读写密钥和版本库内部文件、拒绝写入自动执行位置；沙盒遮蔽密钥并只读挂载已有的自动执行位置；沙盒工具的 MCP 超时放宽到 90 秒（D-029）。
+- **Verification**：init.ps1 PASS，1218 passed、16 skipped；开启真实容器测试后全量 1231 passed、3 skipped；新增受保护路径测试 28 项和真实容器测试 1 项；无残留容器，源码目录无缓存。
+- **Known limits**：读写运行仍能新建不存在的自动执行目录；普通模式单步时限 60 秒短于沙盒调用的 90 秒。
+- **Evidence**：[DECISIONS D-029、D-030](docs/DECISIONS.md)；审阅报告在被忽略的 `output/maturity-review/`。已按用户“提交”提交。
 
 ### 2026-11-05 — tidy-001：项目整洁性检查
 
