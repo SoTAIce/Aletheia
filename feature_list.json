@@ -764,7 +764,7 @@
         "One service serves the whole interactive session; each turn gets a fresh meter.",
         "--result-json is refused in the interactive mode; the single-goal output is unchanged."
       ],
-      "evidence": "tests/agent/test_interactive_cli.py passed; real entry smoke with /help, /new, an unknown command, /exit and end of input (no model call); init.ps1 PASS 1409 passed, 16 skipped. Not run live."
+      "evidence": "tests/agent/test_interactive_cli.py passed; real entry smoke with /help, /new, an unknown command, /exit and end of input (no model call); init.ps1 PASS 1409 passed, 16 skipped. Live 2026-11-06 (e2e-live-001): 3 real turns, recall answered, a blocked task resumed in place and completed (10 model calls)."
     },
     {
       "id": "archive-default-001",
@@ -793,7 +793,22 @@
         "Assembly yields None without a DSN and closes everything it opened, also after a failed initialization.",
         "remember_explicit makes no model call; memory commands report only exception types on failure."
       ],
-      "evidence": "tests/test_longterm_memory_wiring.py 19 passed; init.ps1 PASS 1428 passed, 16 skipped. No real PostgreSQL or Milvus contacted."
+      "evidence": "tests/test_longterm_memory_wiring.py 19 passed; init.ps1 PASS 1428 passed, 16 skipped. Live 2026-11-06 (e2e-live-001): real PostgreSQL 16 + Milvus 2.6.9 + DashScope embeddings, 10 checks passed; recall reached the planner in a real interactive run."
+    },
+    {
+      "id": "blocked-resume-prompt-001",
+      "name": "Ask blocked questions directly and use resolved answers without searching",
+      "description": "User asked 2026-11-06 ('先修这两个') after the live e2e run showed a blocked reason phrased as an explanation and a resumed step that searched archives and directories for an answer already in resolved_questions. The step prompt now says the blocked reason is shown as-is and must be one direct question, and that resolved_questions are authoritative answers to use without tools. DECISIONS D-043.",
+      "status": "done",
+      "dependencies": [
+        "interactive-cli-001"
+      ],
+      "acceptance": [
+        "The step prompt requires a direct question for blocked and no longer asks to explain the blocker.",
+        "The step prompt tells the model to use resolved_questions directly, with and without the outcome object.",
+        "The blocked reason reaches the user unchanged and the answer reaches the resumed step."
+      ],
+      "evidence": "tests/agent/test_blocked_and_resume_prompts.py 3 passed; init.ps1 PASS 1431 passed, 16 skipped. Live re-run 2026-11-06 (2 authorized turns): the blocked reason was a direct question; the resumed step used no tools (2 calls, 5532 tokens vs 6 calls, 21980 before)."
     }
   ],
   "cleanup_2026_11_04": {

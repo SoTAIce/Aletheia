@@ -6,7 +6,7 @@
 
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1428 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
+- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1431 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
 - **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
 
@@ -18,6 +18,23 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-06 — blocked-resume-prompt-001：阻塞直接提问、恢复直接用回答
+
+- **Result**：查明阻塞理由原样变成显示给用户的问题，而提示只要求“写需要回答的问题”且另一句要求“说明阻塞”；恢复后用户回答只在 `resolved_questions` 里，提示从未说明。步骤提示改为：阻塞时写一句直接问用户的问题；`resolved_questions` 是权威回答，直接使用，不去文件、归档、对话里找（D-043）。
+- **Verification**：新增 `tests/agent/test_blocked_and_resume_prompts.py` 3 项；团队压缩档位测试窗口 7000 改 7500；init.ps1 PASS，1431 passed、16 skipped。
+- **Live**：2026-11-06 经用户授权用真实模型重测 2 轮：阻塞时显示“请告诉我你需要翻译成英文的那句中文是什么？”；恢复后的步骤没有调用任何工具，2 次模型调用、5532 令牌（修复前 6 次、21980 令牌，含 3 次读取归档和 1 次列目录）；日志无警告和错误。
+- **Not done**：**未提交**。
+
+### 2026-11-06 — e2e-live-001：真实环境端到端验证
+
+- **授权**：用户选择“临时容器”“启动，验完停掉”“3 轮任务”（模型调用合计上限 40 次）。
+- **环境**：下载 `postgres:16-alpine`，临时容器只监听 `127.0.0.1:55432`，密码随机生成且只放在会话临时目录；用 `docker compose start` 启动 `deploy/milvus`，只用单独集合 `agent_memories_e2e`；对话归档改到会话临时目录；智能体根目录是空的临时目录。
+- **长期记忆层（真实 PostgreSQL + Milvus + DashScope 嵌入，5 次嵌入调用）**：10 项全部通过：装配、两条显式写入、列出、召回排第一、另一用户召回为空、删除、重复删除返回否、删除后不再召回、PostgreSQL 只剩保留的一条、Milvus 向量与数据库一致且集合里没有其他用户。
+- **智能体交互流程（真实模型，3 轮，共 10 次模型调用）**：第 1 轮召回长期记忆并正确回答格式偏好（2 次调用、4456 令牌）；第 2 轮任务阻塞（2 次、5007 令牌）；第 3 轮输入回答后同一任务恢复完成翻译（6 次、21980 令牌）；`/memories` 列出记忆；日志无警告和错误；归档按用户写入 `user-scoped`。
+- **发现的问题**：（1）阻塞时显示的是停下的理由（“用户尚未提供待翻译的中文原句……”），不是要问用户的问题；（2）恢复后的步骤为一句翻译调用了 3 次 `read_context_artifact`（2 次失败）和 1 次 `list_directory`，令牌是前两轮的 4～5 倍。
+- **清理**：删除 `agent_memories_e2e` 集合（`biz` 保留）、删除临时数据库容器（镜像保留）、Milvus 三个容器回到停止状态、删除临时文件和密码文件；仓库内无缓存，`data/` 无新增。
+- **Not done**：模型调用重试没有在真实故障下触发；调参集整体重跑、留出集、团队模式未跑。
 
 ### 2026-11-06 — longterm-memory-001：长期记忆接入
 

@@ -496,7 +496,8 @@ async def test_strong_tier_also_drops_old_code_arguments_and_long_outputs():
                      call('w3', 'run_python', code='r' * 3000),
                      call('w4', 'write_file', path='a.py', content='a' * 3000),
                      call('w5', 'run_tests', path='t.py'), final('done'))
-    runner = DelegatingTeamRunner(model, _registry(*tools), SANDBOX, ContextManager(window_tokens=7000))
+    # A window that lands on the strong tier; 7000 became too small when the worker prompt grew (D-043).
+    runner = DelegatingTeamRunner(model, _registry(*tools), SANDBOX, ContextManager(window_tokens=7500))
     output = await runner.run(_context())
     assert output.outcome is StepOutcome.SUCCEEDED and not model.items
     request = model.requests[5]                                  # after the write, before run_tests

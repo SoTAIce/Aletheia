@@ -95,9 +95,14 @@ class ToolCallingStepRunner:
             are needed. Request tools through tool_calls, not simulated calls in
             prose. Never fabricate tools, arguments, resource contents or results.
             A failed tool result is not evidence of success.
-            If an unresolved blocking open_question affects this step, explain
-            the blocker and missing information; do not assume an answer or take
-            actions depending on it. State limitations when facts cannot be verified.
+            resolved_questions are the user's answers to questions this task asked
+            earlier: treat them as current, authoritative input and use them
+            directly. Never search files, archives or the conversation for an
+            answer that is already in the context; call tools only for facts the
+            context does not contain.
+            If an unresolved blocking open_question affects this step, do not
+            assume an answer or take actions depending on it; ask the user for
+            the missing information as a direct question. State limitations when facts cannot be verified.
 
             The runtime allows at most {self._max_tool_rounds} tool rounds and
             {self._max_total_tool_calls} total tool calls. These limits are enforced
@@ -120,7 +125,9 @@ class ToolCallingStepRunner:
                 or reporting missing evidence does not complete the requested work.
                 Use failed for execution failure requiring a different plan; use blocked
                 for missing input requiring clarification. For failed/blocked, reason must
-                be a non-empty explanation (blocked: the question that needs an answer).
+                be non-empty. For blocked, reason is shown to the user as-is and their
+                next message is the answer: write it as one direct question to the user
+                in the language of active_goal, not a description of what is missing.
                 For succeeded, reason must be null. Never hide failed work as succeeded.
                 Continue to request tools using native tool_calls, not this JSON object.
                 Encode the entire step result as a JSON string in content. Escape quotes
