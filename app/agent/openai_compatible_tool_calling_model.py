@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import math
 from copy import deepcopy
 from collections.abc import Sequence
 from typing import Any
 
-from openai import APIError, APIResponseValidationError, APITimeoutError, AsyncOpenAI
+from openai import APIConnectionError, APIError, APIResponseValidationError, APIStatusError, APITimeoutError, AsyncOpenAI
 from openai.types.chat.chat_completion_message_tool_call import (
     ChatCompletionMessageToolCallUnion,
 )
@@ -19,7 +21,23 @@ from app.agent.step_models import (
 from app.agent.tool_calling_model import ModelRequestError, ModelResponseError, ModelTimeoutError
 from app.agent.tool_calling_model import ModelContextOverflowError, ModelOutputLimitError
 from app.agent.tool_calling_model import ModelToolArgumentsError
-from app.agent.run_meter import record_model_call
+from app.agent.run_meter import current_meter, record_model_call
+
+logger = logging.getLogger(__name__)
+
+# Statuses worth asking again: request timeout, conflict, rate limit, server errors (D-039).
+_RETRYABLE_STATUS = frozenset({408, 409, 429})
+
+
+def _retryable(error: Exception, value: bool = True) -> Exception:
+    """Mark a wrapped provider error as safe to request again (nothing from it was executed)."""
+    error.retryable = value
+    return error
+
+
+def _final(message: str) -> ModelResponseError:
+    """A response that would come back the same on a retry: filtered, refused or unsupported."""
+    return _retryable(ModelResponseError(message), False)
 
 
 class OpenAICompatibleToolCallingModel:
@@ -33,6 +51,8 @@ class OpenAICompatibleToolCallingModel:
         timeout_seconds: float | None = None,
         json_mode: bool = False,
         enable_thinking: bool | None = None,
+        max_retries: int = 2,
+        retry_delay_seconds: float = 0.5,
     ) -> None:
         create = getattr(getattr(getattr(client, "chat", None), "completions", None), "create", None)
         if not callable(create):
@@ -57,6 +77,11 @@ class OpenAICompatibleToolCallingModel:
                 raise ValueError("max_output_tokens must be greater than zero")
         if timeout_seconds is not None and timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than zero")
+        if type(max_retries) is not int or max_retries < 0:
+            raise ValueError("max_retries must be a non-negative integer")
+        if (isinstance(retry_delay_seconds, bool) or not isinstance(retry_delay_seconds, (int, float))
+                or not math.isfinite(retry_delay_seconds) or retry_delay_seconds < 0):
+            raise ValueError("retry_delay_seconds must be a finite non-negative number")
 
         self._client = client
         self._model = model.strip()
@@ -65,6 +90,8 @@ class OpenAICompatibleToolCallingModel:
         self._timeout_seconds = timeout_seconds
         self._json_mode = json_mode
         self._enable_thinking = enable_thinking
+        self._max_retries = max_retries
+        self._retry_delay_seconds = float(retry_delay_seconds)
 
     @staticmethod
     def _require_text(value: object, field: str) -> None:
@@ -99,6 +126,39 @@ class OpenAICompatibleToolCallingModel:
         if self._timeout_seconds is not None:
             request_kwargs["timeout"] = self._timeout_seconds
 
+        attempt = 0
+        while True:
+            try:
+                return await self._request_once(request_kwargs)
+            except (ModelRequestError, ModelResponseError) as exc:
+                delay = self._retry_delay(exc, attempt)
+                if delay is None:
+                    raise
+                attempt += 1
+                # Type name only, never provider text (D-039).
+                logger.warning('Model call failed (%s); retry %d/%d in %.1fs',
+                               type(exc).__name__, attempt, self._max_retries, delay)
+                await asyncio.sleep(delay)
+
+    def _retry_delay(self, error: Exception, attempt: int) -> float | None:
+        """Seconds to wait before asking again, or None to give up (D-039).
+
+        Only errors marked retryable qualify: nothing from such a response was executed,
+        so asking again repeats no work. The run's token and time budget still apply.
+        """
+        if attempt >= self._max_retries or getattr(error, 'retryable', False) is not True:
+            return None
+        delay = self._retry_delay_seconds * (2 ** attempt)
+        meter = current_meter()
+        if meter is not None:
+            if meter.budget_problem() is not None:
+                return None
+            remaining = meter.remaining_seconds()
+            if remaining is not None and remaining <= delay:
+                return None
+        return delay
+
+    async def _request_once(self, request_kwargs: dict[str, Any]) -> ModelTurn:
         try:
             try:
                 raw_response = await self._client.chat.completions.create(
@@ -109,9 +169,11 @@ class OpenAICompatibleToolCallingModel:
                 raise
             record_model_call(getattr(raw_response, 'usage', None))
         except APIResponseValidationError as exc:
-            raise ModelResponseError("provider returned an invalid response") from exc
+            raise _retryable(ModelResponseError("provider returned an invalid response")) from exc
         except APITimeoutError as exc:
-            raise ModelTimeoutError("model request timed out") from exc
+            raise _retryable(ModelTimeoutError("model request timed out")) from exc
+        except APIConnectionError as exc:
+            raise _retryable(ModelRequestError("model request failed")) from exc
         except APIError as exc:
             body = getattr(exc, "body", None)
             detail = body.get("error", body) if isinstance(body, dict) else {}
@@ -121,9 +183,18 @@ class OpenAICompatibleToolCallingModel:
                 "context_length_exceeded", "context_window_exceeded", "prompt_too_long",
             }:
                 raise ModelContextOverflowError("provider context length exceeded") from exc
-            raise ModelRequestError("model request failed") from exc
+            status = getattr(exc, "status_code", None) if isinstance(exc, APIStatusError) else None
+            transient = isinstance(status, int) and (status in _RETRYABLE_STATUS or status >= 500)
+            raise _retryable(ModelRequestError("model request failed"), transient) from exc
 
-        return self._parse_response(raw_response)
+        try:
+            return self._parse_response(raw_response)
+        except ModelResponseError as exc:
+            # A malformed or empty reply is usually a one-off; truncation, filtering, refusals
+            # and undecodable tool arguments are not retried here.
+            if type(exc) is ModelResponseError and not hasattr(exc, 'retryable'):
+                exc.retryable = True
+            raise
 
     @classmethod
     def _build_message_payload(
@@ -306,7 +377,7 @@ class OpenAICompatibleToolCallingModel:
                 completion_tokens=getattr(usage, 'completion_tokens', None),
                 output_token_limit=self._max_output_tokens)
         if finish_reason == "content_filter":
-            raise ModelResponseError("model response was filtered (finish_reason=content_filter)")
+            raise _final("model response was filtered (finish_reason=content_filter)")
         if finish_reason not in ("stop", "tool_calls"):
             raise ModelResponseError(f"unsupported finish_reason: {finish_reason!r}")
 
@@ -318,9 +389,9 @@ class OpenAICompatibleToolCallingModel:
             if not isinstance(refusal, str):
                 raise ModelResponseError("message.refusal must be a string or None")
             if refusal.strip():
-                raise ModelResponseError("model refused the request")
+                raise _final("model refused the request")
         if getattr(message, "function_call", None) is not None:
-            raise ModelResponseError("legacy function_call is not supported; use tool_calls")
+            raise _final("legacy function_call is not supported; use tool_calls")
 
         content = getattr(message, "content", None)
         if content is not None and not isinstance(content, str):

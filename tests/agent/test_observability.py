@@ -131,7 +131,7 @@ async def test_the_provider_adapter_records_usage_and_failed_requests():
                                   'message': {'role': 'assistant', 'content': 'hi'}}],
                         usage={'prompt_tokens': 7, 'completion_tokens': 3, 'total_tokens': 10})
     timeout = APITimeoutError(request=httpx.Request('POST', 'https://example.invalid'))
-    model = OpenAICompatibleToolCallingModel(_client(AsyncMock(side_effect=[ok, timeout])), 'm')
+    model = OpenAICompatibleToolCallingModel(_client(AsyncMock(side_effect=[ok, timeout])), 'm', max_retries=0)
     with metering(RunMeter()) as meter:
         assert (await model.generate([UserMessage('q')], ())).content == 'hi'
         with pytest.raises(ModelTimeoutError):

@@ -733,6 +733,22 @@
         "The whole suite passes repeatedly."
       ],
       "evidence": "Slowed copy 2 passed; the e2e file 3x10 passed; init.ps1 PASS 1374 passed, 16 skipped, and a second full run 1374 passed."
+    },
+    {
+      "id": "model-retry-001",
+      "name": "Bounded retries of one model call on transient provider errors",
+      "description": "User asked 2026-11-06 ('先查无效响应', then '加重试') after a live tuning run failed on one invalid provider response. The provider adapter now asks again up to twice with 0.5s/1s backoff for timeouts, connection failures, 408/409/429/5xx, response validation failures and malformed or empty replies; truncation, filtering, refusals, context overflow, other 4xx, undecodable tool arguments, cancellation and bugs are not retried. Spent token or time budgets stop retries; every attempt is metered; logs carry type names only. DECISIONS D-039.",
+      "status": "done",
+      "dependencies": [
+        "observability-001"
+      ],
+      "acceptance": [
+        "Each transient failure kind succeeds on the second request with one 0.5s wait.",
+        "Deterministic failures raise after one request.",
+        "After two retries the call raises with the provider error as its cause; logs hold no provider text.",
+        "A spent token budget or too little remaining time stops retrying."
+      ],
+      "evidence": "tests/agent/test_model_retry.py passed; init.ps1 PASS 1397 passed, 16 skipped. Not verified live."
     }
   ],
   "cleanup_2026_11_04": {

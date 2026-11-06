@@ -6,7 +6,7 @@
 
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1374 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
+- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1397 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
 - **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
 
@@ -18,6 +18,12 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-06 — model-retry-001：模型调用偶发错误重试
+
+- **Result**：查明服务商出错时整条链路都不重试（SDK `max_retries=0`、运行时直接失败）。模型适配层改为对超时、连接失败、限流、5xx、无效或空回复最多再请求 2 次（0.5 秒、1 秒退避）；截断、过滤、拒答、上下文超长、其他 4xx、工具参数解不开不重试；预算用完不重试（D-039）。
+- **Verification**：新增 `tests/agent/test_model_retry.py`；两处观察单次失败的旧用例改为 `max_retries=0`；init.ps1 PASS，1397 passed、16 skipped。
+- **Not done**：未用真实模型验证；已按用户“提交”提交。
 
 ### 2026-11-06 — flaky-summary-e2e-001：修复摘要生命周期测试的偶发失败
 

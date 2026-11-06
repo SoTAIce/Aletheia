@@ -104,7 +104,7 @@ async def test_sdk_timeout_remains_distinct_from_other_provider_errors():
         request=httpx.Request('POST', 'https://example.invalid')
     )
     with pytest.raises(ModelTimeoutError):
-        await OpenAICompatibleToolCallingModel(fake, 'model').generate([UserMessage('JSON')], ())
+        await OpenAICompatibleToolCallingModel(fake, 'model', max_retries=0).generate([UserMessage('JSON')], ())
 
 
 @pytest.mark.asyncio
@@ -139,7 +139,7 @@ async def test_generate_classifies_errors_and_preserves_cause(kind):
     fake = client()
     fake.chat.completions.create.side_effect = original
     with pytest.raises(expected) as caught:
-        await OpenAICompatibleToolCallingModel(fake, 'model').generate([UserMessage('hello')], ())
+        await OpenAICompatibleToolCallingModel(fake, 'model', max_retries=0).generate([UserMessage('hello')], ())
     if kind in ('bug', 'cancel'):
         assert caught.value is original
     else:
