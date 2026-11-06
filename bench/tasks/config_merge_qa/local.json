@@ -1,0 +1,7 @@
+{
+  "server": {"port": 9090, "tls": false},
+  "db": {"pool": 20},
+  "plugins+": ["debugbar"],
+  "hooks+": ["trace"],
+  "log_level": "info"
+}

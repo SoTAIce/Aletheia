@@ -1,0 +1,14 @@
+{
+  "id": "spec_mismatch_qa",
+  "goal": "这是一个只读问答任务，不要修改或新建任何文件。阅读根目录下的 SPEC.md 和 validator.py，对照规格检查实现。回答：1）validator.py 不符合的规则编号列表，按编号数字升序，例如 [\"R2\", \"R4\"]；2）按当前实现，check_password(\"hello bob\", \"Bob\") 的返回值；3）按 SPEC 规定，同一调用应当返回的列表；4）按当前实现，check_password(\"Abc\tdefgh12\", \"zed\") 的返回值（\t 表示一个制表符）；5）按 SPEC，密码 \"MyBob2026x\"、用户名 \"bob\" 是否合格（布尔值）。最终答案只输出一个 JSON 对象，不要附加解释，键依次为 mismatched_rules、impl_case_a、spec_case_a、impl_case_b、case_c_valid_by_spec。",
+  "files": [
+    "SPEC.md",
+    "validator.py"
+  ],
+  "grader": "answer_json",
+  "expected": "expected.json",
+  "delivery": "answer",
+  "expected_route": "single",
+  "category": "qa",
+  "split": "holdout"
+}

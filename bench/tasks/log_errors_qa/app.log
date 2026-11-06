@@ -1,0 +1,32 @@
+2026-03-14 07:58:02 INFO  [server] starting worker pool size=4
+2026-03-14 07:58:03 INFO  [server] listening on :8080
+2026-03-14 08:01:12 WARN  [payment] gateway slow, retrying (error budget 80% left)
+2026-03-14 08:01:15 ERROR [payment] E2001 card declined order=1043
+2026-03-14 08:02:40 INFO  [orders] created order=1044 note="no ERROR here"
+2026-03-14 08:03:05 ERROR [db] E5003 connection reset by peer
+Traceback (most recent call last):
+  File "db/pool.py", line 88, in acquire
+ConnectionResetError: [Errno 104] Connection reset by peer
+2026-03-14 08:03:06 INFO  [db] reconnected after 1 attempt
+2026-03-14 08:05:51 ERROR [payment] E2001 card declined order=1047
+2026-03-14 08:07:19 DEBUG [cache] miss key=user:17
+2026-03-14 08:09:33 ERROR [auth] E4010 token expired user=17
+2026-03-14 08:10:00 INFO  [scheduler] job cleanup finished errors=0
+2026-03-14 08:12:47 ERROR [db] E5003 connection reset by peer
+2026-03-14 08:12:48 ERROR [db] E5004 pool exhausted waiting=12
+2026-03-14 08:13:02 WARN  [db] slow query 2.4s
+2026-03-14 08:15:30 ERROR [payment] E2002 gateway timeout order=1051
+2026-03-14 08:16:11 CRITICAL [server] E9000 out of memory, restarting worker 3
+2026-03-14 08:16:14 INFO  [server] worker 3 restarted
+2026-03-14 08:18:25 ERROR [db] E5003 connection reset by peer
+Traceback (most recent call last):
+  File "db/pool.py", line 88, in acquire
+ConnectionResetError: [Errno 104] Connection reset by peer
+2026-03-14 08:20:02 ERROR [auth] E4010 token expired user=22
+2026-03-14 08:21:40 error [orders] E3001 lowercase level is written by a legacy client
+2026-03-14 08:22:09 ERROR [payment] E2001 card declined order=1060
+2026-03-14 08:25:44 INFO  [orders] created order=1061
+2026-03-14 08:27:30 ERROR [mailer] E6001 smtp refused recipient
+2026-03-14 08:29:58 WARN  [mailer] queue length 140
+2026-03-14 08:31:12 ERROR [payment] E2001 card declined order=1066
+2026-03-14 08:33:00 INFO  [server] shutdown requested

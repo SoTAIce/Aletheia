@@ -662,6 +662,51 @@
         "configure_logging shows application INFO from both libraries and hides third-party INFO."
       ],
       "evidence": "tests/agent/test_observability.py 19 passed; init.ps1 PASS 1306 passed, 16 skipped. Live runs not done."
+    },
+    {
+      "id": "eval-expansion-001",
+      "name": "Eval expansion: 24 tasks, tuning and held-out splits, Wilson intervals",
+      "description": "User asked 2026-11-06 ('扩充评测先'), phase 3 of the maturity review. The bench grows from 4 to 24 tasks (11 qa, 6 implement, 6 fix, 1 frontend) split into 11 tuning and 13 held-out tasks; --tasks all runs only the tuning split unless --split says otherwise. Reports add a Wilson 95% interval per cell and a by_split summary. tests/test_bench_tasks.py checks every task offline: hidden files stay hidden, every answer key is named in the goal, references pass every check and fix inputs fail. DECISIONS D-035.",
+      "status": "done",
+      "dependencies": [
+        "observability-001"
+      ],
+      "acceptance": [
+        "Both splits contain qa, implement and fix tasks; the held-out split has at least 10 tasks.",
+        "--tasks all selects only the tuning split by default.",
+        "Every python task's hidden reference passes all of at least 8 checks; every fix task's public input fails.",
+        "Reports carry ci95 per task/mode cell and a by_split summary."
+      ],
+      "evidence": "tests/test_bench_tasks.py 57 passed; init.ps1 PASS 1363 passed, 16 skipped. Live 2026-11-06 (11 authorized runs, tune split, single mode): 6/11 passed, Wilson 95% [0.28, 0.787]; two output-limit failures (CONTEXT_OUTPUT_TOKENS 2048), one provider response error, one answer with prose around correct code, one arithmetic error."
+    },
+    {
+      "id": "output-cap-001",
+      "name": "Raise the default per-call output cap from 2048 to 8192 tokens",
+      "description": "User asked 2026-11-06 ('先调高输出上限') after two of eleven live tuning runs failed with ModelOutputLimitError while writing a whole module or page. CONTEXT_OUTPUT_TOKENS now defaults to 8192 (config and .env.example), which leaves 23552 input tokens in the 32768 window. DECISIONS D-036.",
+      "status": "done",
+      "dependencies": [
+        "eval-expansion-001"
+      ],
+      "acceptance": [
+        "The default output cap is 8192 and the input headroom stays at least 16384 tokens.",
+        "Deployments that set CONTEXT_OUTPUT_TOKENS keep their value."
+      ],
+      "evidence": "tests/test_config_defaults.py 1 passed; init.ps1 PASS 1364 passed, 16 skipped. Live re-run 2026-11-06 (2 authorized runs, single): neither hit the cap; todo_html passed 11/11; semver_compare code passed leniently but the answer wrapped it in prose."
+    },
+    {
+      "id": "final-answer-form-001",
+      "name": "The plan's last step delivers the final answer in the form the goal prescribes",
+      "description": "User asked 2026-11-06 ('修答案夹说明文字') after two live tuning runs returned correct code wrapped in prose. StepExecutionContext gains final_step, set by the executor for the last step of the current plan; the step runner then adds rules that the result is the final answer, must be complete, and must be exactly the prescribed form with no explanation or fence. DECISIONS D-037.",
+      "status": "done",
+      "dependencies": [
+        "output-cap-001"
+      ],
+      "acceptance": [
+        "Only the last step of the current plan has final_step set.",
+        "The final-answer rules are added to the last step's system prompt with or without the step outcome object, and to no other step.",
+        "The host never rewrites or extracts the answer."
+      ],
+      "evidence": "tests/agent/test_final_step.py 3 passed; init.ps1 PASS 1367 passed, 16 skipped. Live re-run 2026-11-06 (2 authorized runs, single): fix_rate_limiter passed 24/24 with a code-only answer; semver_compare was refused by the grader guard (forbidden_name), cause not inspected."
     }
   ],
   "cleanup_2026_11_04": {

@@ -1,0 +1,15 @@
+{
+  "id": "role_perms_qa",
+  "goal": "这是一个只读问答任务，不要修改或新建任何文件。阅读根目录下的 rbac.py、roles.json 和 users.json，严格按 rbac.py 的实现（而不是按直觉）推算权限。回答：1）user_perms(\"alice\", users, roles) 的返回值；2）can(\"bob\", \"billing:refund\", users, roles) 的返回值；3）user_perms(\"carol\", users, roles) 的返回值；4）can(\"dave\", \"deploy:run\", users, roles) 的返回值；5）user_perms(\"erin\", users, roles) 返回列表的长度。最终答案只输出一个 JSON 对象，不要附加解释，键依次为 alice_perms、bob_can_refund、carol_perms、dave_can_deploy、erin_perm_count。",
+  "files": [
+    "rbac.py",
+    "roles.json",
+    "users.json"
+  ],
+  "grader": "answer_json",
+  "expected": "expected.json",
+  "delivery": "answer",
+  "expected_route": "single",
+  "category": "qa",
+  "split": "holdout"
+}

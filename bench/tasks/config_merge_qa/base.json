@@ -1,0 +1,7 @@
+{
+  "server": {"host": "0.0.0.0", "port": 8080, "workers": 2, "tls": {"enabled": false}},
+  "db": {"url": "sqlite:///dev.db", "pool": 5, "timeout": 30},
+  "plugins": ["auth", "metrics"],
+  "features": {"beta": true, "export": false},
+  "log_level": "debug"
+}

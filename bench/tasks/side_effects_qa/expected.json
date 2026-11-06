@@ -1,0 +1,18 @@
+{
+  "function_count": 14,
+  "side_effect_functions": [
+    "add_item",
+    "apply_coupon",
+    "checkout",
+    "print_receipt",
+    "register",
+    "remember",
+    "sort_by_price"
+  ],
+  "mutates_arguments": [
+    "add_item",
+    "apply_coupon",
+    "sort_by_price"
+  ],
+  "pure_count": 7
+}

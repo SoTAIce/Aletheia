@@ -94,6 +94,7 @@ class StepExecutor:
                 question for question in task.scratchpad.open_questions
                 if question.goal_revision == task.goal_revision and question.resolved_at is not None
             ),
+            final_step=task.plan[-1].step_id == step_id,
         )
 
     def _validate_runner_output(self, output: StepRunOutput) -> StepRunOutput:

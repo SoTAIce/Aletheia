@@ -1,0 +1,15 @@
+{
+  "id": "deps_doc_qa",
+  "goal": "这是一个只读问答任务，不要修改或新建任何文件。阅读根目录下的 README.md、CHANGELOG.md 和 requirements.txt，回答：1）最新的已发布版本号（“未发布”一节不算版本，按语义化版本大小比较）；2）该版本的发布日期，格式 YYYY-MM-DD；3）当前运行依赖的包名列表，以 requirements.txt 中未被注释的行为准，只写包名、全部小写、去掉版本约束，按字母升序；4）CHANGELOG 中含“破坏性变更”小节的版本号列表，按语义化版本从小到大；5）依赖 rich 是在哪个版本引入的；6）README 的依赖列表里是否仍列出了已被移除的依赖（布尔值）。最终答案只输出一个 JSON 对象，不要附加解释，键依次为 current_version、release_date、runtime_deps、breaking_versions、rich_added_in、readme_lists_removed_dep。",
+  "files": [
+    "README.md",
+    "CHANGELOG.md",
+    "requirements.txt"
+  ],
+  "grader": "answer_json",
+  "expected": "expected.json",
+  "delivery": "answer",
+  "expected_route": "single",
+  "category": "qa",
+  "split": "holdout"
+}

@@ -33,6 +33,8 @@ class StepExecutionContext:
 
     resource_contexts: tuple[str, ...]
     resolved_questions: tuple[OpenQuestion, ...] = ()
+    # The plan's last step: its content becomes the final answer in single mode (D-027, D-037).
+    final_step: bool = False
 
 
 @dataclass(frozen = True, slots = True)

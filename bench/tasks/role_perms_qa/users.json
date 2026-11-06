@@ -1,0 +1,7 @@
+{
+  "alice": {"roles": ["lead"]},
+  "bob": {"roles": ["auditor", "billing"]},
+  "carol": {"roles": ["ops"], "deny": ["pager:ack"]},
+  "dave": {"roles": ["ops_oncall"]},
+  "erin": {"roles": ["guest", "editor"], "deny": ["docs:write"]}
+}

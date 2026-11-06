@@ -6,7 +6,7 @@
 
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1306 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
+- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1367 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
 - **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
 
@@ -18,6 +18,27 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-06 — final-answer-form-001：最后一步按目标形式交付
+
+- **Result**：步骤上下文新增 `final_step`；计划最后一步的系统提示追加规则：结果就是最终答案，要完整，目标规定了形式时只输出那个内容，不加说明或围栏（D-037）。宿主不改写答案。
+- **Verification**：新增 `tests/agent/test_final_step.py` 3 项；init.ps1 PASS，1367 passed、16 skipped。
+- **Live**：2026-11-06 经用户授权重测 2 次（普通模式各 1 次）：`fix_rate_limiter` 严格通过 24/24，答案只有代码；`semver_compare` 被评分器的静态守卫以 `forbidden_name` 拒绝（代码用了禁止的名字，报告不存原文，无法确定是哪个；下次可加 `--keep-answers` 查看）。报告在被忽略的 `output/bench-final-step.json`。
+- **Not done**：`semver_compare` 被守卫拒绝的原因未查；已按用户“提交”提交。
+
+### 2026-11-06 — output-cap-001：调高单次输出上限
+
+- **Result**：`CONTEXT_OUTPUT_TOKENS` 默认值从 2048 改为 8192（`app/config.py`、`.env.example`、`docs/agent_runtime.md`），输入空间剩 23552（D-036）。
+- **Verification**：新增 `tests/test_config_defaults.py`；init.ps1 PASS，1364 passed、16 skipped。
+- **Live**：2026-11-06 经用户授权重测 2 次（普通模式各 1 次）：两题都不再超出输出上限；`todo_html` 严格通过 11/11；`semver_compare` 代码宽松判定全对，但答案在代码外夹了说明文字，严格判定不通过（与 `fix_rate_limiter` 同类）。报告在被忽略的 `output/bench-output-cap.json`。
+- **Not done**：代码类答案夹说明文字的问题未修；已按用户“提交”提交。
+
+### 2026-11-06 — eval-expansion-001：扩充评测
+
+- **Result**：评测任务从 4 个扩到 24 个（只读问答 11、按规格实现 6、对照规格修复 6、前端 1），分为调参集 11 个、留出集 13 个；`--tasks all` 默认只跑调参集，留出集要显式 `--split holdout`；报告每格附 Wilson 95% 区间，新增 `by_split` 汇总（D-035）。问答题和代码题由两个并行会话编写，主会话抽查后合入。
+- **Verification**：新增 `tests/test_bench_tasks.py`（任务格式、参考解通过、修复类原文件失败、区间和划分选择）；init.ps1 PASS，1363 passed、16 skipped。
+- **Live**：2026-11-06 经用户授权 11 次，调参集普通模式各跑 1 次：6/11 通过（54.5%，95% 区间 28%～79%）。失败 5 个：`semver_compare`、`todo_html` 撞到单次输出上限 `CONTEXT_OUTPUT_TOKENS=2048`（ModelOutputLimitError）；`config_merge_qa` 服务商返回无效响应（ModelResponseError）；`fix_rate_limiter` 代码本身全对（宽松 24/24），但答案夹了说明文字，严格判定不通过；`sales_csv_qa` 7 个键算错 2 个（手算金额）。报告在被忽略的 `output/bench-tune-single.json`。
+- **Not done**：输出上限和答案夹说明文字两个问题未修（改 `CONTEXT_OUTPUT_TOKENS` 默认值需用户决定）；留出集和团队模式未跑；已按用户“提交”提交。
 
 ### 2026-11-06 — observability-001：可观测性
 

@@ -6,5 +6,7 @@
   ],
   "grader": "html_todo",
   "deliverable": "index.html",
-  "write_goal": "读取根目录下的 spec.md，严格按其中要求实现单文件 HTML 待办事项页面，并用 write_file 把完整页面写入根目录下的 index.html。最终答案只需说明写入的文件路径。"
+  "write_goal": "读取根目录下的 spec.md，严格按其中要求实现单文件 HTML 待办事项页面，并用 write_file 把完整页面写入根目录下的 index.html。最终答案只需说明写入的文件路径。",
+  "category": "frontend",
+  "split": "tune"
 }

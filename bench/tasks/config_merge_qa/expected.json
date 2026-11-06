@@ -1,0 +1,20 @@
+{
+  "server_port": 9090,
+  "server_workers": 8,
+  "tls_value": false,
+  "db_has_timeout": false,
+  "plugins": [
+    "auth",
+    "metrics",
+    "cache",
+    "debugbar"
+  ],
+  "top_keys": [
+    "db",
+    "features",
+    "hooks+",
+    "log_level",
+    "plugins",
+    "server"
+  ]
+}

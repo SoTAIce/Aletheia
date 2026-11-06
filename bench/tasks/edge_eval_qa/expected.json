@@ -1,0 +1,22 @@
+{
+  "chunk_size_0_error": "ValueError",
+  "split_neg_7_3": [
+    -2,
+    -2,
+    -3
+  ],
+  "bucket_1_25": 1.0,
+  "window_9_10": [
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "window_0_3": [
+    1,
+    2,
+    3
+  ],
+  "slug_result": "release-note"
+}

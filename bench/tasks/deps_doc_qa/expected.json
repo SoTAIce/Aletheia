@@ -1,0 +1,16 @@
+{
+  "current_version": "2.10.0",
+  "release_date": "2026-05-02",
+  "runtime_deps": [
+    "click",
+    "pyyaml",
+    "requests",
+    "rich"
+  ],
+  "breaking_versions": [
+    "2.0.0",
+    "2.9.0"
+  ],
+  "rich_added_in": "2.10.0",
+  "readme_lists_removed_dep": true
+}

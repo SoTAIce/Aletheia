@@ -1,0 +1,11 @@
+{
+  "failing_tests": [
+    "test_mean_floats",
+    "test_mean_empty_raises_value_error",
+    "test_median_even",
+    "test_normalize_constant"
+  ],
+  "passed_count": 6,
+  "mean_empty_exception": "ZeroDivisionError",
+  "median_even_actual": 3.5
+}

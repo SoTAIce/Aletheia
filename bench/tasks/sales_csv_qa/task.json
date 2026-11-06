@@ -1,0 +1,13 @@
+{
+  "id": "sales_csv_qa",
+  "goal": "这是一个只读问答任务，不要修改或新建任何文件。阅读根目录下的 sales.csv，每行是一笔订单，订单金额 = units × unit_price。只有 status 为 completed 的订单计入收入。回答：1）所有 completed 订单的金额合计；2）status 为 refunded 的订单数；3）completed 金额合计最高的地区（region 列原值）；4）completed 订单中销售件数（units 合计）最多的产品（product 列原值）；5）completed 订单的平均金额；6）2026 年 3 月 completed 订单的金额合计。所有金额都按四舍五入保留两位小数，以数字给出。最终答案只输出一个 JSON 对象，不要附加解释，键依次为 completed_revenue、refunded_orders、top_region、top_product_by_units、avg_completed_order、march_revenue。",
+  "files": [
+    "sales.csv"
+  ],
+  "grader": "answer_json",
+  "expected": "expected.json",
+  "delivery": "answer",
+  "expected_route": "single",
+  "category": "qa",
+  "split": "tune"
+}

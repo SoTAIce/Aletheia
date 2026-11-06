@@ -1,0 +1,15 @@
+{
+  "alice_perms": [
+    "docs:read",
+    "docs:write",
+    "logs:read",
+    "team:manage"
+  ],
+  "bob_can_refund": true,
+  "carol_perms": [
+    "deploy:run",
+    "logs:read"
+  ],
+  "dave_can_deploy": false,
+  "erin_perm_count": 2
+}

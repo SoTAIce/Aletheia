@@ -1,0 +1,14 @@
+{
+  "id": "failing_tests_qa",
+  "goal": "这是一个只读问答任务，不要修改或新建任何文件。阅读根目录下的 stats.py 和 test_stats.py，判断用 pytest 运行 test_stats.py 的结果（不要实际运行）。回答：1）会失败的测试函数名列表，按它们在 test_stats.py 中出现的先后顺序；2）会通过的测试个数；3）调用 mean([]) 时实际抛出的异常类名；4）median([4, 1, 3, 2]) 的实际返回值。最终答案只输出一个 JSON 对象，不要附加解释，键依次为 failing_tests、passed_count、mean_empty_exception、median_even_actual。",
+  "files": [
+    "stats.py",
+    "test_stats.py"
+  ],
+  "grader": "answer_json",
+  "expected": "expected.json",
+  "delivery": "answer",
+  "expected_route": "single",
+  "category": "qa",
+  "split": "holdout"
+}

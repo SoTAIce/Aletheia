@@ -32,14 +32,24 @@ _ROUTE = re.compile(r'Route decision: (\{[^\n]*\})')
 _TEAM_COUNTS = re.compile(r'"model_calls": (\d+), "tool_calls": (\d+)')
 
 
-def load_tasks(names):
+SPLITS = ('tune', 'holdout')
+
+
+def load_tasks(names, split='tune'):
+    """Tasks by id, or every task of a split for ['all'] (D-035).
+
+    The default split is the tuning set: the held-out set is only run on purpose, so
+    improvements are not fitted to it. Tasks named explicitly are returned whatever their split.
+    """
+    if split not in (*SPLITS, 'all'):
+        raise SystemExit(f'unknown split: {split}')
     tasks = {}
     for path in sorted((BENCH / 'tasks').glob('*/task.json')):
         task = json.loads(path.read_text(encoding='utf-8'))
         task['dir'] = path.parent
         tasks[task['id']] = task
     if names == ['all']:
-        return list(tasks.values())
+        return [t for t in tasks.values() if split == 'all' or t.get('split', 'tune') == split]
     unknown = [n for n in names if n not in tasks]
     if unknown:
         raise SystemExit(f'unknown task(s): {", ".join(unknown)}')
@@ -187,7 +197,8 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
         else:
             content, status, executions, replans = split_cli_output(stdout)   # older CLI or no record
         cli_content = content  # failure text comes from the CLI, never from the written file
-        row = {'task': task['id'], 'mode': mode, 'run': index, 'status': 'timeout' if timed_out else status,
+        row = {'task': task['id'], 'split': task.get('split', 'tune'), 'mode': mode, 'run': index,
+               'status': 'timeout' if timed_out else status,
                'executions': executions, 'replans': replans, 'seconds': seconds,
                'result_source': 'result_json' if record is not None else 'stdout'}
         if record is not None:
@@ -271,6 +282,36 @@ def lenient(task, content):
             'lenient_checks_passed': passed, 'lenient_checks_total': total, 'lenient_all_passed': ok}
 
 
+def wilson(passed, runs, z=1.96):
+    """95% Wilson score interval for a pass rate, rounded; (0, 1) when nothing ran.
+
+    Runs of different tasks are not identically distributed, so across tasks this is a rough
+    guide to sampling noise, not an exact interval (D-035).
+    """
+    if runs <= 0:
+        return [0.0, 1.0]
+    rate = passed / runs
+    centre = (rate + z * z / (2 * runs)) / (1 + z * z / runs)
+    half = z * ((rate * (1 - rate) / runs + z * z / (4 * runs * runs)) ** 0.5) / (1 + z * z / runs)
+    return [round(max(0.0, centre - half), 3), round(min(1.0, centre + half), 3)]
+
+
+def split_summary(rows):
+    """Pass rate with a 95% interval for each split and mode, over every run in it."""
+    table = {}
+    for row in rows:
+        cell = table.setdefault(f'{row.get("split", "tune")}/{row["mode"]}',
+                                {'passed': 0, 'runs': 0, 'tasks': set()})
+        cell['runs'] += 1
+        cell['passed'] += bool(row.get('passed'))
+        cell['tasks'].add(row['task'])
+    for cell in table.values():
+        cell['tasks'] = len(cell['tasks'])
+        cell['pass_rate'] = round(cell['passed'] / cell['runs'], 3)
+        cell['ci95'] = wilson(cell['passed'], cell['runs'])
+    return table
+
+
 def summary(rows):
     table = {}
     for row in rows:
@@ -289,12 +330,16 @@ def summary(rows):
             routes = cell.setdefault('routes', {})
             chosen = row['route'].get('mode', '?') if isinstance(row.get('route'), dict) else '?'
             routes[chosen] = routes.get(chosen, 0) + 1
+    for cell in table.values():
+        cell['ci95'] = wilson(cell['passed'], cell['runs'])
     return table
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--tasks', nargs='+', default=['all'])
+    parser.add_argument('--split', choices=[*SPLITS, 'all'], default='tune',
+                        help='which tasks --tasks all means; the held-out set only runs when asked (D-035)')
     parser.add_argument('--modes', nargs='+', choices=['single', 'team', 'auto'], default=['single', 'team'])
     parser.add_argument('--runs', type=int, default=1, help='runs per task and mode')
     parser.add_argument('--max-runs', type=int, default=6, help='refuse plans with more agent runs than this')
@@ -312,9 +357,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.runs < 1:
         parser.error('--runs must be at least 1')
-    tasks = load_tasks(args.tasks)
+    tasks = load_tasks(args.tasks, args.split)
+    if not tasks:
+        parser.error(f'no tasks in split {args.split}')
     planned = len(tasks) * len(args.modes) * args.runs
     plan = (f'{planned} agent run(s): tasks={[t["id"] for t in tasks]} modes={args.modes} runs={args.runs} '
+            f'splits={sorted({t.get("split", "tune") for t in tasks})} '
             f'team_acceptance={args.team_acceptance} '
             f'delivery={"file" if args.write or args.sandbox else "answer"} sandbox={args.sandbox}')
     if not args.confirm_live:
@@ -337,7 +385,7 @@ def main(argv=None):
         # The MCP stdio child does not inherit PYTHONDONTWRITEBYTECODE (DECISIONS D-011).
         for path in _pycache_dirs() - before:
             _rmtree(path)
-    report = {'plan': plan, 'rows': rows, 'summary': summary(rows)}
+    report = {'plan': plan, 'rows': rows, 'summary': summary(rows), 'by_split': split_summary(rows)}
     text = json.dumps(report, ensure_ascii=False, indent=2)
     print(text)
     if args.out:

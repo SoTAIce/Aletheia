@@ -7,5 +7,7 @@
   "grader": "answer_json",
   "expected": "expected.json",
   "delivery": "answer",
-  "expected_route": "single"
+  "expected_route": "single",
+  "category": "qa",
+  "split": "tune"
 }

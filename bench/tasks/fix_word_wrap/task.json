@@ -1,0 +1,16 @@
+{
+  "id": "fix_word_wrap",
+  "category": "fix",
+  "split": "holdout",
+  "goal": "阅读根目录下的 SPEC.md 和 word_wrap.py，找出并修复 word_wrap.py 中所有不符合 SPEC 的缺陷。最终答案只输出修复后的完整 word_wrap.py 源码。",
+  "files": [
+    "SPEC.md",
+    "word_wrap.py"
+  ],
+  "grader": "python_checks",
+  "checker": "checker.py",
+  "reference": "reference.py",
+  "deliverable": "word_wrap.py",
+  "write_goal": "阅读根目录下的 SPEC.md 和 word_wrap.py，找出并修复 word_wrap.py 中所有不符合 SPEC 的缺陷，并用 write_file（overwrite=true）把修复后的完整源码写回根目录下的 word_wrap.py。最终答案只需说明写入的文件路径。",
+  "expected_route": "team"
+}

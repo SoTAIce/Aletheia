@@ -1,0 +1,13 @@
+{
+  "id": "edge_eval_qa",
+  "goal": "这是一个只读问答任务，不要修改或新建任何文件。阅读根目录下的 textutil.py，按 Python 3 的语义手算以下调用结果：1）chunk(\"abc\", 0) 抛出的异常类名；2）split_amount(-7, 3) 的返回值；3）bucket(1.25) 的返回值；4）page_window(9, 10) 的返回值；5）page_window(0, 3) 的返回值；6）slug(\"Release Notes  2026 Final, edition\") 的返回值。最终答案只输出一个 JSON 对象，不要附加解释，键依次为 chunk_size_0_error、split_neg_7_3、bucket_1_25、window_9_10、window_0_3、slug_result。",
+  "files": [
+    "textutil.py"
+  ],
+  "grader": "answer_json",
+  "expected": "expected.json",
+  "delivery": "answer",
+  "expected_route": "single",
+  "category": "qa",
+  "split": "holdout"
+}

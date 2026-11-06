@@ -5,14 +5,24 @@
 
 ## 任务
 
-| id | 类型 | 需要的能力 | 评分 |
-| --- | --- | --- | --- |
-| `todo_html` | 单文件前端页面 | 读 spec、长代码输出 | 11 项静态检查（结构、id、筛选、localStorage、无外部资源等）；交互行为另在浏览器中人工检查 |
-| `parse_duration` | Python 函数 | 精确遵守规则、边界处理 | 21 项隐藏用例，子进程执行 |
-| `fix_inventory` | 读代码修 bug | 多文件阅读、对照规格修复 | 16 项隐藏用例，子进程执行 |
+共 24 个任务：调参集 11 个，留出集 13 个（D-035）。
 
-每个任务目录里：`task.json`（目标、公开文件、评分器）、公开文件（复制进 agent 的只读根目录），以及 `checker.py`（隐藏用例，不会暴露给 agent）。
-目前两种模式都是只读，代码只能放在最终答案里；开放写目录属于阶段 2。
+| 划分 | 类别 | 任务 |
+| --- | --- | --- |
+| `tune` | 只读问答 | `billing_qa`、`config_merge_qa`、`log_errors_qa`、`sales_csv_qa` |
+| `tune` | 按规格实现 | `merge_intervals`、`parse_duration`、`semver_compare` |
+| `tune` | 对照规格修复 | `fix_inventory`、`fix_lru_cache`、`fix_rate_limiter` |
+| `tune` | 前端页面 | `todo_html` |
+| `holdout` | 只读问答 | `call_chain_qa`、`deps_doc_qa`、`edge_eval_qa`、`failing_tests_qa`、`role_perms_qa`、`side_effects_qa`、`spec_mismatch_qa` |
+| `holdout` | 按规格实现 | `business_days`、`csv_line`、`expr_eval` |
+| `holdout` | 对照规格修复 | `fix_split_amount`、`fix_topo_sort`、`fix_word_wrap` |
+
+- 只读问答：答案是一个 JSON 对象，每个键一项检查，并检查根目录没有被改动。
+- 实现和修复：隐藏用例在子进程中执行；修复类的原始文件本身不能通过。
+- `todo_html`：11 项静态检查，交互行为另在浏览器中人工检查。
+
+每个任务目录里：`task.json`（目标、公开文件、评分器）、公开文件（复制进 agent 的只读根目录），以及隐藏的评分文件（`checker.py`、`expected.json`、`reference.py`，不会暴露给智能体）。
+默认交付方式是最终答案；`--write` 和 `--sandbox` 改为写文件交付，见下文。
 
 ## 运行
 
@@ -34,6 +44,13 @@
 - `--write`：智能体把交付物写进临时根目录里的指定文件（`task.json` 的 `deliverable`），评分读取该文件；文件没写或没改动都算失败。
 - `--sandbox`：在 `--write` 基础上开放 `run_tests` / `run_python`（Docker 沙盒，需要先构建 `aletheia-sandbox:py313`），并提示智能体先测试再交付；团队模式结束任务前必须有通过的运行。`--team-timeout` 可以加长团队的时间预算。
 - 第一版沙盒只支持 Python，`todo_html` 在沙盒模式下仍然只做静态评分。
+
+## 调参集与留出集（D-035）
+
+- 每个任务的 `task.json` 有 `split`：`tune` 是调参集，改进智能体时可以反复看它的结果和失败原因；`holdout` 是留出集，只用来在改进定稿后验证一次，不要根据它的失败去改提示词或规则，否则它就不再能说明泛化能力。
+- `--tasks all` 默认只取调参集；留出集要显式加 `--split holdout`（或 `--split all`）。按 id 点名的任务不受划分限制。
+- 每个任务还有 `category`（`qa`、`implement`、`fix`、`frontend`）。代码类任务带隐藏的参考解 `reference`，`tests/test_bench_tasks.py` 会检查参考解能通过全部检查、修复类的原始文件至少失败一项，且隐藏文件都不在 `files` 里。
+- 报告的 `summary` 每格附 `ci95`（Wilson 95% 区间）；`by_split` 按“划分/模式”汇总全部运行的通过率和区间。不同任务难度不同，跨任务的区间只能粗略反映抽样误差；比较两个版本时用同一批任务、同样次数，区间重叠时不能断言谁更好。
 
 ## 判定口径
 

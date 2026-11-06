@@ -1,0 +1,17 @@
+{
+  "id": "call_chain_qa",
+  "goal": "这是一个只读问答任务，不要修改或新建任何文件。阅读根目录下的 api.py、service.py、pricing.py、repo.py、notify.py（模块刚导入、尚未处理过任何请求）。函数一律写成“模块名.函数名”，例如 repo.load_order；不含 api.handle 本身，也不含生成器表达式、lambda 和内置函数。回答：1）调用 api.handle({\"kind\": \"place\", \"user\": \"ann\", \"items\": [{\"price\": 3.5, \"qty\": 2}, {\"price\": 10, \"qty\": 1}]}) 时，直接或间接被调用的所有函数，按第一次被调用的先后顺序排列，每个函数只列一次；2）这次调用中 notify.log_event 被调用的次数；3）这次调用返回值中 total 的值；4）在模块刚导入的状态下调用 api.handle({\"kind\": \"cancel\", \"order_id\": 1}) 时，直接或间接被调用的所有函数，规则同第 1 问；5）无论传入什么请求，从 api.handle 出发都不可能被调用到的函数列表，按字母升序。最终答案只输出一个 JSON 对象，不要附加解释，键依次为 place_calls、place_log_events、place_total、cancel_calls、unreachable。",
+  "files": [
+    "api.py",
+    "service.py",
+    "pricing.py",
+    "repo.py",
+    "notify.py"
+  ],
+  "grader": "answer_json",
+  "expected": "expected.json",
+  "delivery": "answer",
+  "expected_route": "single",
+  "category": "qa",
+  "split": "holdout"
+}

@@ -1,0 +1,16 @@
+{
+  "id": "fix_rate_limiter",
+  "category": "fix",
+  "split": "tune",
+  "goal": "阅读根目录下的 SPEC.md 和 rate_limiter.py，找出并修复 rate_limiter.py 中所有不符合 SPEC 的缺陷。最终答案只输出修复后的完整 rate_limiter.py 源码。",
+  "files": [
+    "SPEC.md",
+    "rate_limiter.py"
+  ],
+  "grader": "python_checks",
+  "checker": "checker.py",
+  "reference": "reference.py",
+  "deliverable": "rate_limiter.py",
+  "write_goal": "阅读根目录下的 SPEC.md 和 rate_limiter.py，找出并修复 rate_limiter.py 中所有不符合 SPEC 的缺陷，并用 write_file（overwrite=true）把修复后的完整源码写回根目录下的 rate_limiter.py。最终答案只需说明写入的文件路径。",
+  "expected_route": "team"
+}

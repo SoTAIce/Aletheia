@@ -1,0 +1,8 @@
+{
+  "server": {"workers": 8, "tls": {"enabled": true, "cert": "/etc/tls/app.pem"}},
+  "db": {"url": "postgres://db.internal/app", "timeout": null},
+  "plugins+": ["cache"],
+  "features": {"beta": null},
+  "log_level": "warning",
+  "hooks+": ["notify"]
+}

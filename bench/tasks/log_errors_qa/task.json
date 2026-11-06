@@ -1,0 +1,13 @@
+{
+  "id": "log_errors_qa",
+  "goal": "这是一个只读问答任务，不要修改或新建任何文件。阅读根目录下的 app.log。只统计级别字段恰好为大写 ERROR 的日志行（WARN、CRITICAL、小写 error 以及消息正文里出现的 ERROR 字样都不算，Traceback 续行不算单独的日志行；ERROR 行中级别和模块之后的第一个词是错误码），回答：1）ERROR 行的数量；2）出现次数最多的错误码；3）该错误码出现的次数；4）第一条 ERROR 行的时间，格式 HH:MM:SS；5）最后一条 ERROR 行的时间，格式 HH:MM:SS；6）出现过 ERROR 行的模块名列表（方括号内的名字，去重，按字母升序）。最终答案只输出一个 JSON 对象，不要附加解释，键依次为 error_count、top_error_code、top_error_code_count、first_error_time、last_error_time、error_modules。",
+  "files": [
+    "app.log"
+  ],
+  "grader": "answer_json",
+  "expected": "expected.json",
+  "delivery": "answer",
+  "expected_route": "single",
+  "category": "qa",
+  "split": "tune"
+}

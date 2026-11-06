@@ -34,6 +34,8 @@ deploy/milvus/volumes/
 output/
 logs/
 *.log
+# Benchmark fixtures are task inputs, not run logs (D-035).
+!bench/tasks/*/*.log
 
 # Local test and real-API validation output
 tmp/pytest*/

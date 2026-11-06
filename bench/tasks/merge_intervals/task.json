@@ -1,0 +1,15 @@
+{
+  "id": "merge_intervals",
+  "category": "implement",
+  "split": "tune",
+  "goal": "读取根目录下的 spec.md，按其中规则实现 merge_intervals。最终答案只输出完整的 Python 源码。",
+  "files": [
+    "spec.md"
+  ],
+  "grader": "python_checks",
+  "checker": "checker.py",
+  "reference": "reference.py",
+  "deliverable": "merge_intervals.py",
+  "write_goal": "读取根目录下的 spec.md，按其中规则实现 merge_intervals，并用 write_file 把完整源码写入根目录下的 merge_intervals.py。最终答案只需说明写入的文件路径。",
+  "expected_route": "team"
+}

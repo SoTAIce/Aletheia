@@ -59,7 +59,8 @@ class Settings(BaseSettings):
     rag_context_token_budget: int = Field(default=1800, gt=0)
     conversation_storage_dir: str = ""
     context_window_tokens: int = Field(default=32768, gt=0)
-    context_output_tokens: int = Field(default=2048, gt=0)
+    # Per-call output cap; 2048 cut off whole modules and pages in the bench (D-036).
+    context_output_tokens: int = Field(default=8192, gt=0)
     context_safety_tokens: int = Field(default=1024, ge=0)
 
     chunk_max_size: int = Field(default=800, gt=0)

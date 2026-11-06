@@ -1,0 +1,13 @@
+{
+  "error_count": 12,
+  "top_error_code": "E2001",
+  "top_error_code_count": 4,
+  "first_error_time": "08:01:15",
+  "last_error_time": "08:31:12",
+  "error_modules": [
+    "auth",
+    "db",
+    "mailer",
+    "payment"
+  ]
+}

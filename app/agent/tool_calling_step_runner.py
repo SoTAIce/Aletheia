@@ -23,6 +23,18 @@ class _ShapeError(ValueError):
     """The final reply parsed as JSON but is not the step-outcome envelope (D-031)."""
 
 
+FINAL_STEP_RULES = dedent('''
+
+    current_step is the last step of the plan (final_step is true): the step result
+    is delivered to the user as the final answer, replacing the concise step report
+    asked for above. Put the complete deliverable in the result, however long. When
+    active_goal prescribes the form of the final answer (for example only the full
+    source code, only one JSON object, or only an HTML document), the result must be
+    exactly that and nothing else: no explanation, heading, evidence summary, notes
+    or Markdown fence before or after it. Otherwise, answer active_goal directly.
+''')
+
+
 class ToolCallingStepRunner:
     def __init__(self,
                  model: ToolCallingModel,
@@ -116,6 +128,8 @@ class ToolCallingStepRunner:
                 Keep the result concise; preserve useful citations rather than copying
                 entire files or repeating every observation.
             ''')
+        if context.final_step:
+            system += FINAL_STEP_RULES
         # Include all fields, retaining task identity and revision metadata.
         user = json.dumps(
             asdict(context), ensure_ascii=False, indent=2, default=encode_datetime

@@ -1,0 +1,13 @@
+{
+  "id": "side_effects_qa",
+  "goal": "这是一个只读问答任务，不要修改或新建任何文件。阅读根目录下的 cart.py，只考虑模块顶层用 def 定义的函数。一个函数有副作用，指它在正常调用时会修改调用结束后仍然存在的对象（调用者传入的参数、默认参数值、模块级变量），或产生输出（如 print），或调用了有副作用的函数；只读取模块级变量不算副作用，修改函数内部新建的局部对象也不算。回答：1）顶层函数的个数；2）有副作用的函数名列表，按字母升序；3）会修改调用者传入的参数对象的函数名列表（不含只修改默认参数值的情况），按字母升序；4）没有副作用的函数个数。最终答案只输出一个 JSON 对象，不要附加解释，键依次为 function_count、side_effect_functions、mutates_arguments、pure_count。",
+  "files": [
+    "cart.py"
+  ],
+  "grader": "answer_json",
+  "expected": "expected.json",
+  "delivery": "answer",
+  "expected_route": "single",
+  "category": "qa",
+  "split": "holdout"
+}

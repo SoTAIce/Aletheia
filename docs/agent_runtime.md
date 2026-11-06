@@ -192,7 +192,7 @@ view, not the durable archive; this is not a permanent deletion API.
 `WorkingMemory` remains the authoritative task state. `ContextManager` projects
 copies for Planner and ToolCallingStepRunner and never edits that state. Configure
 `CONTEXT_WINDOW_TOKENS`, `CONTEXT_OUTPUT_TOKENS` and `CONTEXT_SAFETY_TOKENS`
-(defaults 32768/2048/1024) for the deployed model. Estimates include serialized
+(defaults 32768/8192/1024; the output cap was 2048 before D-036) for the deployed model. Estimates include serialized
 messages, system instructions, native tool schemas, tool responses and output
 reserve. Agent RAG history additionally budgets the rewrite system prompt, question
 and structured-output schema. Counting uses the existing mixed-language estimate,

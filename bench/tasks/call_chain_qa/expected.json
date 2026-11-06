@@ -1,0 +1,28 @@
+{
+  "place_calls": [
+    "service.place_order",
+    "pricing.total_price",
+    "pricing.round_cents",
+    "repo.save_order",
+    "repo._next_id",
+    "repo._write",
+    "service._confirm",
+    "notify.send_email",
+    "notify.log_event"
+  ],
+  "place_log_events": 1,
+  "place_total": 17.0,
+  "cancel_calls": [
+    "service.cancel_order",
+    "repo.load_order",
+    "repo.delete_order",
+    "repo._write",
+    "notify.log_event"
+  ],
+  "unreachable": [
+    "notify.send_sms",
+    "pricing.legacy_total",
+    "repo.list_orders",
+    "service.reprice_all"
+  ]
+}

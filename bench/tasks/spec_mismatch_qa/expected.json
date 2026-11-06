@@ -1,0 +1,22 @@
+{
+  "mismatched_rules": [
+    "R1",
+    "R5",
+    "R6",
+    "R7"
+  ],
+  "impl_case_a": [
+    "R6",
+    "R3",
+    "R4"
+  ],
+  "spec_case_a": [
+    "R1",
+    "R3",
+    "R4",
+    "R5",
+    "R6"
+  ],
+  "impl_case_b": [],
+  "case_c_valid_by_spec": false
+}

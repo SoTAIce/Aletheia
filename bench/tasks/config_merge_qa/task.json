@@ -1,0 +1,16 @@
+{
+  "id": "config_merge_qa",
+  "goal": "这是一个只读问答任务，不要修改或新建任何文件。阅读根目录下的 loader.py，以及它按 LAYERS 顺序合并的 base.json、production.json、local.json，推算 load 返回的最终配置，回答：1）server.port 的值；2）server.workers 的值；3）server.tls 的最终值（照原样给出，可能不是对象）；4）db 中是否还有 timeout 键（布尔值）；5）plugins 列表（保持合并后的顺序）；6）最终配置所有顶层键名的列表，按 Python 默认字符串顺序升序排列。最终答案只输出一个 JSON 对象，不要附加解释，键依次为 server_port、server_workers、tls_value、db_has_timeout、plugins、top_keys。",
+  "files": [
+    "loader.py",
+    "base.json",
+    "production.json",
+    "local.json"
+  ],
+  "grader": "answer_json",
+  "expected": "expected.json",
+  "delivery": "answer",
+  "expected_route": "single",
+  "category": "qa",
+  "split": "tune"
+}

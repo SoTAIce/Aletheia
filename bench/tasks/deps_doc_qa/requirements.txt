@@ -1,0 +1,6 @@
+# runtime dependencies of quillsync
+requests>=2.31,<3
+PyYAML>=6.0
+click>=8.1
+rich>=13.7
+# simplejson>=3.19   removed in 2.9.0

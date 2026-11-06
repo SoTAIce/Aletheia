@@ -1,0 +1,16 @@
+{
+  "id": "fix_split_amount",
+  "category": "fix",
+  "split": "holdout",
+  "goal": "阅读根目录下的 SPEC.md 和 allocate.py，找出并修复 allocate.py 中所有不符合 SPEC 的缺陷。最终答案只输出修复后的完整 allocate.py 源码。",
+  "files": [
+    "SPEC.md",
+    "allocate.py"
+  ],
+  "grader": "python_checks",
+  "checker": "checker.py",
+  "reference": "reference.py",
+  "deliverable": "allocate.py",
+  "write_goal": "阅读根目录下的 SPEC.md 和 allocate.py，找出并修复 allocate.py 中所有不符合 SPEC 的缺陷，并用 write_file（overwrite=true）把修复后的完整源码写回根目录下的 allocate.py。最终答案只需说明写入的文件路径。",
+  "expected_route": "team"
+}

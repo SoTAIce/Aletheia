@@ -1,0 +1,10 @@
+{
+  "viewer": {"allow": ["docs:read", "billing:read"]},
+  "editor": {"inherits": ["viewer"], "allow": ["docs:write"]},
+  "auditor": {"inherits": ["viewer"], "allow": ["logs:read"], "deny": ["billing:read"]},
+  "lead": {"inherits": ["auditor", "editor"], "allow": ["team:manage"]},
+  "billing": {"inherits": ["viewer"], "allow": ["billing:*"]},
+  "ops": {"inherits": ["ops_oncall"], "allow": ["deploy:run"]},
+  "ops_oncall": {"inherits": ["ops"], "allow": ["logs:read", "pager:ack"], "deny": ["deploy:run"]},
+  "guest": {"inherits": ["missing_role"], "allow": ["docs:read"]}
+}

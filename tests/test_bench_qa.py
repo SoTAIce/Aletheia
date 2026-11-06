@@ -91,7 +91,8 @@ def test_route_accuracy_is_summarised_only_for_auto_rows(monkeypatch):
     rows.append(run_bench.run_one(TASK, 'single', 1, 5))
     table = run_bench.summary(rows)
     assert table['billing_qa/auto'] == {'passed': 3, 'lenient_passed': 3, 'runs': 3, 'route_correct': 1,
-                                        'routes': {'single': 1, 'team': 1, '?': 1}, 'last_step_passed': 3}
+                                        'routes': {'single': 1, 'team': 1, '?': 1}, 'last_step_passed': 3,
+                                        'ci95': run_bench.wilson(3, 3)}
     assert 'route_correct' not in table['billing_qa/single']
 
 
