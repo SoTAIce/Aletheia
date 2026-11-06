@@ -17,7 +17,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1
 ```
 
 做管理文件、JSON、Python compile、CLI 加载检查，并运行确定性 pytest 套件（basetemp 放在 TEMP）；不执行模型、MCP、数据库或完整任务。启动时再运行 [基线核对](docs/harness/baseline.md)。
-原 tests/ 和验证脚本曾按用户要求删除；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-06 为 1287 passed、16 skipped；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，开启后 1231 passed）。历史 1093/2 不是当前回归。后续行为修改须恢复对应测试或在 tests/ 中补充测试；参见 [清理记录](docs/project_cleanup.md)。
+原 tests/ 和验证脚本曾按用户要求删除；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-06 为 1306 passed、16 skipped；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，开启后 1231 passed）。历史 1093/2 不是当前回归。后续行为修改须恢复对应测试或在 tests/ 中补充测试；参见 [清理记录](docs/project_cleanup.md)。
 
 ## Global Invariants
 

@@ -50,6 +50,7 @@ def _restore_result(data: dict) -> AgentRunResult:
                                      for r in item['tool_results'])
         steps.append(StepExecutionReceipt(**item))
     data['status'] = TaskStatus(data['status'])
+    data['step_log'] = tuple(data.get('step_log', ()))   # older archives have no run log (D-034)
     return AgentRunResult(steps=tuple(steps), **data)
 
 def _team_requirements(context):

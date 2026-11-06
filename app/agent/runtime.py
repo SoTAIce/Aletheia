@@ -1,15 +1,20 @@
 """Bounded, sequential composition of the existing planning/execution components."""
 
 import asyncio
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 import json
 import math
+import time
+
+from loguru import logger
 
 from app.agent.executor import Executor
 from app.agent.planner import Planner
 from app.agent.step_executor import StepExecutor
 from app.agent.step_models import StepExecutionReceipt
 from app.agent.side_effects import SideEffectWatch
+from app.agent.run_meter import RunMeter, current_meter, metering
 from app.agent.step_runner import (StepBlockedError, StepRunError, StepFormatError, StepModelError, StepRoutingError,
                                    StepToolError)
 from app.agent.tool_calling_model import ToolCallingModel
@@ -37,6 +42,7 @@ FAILURE_MESSAGES = {
     'timeout': '执行超时，为避免重复已完成的操作，任务已停止。',
     'rejected': '任务结果没有通过完成检查，任务停止。',
     'business': '任务无法完成。',
+    'budget': '已用完本次任务的令牌或时间预算，任务停止。',
     'internal': '运行时内部出错，任务停止。',
 }
 
@@ -50,6 +56,8 @@ class AgentRunResult:
     execution_count: int
     replan_count: int
     failure_kind: str | None = None    # a FAILURE_MESSAGES key when status is FAILED
+    usage: dict | None = None          # model calls, tokens and seconds of this run (D-034)
+    step_log: tuple[dict, ...] = ()    # host-authored record of every step attempt (D-034)
 
     @property
     def user_message(self) -> str | None:
@@ -101,6 +109,9 @@ class AgentRuntime:
         self._execution_count = self._replan_count = 0
         self._answers_seen = 0      # resolved questions already planned for (D-033)
         self._steps: list[StepExecutionReceipt] = []
+        self._step_log: list[dict] = []
+        self._meter: RunMeter | None = None
+        self._final: AgentRunResult | None = None   # a finished task reports the same result again
         self._lock = asyncio.Lock()
         self._reported_version: int | None = None
         self._active_turn: ConversationTurn | None = None
@@ -157,7 +168,11 @@ class AgentRuntime:
             try:
                 if conversation is not None and self._active_turn is not None:
                     await finish_conversation_write(conversation.add(self._active_turn))
-                result = await self._run()
+                with self._meter_scope():
+                    result = await self._run()
+                logger.info('Task {}: executions {}, replans {}, model calls {}, tokens {}',
+                            result.status.value, result.execution_count, result.replan_count,
+                            result.usage['model_calls'], result.usage['total_tokens'])
             except StaleExecutionError:
                 # A newer task/step owns this workspace. Even exception cleanup
                 # must not fail that state or publish an old interaction result.
@@ -185,6 +200,18 @@ class AgentRuntime:
                 await self._finish_turn()
             return result
 
+    @contextmanager
+    def _meter_scope(self):
+        """Use the caller's meter and budget, or an unlimited meter for this run (D-034)."""
+        meter = current_meter()
+        if meter is not None:
+            self._meter = meter
+            yield
+            return
+        with metering(RunMeter()) as meter:
+            self._meter = meter
+            yield
+
     async def _finish_turn(self):
         status, content, payload = self._conversation_outcome
         await finish_conversation_write(self._conversation.complete_turn(
@@ -195,6 +222,8 @@ class AgentRuntime:
 
     async def _run(self) -> AgentRunResult:
         task = self.memory.task_state
+        if self._final is not None and task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            return self._final
         if task.status is TaskStatus.CREATED:
             if self._conversation is not None:
                 history = await self._context_manager.prepare_conversation(self._conversation, task.active_goal)
@@ -211,6 +240,9 @@ class AgentRuntime:
             if blockers:
                 task.pause_for_questions()
                 return self._result("\n".join(q.content for q in blockers))
+            spent = self._meter.budget_problem()
+            if spent:
+                return self._fail(spent, 'budget')
             if task.status is TaskStatus.PLANNING:
                 if self._execution_count >= self._max_executions:
                     return self._fail("Agent execution limit reached")
@@ -225,11 +257,15 @@ class AgentRuntime:
                     self._replan_count += 1
                 try:
                     context = self._planner.build_context(self.memory)
-                    async with asyncio.timeout(self._planning_timeout):
+                    async with asyncio.timeout(self._meter.bound(self._planning_timeout)):
                         proposal = await (self._planner.replan(context) if context.plan_revision
                                           else self._planner.plan(context))
                     self._executor.accept_plan(proposal)
+                    logger.info('Plan revision {}: {} step(s)', task.plan_revision, len(task.plan))
                 except Exception as exc:
+                    spent = self._meter.budget_problem()
+                    if spent:
+                        return self._fail(spent, 'budget')
                     # Planner validation messages are host-authored (see bench _SAFE_FAILURE).
                     return self._fail(f"Planning failed: {type(exc).__name__}: {exc}", 'planning')
             next_step = next((step for step in task.plan if step.status is StepStatus.PENDING), None)
@@ -243,9 +279,15 @@ class AgentRuntime:
                 return self._fail("Agent execution limit reached", 'limit')
             self._execution_count += 1
             self._watch.reset()
+            started = time.monotonic()
             try:
-                async with asyncio.timeout(self._step_timeout):
-                    receipt = await self._step_executor.execute(next_step.step_id)
+                try:
+                    async with asyncio.timeout(self._meter.bound(self._step_timeout)):
+                        receipt = await self._step_executor.execute(next_step.step_id)
+                except BaseException as exc:
+                    self._log_step(next_step.step_id, started, exc)
+                    raise
+                self._log_step(next_step.step_id, started, None)
                 self._steps.append(receipt)
             except StepBlockedError as exc:
                 return self._result(exc.message)
@@ -292,6 +334,19 @@ class AgentRuntime:
                    if r.valid and r.goal_revision == task.goal_revision]
         return self._result(results[-1] if results else "")
 
+    def _log_step(self, step_id, started, exc):
+        """Record one step attempt: outcome, runner and tool calls, without model or tool text."""
+        outcome = ('succeeded' if exc is None else 'blocked' if isinstance(exc, StepBlockedError)
+                   else 'timeout' if isinstance(exc, TimeoutError) else 'failed')
+        decisions = self.routing_decisions
+        entry = {'step': self._execution_count, 'step_id': step_id, 'outcome': outcome,
+                 'error': None if exc is None or outcome == 'blocked' else type(exc).__name__,
+                 'runner': decisions[-1].runner_id if decisions else None,
+                 'seconds': round(time.monotonic() - started, 3), 'tools': [dict(c) for c in self._watch.calls]}
+        self._step_log.append(entry)
+        tools = ', '.join(f"{c['tool']} {'ok' if c['success'] else 'failed'}" for c in entry['tools']) or 'none'
+        logger.info('Step {} {} in {:.1f}s; tools: {}', entry['step'], outcome, entry['seconds'], tools)
+
     def _last_failure(self) -> str:
         """The latest recorded step failure, so a limit message keeps its root cause (D-033)."""
         history = self.memory.task_state.scratchpad.failure_history
@@ -307,5 +362,9 @@ class AgentRuntime:
     def _result(self, content: str, failure_kind: str | None = None) -> AgentRunResult:
         task = self.memory.task_state
         kind = failure_kind if task.status is TaskStatus.FAILED else None
-        return AgentRunResult(task.task_id, task.status, content, tuple(self._steps),
-                              self._execution_count, self._replan_count, kind)
+        usage = self._meter.snapshot() if self._meter is not None else None
+        result = AgentRunResult(task.task_id, task.status, content, tuple(self._steps),
+                                self._execution_count, self._replan_count, kind, usage, tuple(self._step_log))
+        if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            self._final = result
+        return result

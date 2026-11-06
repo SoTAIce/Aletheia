@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     rag_model_timeout_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
     agent_step_timeout_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
     agent_planning_timeout_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
+    # Optional prices for the usage report; unset means no cost estimate (D-034).
+    model_input_price_per_million_tokens: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    model_output_price_per_million_tokens: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     rag_query_rewrite_model: str = "qwen3.8-flash"
     rag_enable_rerank: bool = True
     rag_rerank_top_k: int = Field(default=12, ge=2, le=15)

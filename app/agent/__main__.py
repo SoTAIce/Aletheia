@@ -3,7 +3,10 @@
 import argparse
 import asyncio
 from contextlib import AsyncExitStack
+import json
+from pathlib import Path
 
+from app.agent.run_meter import RunMeter, metering
 from app.config import config
 from app.models.taskstate import TaskStatus
 from app.services.rag_agent_service import RagAgentService
@@ -46,6 +49,24 @@ def step_timeout_for(sandbox, team_options):
     if team_options is not None:
         seconds = max(seconds, team_options.timeout_seconds + 5)
     return seconds
+
+
+def result_record(result) -> dict:
+    """The machine-readable outcome written by --result-json (D-034).
+
+    content is the model's answer (data, not instructions); everything else is host-authored.
+    """
+    return {'status': result.status.value, 'failure_kind': result.failure_kind,
+            'user_message': result.user_message, 'content': result.content,
+            'execution_count': result.execution_count, 'replan_count': result.replan_count,
+            'usage': result.usage, 'steps': list(result.step_log)}
+
+
+def write_result(path, result) -> None:
+    target = Path(path)
+    temporary = target.with_name(target.name + '.tmp')
+    temporary.write_text(json.dumps(result_record(result), ensure_ascii=False, indent=2) + chr(10), encoding='utf-8')
+    temporary.replace(target)
 
 
 def sandbox_problem(write_root, sandbox):
@@ -93,13 +114,30 @@ async def main(args) -> int:
             team_options=team_options,
             step_timeout_seconds=step_timeout_for(sandbox, team_options),
         ))
-        result = await service.query_result(args.goal, args.session_id)
+        meter = RunMeter(max_total_tokens=getattr(args, 'max_tokens', None),
+                         timeout_seconds=getattr(args, 'max_seconds', None))
+        with metering(meter):
+            result = await service.query_result(args.goal, args.session_id)
+    if getattr(args, 'result_json', None):
+        write_result(args.result_json, result)
     print(result.content)
     if getattr(result, 'user_message', None):
         # The first line stays the English diagnostic the bench parses; this explains it (D-033).
         print(f"\n说明：{result.user_message}")
     print(f"\nStatus: {result.status.value}; executions: {result.execution_count}; replans: {result.replan_count}")
     return 0 if result.status is TaskStatus.COMPLETED else (2 if result.status is TaskStatus.BLOCKED else 1)
+
+
+def _positive(kind):
+    def parse(text):
+        try:
+            value = kind(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f'not a number: {text!r}') from None
+        if not value > 0 or value == float('inf'):
+            raise argparse.ArgumentTypeError('must be positive and finite')
+        return value
+    return parse
 
 
 def build_parser():
@@ -121,8 +159,14 @@ def build_parser():
     parser.add_argument("--max-replans", type=int, default=2)
     parser.add_argument('--compress-history', action='store_true',
                         help='Generate archived stage summaries using the existing local compressor')
+    parser.add_argument('--max-tokens', type=_positive(int),
+                        help='Stop between model calls once this many tokens were used (D-034)')
+    parser.add_argument('--max-seconds', type=_positive(float), help='Total time budget for the task in seconds (D-034)')
+    parser.add_argument('--result-json', help='Also write the outcome, usage and step log as JSON here')
     return parser
 
 
 if __name__ == "__main__":
+    from app.core.logging_setup import configure_logging
+    configure_logging()
     raise SystemExit(asyncio.run(main(build_parser().parse_args())))

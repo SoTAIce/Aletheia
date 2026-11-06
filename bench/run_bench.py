@@ -85,6 +85,46 @@ def _snapshot(root: Path):
             for p in sorted(root.rglob('*')) if p.is_file() or p.is_symlink()}
 
 
+_RESULT_LIMIT = 5_000_000
+
+
+def read_result(path: Path):
+    """The CLI's --result-json record (D-034), or None when it is missing or malformed."""
+    try:
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > _RESULT_LIMIT:
+            return None
+        record = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or not isinstance(record.get('status'), str) \
+            or not isinstance(record.get('content'), str):
+        return None
+    for name in ('execution_count', 'replan_count'):
+        if type(record.get(name)) is not int:
+            return None
+    return record
+
+
+def usage_fields(record):
+    """Host counts from the result record: failure kind, tokens and tool calls."""
+    fields = {}
+    if isinstance(record.get('failure_kind'), str):
+        fields['failure_kind'] = record['failure_kind']
+    usage = record.get('usage')
+    if isinstance(usage, dict):
+        for name in ('model_calls', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'estimated_cost'):
+            value = usage.get(name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                fields[name] = value
+    steps = record.get('steps')
+    if isinstance(steps, list):
+        tools = [c for s in steps if isinstance(s, dict) for c in s.get('tools') or () if isinstance(c, dict)]
+        fields['step_attempts'] = len(steps)
+        fields['tool_calls'] = len(tools)
+        fields['failed_tool_calls'] = sum(1 for c in tools if c.get('success') is not True)
+    return fields
+
+
 def _read_deliverable(root: Path, name: str, limit: int = 1_000_000):
     """Read the agent-written file as untrusted data: no links, bounded size."""
     path = root / name
@@ -115,9 +155,10 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
         if sandbox and not answer_only:
             goal += SANDBOX_HINT
         before = _snapshot(root) if answer_only else None
+        result_path = work / 'result.json'   # outside the agent's root
         cmd = [sys.executable, '-B', '-m', 'app.agent', goal,
                '--session-id', f'bench-{task["id"]}-{mode}-{index}', '--filesystem-root', str(root),
-               '--no-knowledge', '--execution-mode', mode]
+               '--no-knowledge', '--execution-mode', mode, '--result-json', str(result_path)]
         if write:
             # The TEMP root is both the read and the write root; nothing else is writable.
             cmd += ['--write-root', str(root)]
@@ -139,10 +180,18 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             # Keep what the child already logged (the team trace, if the team ended).
             stdout, stderr, timed_out = '', _text(exc.stderr), True
         seconds = round(time.monotonic() - started, 1)
-        content, status, executions, replans = split_cli_output(stdout)
+        record = None if timed_out else read_result(result_path)
+        if record is not None:
+            content, status = record['content'], record['status']
+            executions, replans = record['execution_count'], record['replan_count']
+        else:
+            content, status, executions, replans = split_cli_output(stdout)   # older CLI or no record
         cli_content = content  # failure text comes from the CLI, never from the written file
         row = {'task': task['id'], 'mode': mode, 'run': index, 'status': 'timeout' if timed_out else status,
-               'executions': executions, 'replans': replans, 'seconds': seconds}
+               'executions': executions, 'replans': replans, 'seconds': seconds,
+               'result_source': 'result_json' if record is not None else 'stdout'}
+        if record is not None:
+            row.update(usage_fields(record))
         traces = _TEAM_TRACE.findall(stderr)
         if traces:
             parsed = []
@@ -230,6 +279,9 @@ def summary(rows):
         cell['runs'] += 1
         cell['passed'] += bool(row.get('passed'))
         cell['lenient_passed'] += bool(row.get('lenient_all_passed'))
+        if 'total_tokens' in row:
+            cell['total_tokens'] = cell.get('total_tokens', 0) + row['total_tokens']
+            cell['model_calls'] = cell.get('model_calls', 0) + row.get('model_calls', 0)
         if 'last_step_all_passed' in row:
             cell['last_step_passed'] = cell.get('last_step_passed', 0) + bool(row['last_step_all_passed'])
         if 'route_correct' in row:

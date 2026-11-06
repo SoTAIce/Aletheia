@@ -645,6 +645,23 @@
         "Two answered questions with max_replans=0 still complete."
       ],
       "evidence": "tests/agent/test_execution_reliability.py 24 passed; tests/agent/test_planner_repair.py passed; init.ps1 PASS 1287 passed, 16 skipped. Known flaky: tests/agent/test_summary_lifecycle_e2e.py fails about 2 in 5 runs on HEAD too (0.03-0.15 s timing). Live runs not done."
+    },
+    {
+      "id": "observability-001",
+      "name": "Observability: usage meter and budgets, step log, CLI result record, one logging pipeline",
+      "description": "User asked 2026-11-06 ('开始可观测性'), phase 2 of the maturity review. A context-carried RunMeter counts model calls and provider tokens for a request and holds an optional token and time budget that the runtime checks before planning and each step (failure_kind budget). Every step attempt is logged with outcome, runner and tool calls (name, success, seconds, exception type only) in AgentRunResult.step_log, with usage in AgentRunResult.usage. The CLI gains --max-tokens, --max-seconds and --result-json; the bench reads the record and falls back to stdout. Standard-library logging is routed into loguru with one level. DECISIONS D-034.",
+      "status": "done",
+      "dependencies": [
+        "reliability-001"
+      ],
+      "acceptance": [
+        "Provider usage and failed requests are counted inside a metering scope, including child tasks.",
+        "A token or time budget fails the task with failure_kind budget between model calls.",
+        "The step log holds no tool arguments, output, error text or unknown tool names.",
+        "The bench reads --result-json when present and falls back to stdout otherwise.",
+        "configure_logging shows application INFO from both libraries and hides third-party INFO."
+      ],
+      "evidence": "tests/agent/test_observability.py 19 passed; init.ps1 PASS 1306 passed, 16 skipped. Live runs not done."
     }
   ],
   "cleanup_2026_11_04": {

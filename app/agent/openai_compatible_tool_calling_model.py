@@ -19,6 +19,7 @@ from app.agent.step_models import (
 from app.agent.tool_calling_model import ModelRequestError, ModelResponseError, ModelTimeoutError
 from app.agent.tool_calling_model import ModelContextOverflowError, ModelOutputLimitError
 from app.agent.tool_calling_model import ModelToolArgumentsError
+from app.agent.run_meter import record_model_call
 
 
 class OpenAICompatibleToolCallingModel:
@@ -99,9 +100,14 @@ class OpenAICompatibleToolCallingModel:
             request_kwargs["timeout"] = self._timeout_seconds
 
         try:
-            raw_response = await self._client.chat.completions.create(
-                **request_kwargs
-            )
+            try:
+                raw_response = await self._client.chat.completions.create(
+                    **request_kwargs
+                )
+            except BaseException:
+                record_model_call(None)   # the request was sent; its usage is unknown (D-034)
+                raise
+            record_model_call(getattr(raw_response, 'usage', None))
         except APIResponseValidationError as exc:
             raise ModelResponseError("provider returned an invalid response") from exc
         except APITimeoutError as exc:

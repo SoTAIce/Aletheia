@@ -6,7 +6,7 @@
 
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1287 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
+- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1306 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
 - **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
 
@@ -18,6 +18,12 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-06 — observability-001：可观测性
+
+- **Result**：随上下文传递的计量器统计模型调用和令牌，并承载令牌和总时长预算（`--max-tokens`、`--max-seconds`，用完失败类型为 `budget`）；每次步骤尝试记录结果、执行方式和工具调用（只含工具名、成败、耗时、异常类型）；命令行 `--result-json` 输出结构化结果，评测优先读它；标准库日志转进 `loguru`，统一按 `ALETHEIA_LOG_LEVEL`（默认 INFO）输出（D-034）。
+- **Verification**：新增 `tests/agent/test_observability.py` 19 项；init.ps1 PASS，1306 passed、16 skipped。
+- **Not done**：真实模型下的令牌数和评测报告未验证（需授权次数）；长期记忆和压缩器的模型调用不计入；路由和团队记录仍从标准错误里解析。已按用户“提交”提交。
 
 ### 2026-11-06 — reliability-001：执行可靠性
 
