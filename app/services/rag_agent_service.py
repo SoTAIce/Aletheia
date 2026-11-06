@@ -290,10 +290,9 @@ class RagAgentService:
                             choice = await self._choose_route(question, model)
                         self._routes[(key, task.task_id)] = choice
                         route = choice.mode
-                        if choice.read_only:
-                            # The routing call said no file changes: hide write and run tools (D-027).
-                            from app.agent.route_selection import read_only_registry
-                            registry = read_only_registry(registry)
+                        # Read-only tasks lose write tools and get read-only runs (D-027/D-028).
+                        from app.agent.route_selection import task_registry
+                        registry = task_registry(registry, choice.read_only)
                         # Team V2 owns the whole task: one fixed plan step, one team (DECISIONS D-019).
                         if route == 'team':
                             from app.agent.team_v2 import SingleStepPlanner

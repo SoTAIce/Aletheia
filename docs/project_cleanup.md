@@ -15,3 +15,7 @@ No model/API task or database operation was executed. `python -B -m app.agent --
 
 ## Remaining limitation
 Ten old tmp/pytest-harness-* fixture directories could not be fully removed due to access-denied errors, including after an elevated deletion attempt. Their readable files were included in the verified backup. No ownership/ACL modification was made. This is incomplete temporary-directory cleanup, not an application failure.
+
+## Follow-up 2026-11-05
+
+The ten tmp/pytest-harness-* directories were removed with `rd /s /q "\\?\<path>"`. The earlier failure came from paths longer than the Windows limit (a deep-root fixture), not from permissions; no ACL was changed. tmp/ is now empty. The TEMP items `aletheia-cleanup-check-*` (access denied) and `aletheia-cleanup-current.txt` (points to the backup folder) and the backup folder itself are kept.

@@ -6,7 +6,7 @@
 
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **Standard verification path**：init.ps1（static/import + pytest `tests/`，当前 10 passed）；历史 Team 测试按 DECISIONS D-011 从 git 取到 TEMP 运行；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
+- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-05 为 167 passed、13 skipped）；历史 Team 测试按 DECISIONS D-011 从 git 取到 TEMP 运行；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
 - **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
 
@@ -18,6 +18,19 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-05 — tidy-001：项目整洁性检查
+
+- **Result**：删除 `tmp/pytest-harness-*` 10 个旧测试目录（路径过长导致之前删不掉）和本会话的 TEMP `pytest-of-*`；修正 AGENTS、项目总交接和本文件里“tests 只剩冒烟测试”的过时说明。
+- **Kept**：外部备份、`aletheia-cleanup-check-*`、`output/pdf`、Milvus 容器、`app/agent/mcp_demo`（README 引用的示例）。
+- **Verification**：仓库无未跟踪文件；`tmp/` 为空；无沙盒残留容器；init.ps1 PASS。已按用户“提交”提交。
+
+### 2026-11-05 — readonly-run-001：只读任务用只读挂载运行代码
+
+- **Result**：沙盒新增 `run_python_code`，工作区只读挂载，只交给只读任务。决策 D-028。
+- **Verification**：当前 tests 167 passed；真实容器测试 12 passed；init.ps1 PASS；历史回归与上次相同。
+- **Live**：授权 6 次 billing_qa，严格通过 6/6（D-027 后 3/6），工作区全部未改动。
+- **Evidence**：[route-auto-2026-11-05.md](docs/harness/route-auto-2026-11-05.md)。已按用户“提交”提交。
 
 ### 2026-11-05 — answer-readonly-001：最终答案只取最后一步，只读任务收回写入工具
 

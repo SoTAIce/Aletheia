@@ -153,3 +153,19 @@ async def test_mcp_sandbox_server_runs_tests_end_to_end(tmp_path):
     assert ok.success and ok.content.startswith('exit code 0;') and '1 passed' in ok.content
     assert not bad.success and 'inside the workspace' in (bad.error or '')
     assert DockerSandbox(tmp_path).leftover_containers() == []
+
+
+def test_inline_code_can_import_but_not_change_the_workspace(box):
+    source = 'def f(x):\n    return x * 2\n'
+    (box.work / 'calc.py').write_text(source, encoding='utf-8')
+    result = box.sandbox.run_python_code(
+        'import calc\nprint(calc.f(21))\n'
+        'for p in ("calc.py", "new.txt"):\n'
+        '    try:\n'
+        '        open(p, "a").write("x"); print("WROTE", p)\n'
+        '    except OSError as e: print("DENIED", type(e).__name__)\n'
+        'open("/tmp/t", "w").write("ok"); print(open("/tmp/t").read())')
+    assert result.exit_code == 0, result.output
+    assert result.output.split() == ['42', 'DENIED', 'OSError', 'DENIED', 'OSError', 'ok']
+    assert sorted(p.name for p in box.work.iterdir()) == ['calc.py']
+    assert (box.work / 'calc.py').read_text(encoding='utf-8') == source

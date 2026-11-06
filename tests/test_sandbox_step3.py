@@ -83,6 +83,7 @@ def test_server_tools_return_summaries_and_turn_refusals_into_tool_errors():
     with pytest.raises(ValueError, match='inside the workspace'):
         sandbox_server.run_python_text(bad, '../x.py')
     assert sandbox_server.RUN_TOOLS == {'run_tests', 'run_python'}
+    assert sandbox_server.READ_ONLY_RUN_TOOL == 'run_python_code'
 
 
 def _result(name, content='', success=True):

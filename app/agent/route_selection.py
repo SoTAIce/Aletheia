@@ -4,7 +4,8 @@ The choice is made once per task, before planning, because the mode decides the 
 team owns a whole task through a single fixed step (D-019). Rules come from host configuration and
 the model can never widen them; any model failure falls back to the cheapest mode, single.
 The same call says whether the task changes files; when the model says it does not, the host hides
-write_file and the run tools for that task (D-027), so a read-only question cannot change the workspace.
+write_file and the run tools for that task (D-027), so a read-only question cannot change the workspace;
+it gets run_python_code instead, which sees the workspace read-only, and other tasks never see it (D-028).
 Only host values are logged: the mode, where it came from, the rule name and failure type names.
 """
 
@@ -27,6 +28,7 @@ FALLBACK_MODE = SINGLE
 DEFAULT_TIMEOUT_SECONDS = 20.0
 MAX_GOAL_CHARS = 4000
 READ_ONLY_HIDDEN = WORKER_ONLY_TOOLS      # write_file, run_tests, run_python
+READ_ONLY_ONLY = frozenset({'run_python_code'})   # read-only workspace runs, for read-only tasks (D-028)
 
 _PROMPT = (
     'You route one user task to an execution mode. Reply with one JSON object only, no Markdown: '
@@ -99,13 +101,25 @@ async def choose_mode(goal: str, team_options, model, *, timeout_seconds: float 
     return choice
 
 
-def read_only_registry(registry: ToolRegistry) -> ToolRegistry:
-    """A registry holding the same tool objects minus write_file and the run tools."""
+def _without(registry: ToolRegistry, hidden) -> ToolRegistry:
     view = ToolRegistry()
     for definition in registry.list_definitions():
-        if definition.name not in READ_ONLY_HIDDEN:
+        if definition.name not in hidden:
             view.register(registry.get(definition.name))
     return view
+
+
+def read_only_registry(registry: ToolRegistry) -> ToolRegistry:
+    """A registry holding the same tool objects minus write_file and the read-write run tools."""
+    return _without(registry, READ_ONLY_HIDDEN)
+
+
+def task_registry(registry: ToolRegistry, read_only: bool) -> ToolRegistry:
+    """The tools one task sees: read-only tasks lose write tools; the others lose run_python_code."""
+    if read_only:
+        return read_only_registry(registry)
+    names = {d.name for d in registry.list_definitions()}
+    return _without(registry, READ_ONLY_ONLY) if names & READ_ONLY_ONLY else registry
 
 
 def log_choice(choice: ModeChoice) -> None:

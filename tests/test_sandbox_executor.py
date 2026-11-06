@@ -124,3 +124,26 @@ def test_exit_137_is_reported_as_killed(workspace):
 def test_workspace_must_be_a_directory(tmp_path):
     with pytest.raises(SandboxError):
         DockerSandbox(tmp_path / 'nope')
+
+
+def test_inline_code_runs_with_the_workspace_read_only(workspace):
+    seen = {}
+
+    def popen(cmd, **kw):
+        seen['cmd'] = cmd
+        raise OSError('stop before docker')
+    sandbox = DockerSandbox(workspace, popen=popen)
+    with pytest.raises(SandboxError, match='docker'):
+        sandbox.run_python_code('import main; print(1)')
+    cmd = seen['cmd']
+    volumes = [cmd[i + 1] for i, part in enumerate(cmd) if part == '--volume']
+    assert volumes == [f'{workspace.resolve()}:/work:ro'] and '--read-only' in cmd
+    assert cmd[-3:] == ['python', '-c', 'import main; print(1)']
+    plain = DockerSandbox(workspace).build_command(['python'], 'n')
+    assert plain[plain.index('--volume') + 1].endswith(':/work:rw')   # file runs stay read-write
+
+
+@pytest.mark.parametrize('code', ['', '   ', 'a\x00b', 'x' * 8001, None])
+def test_inline_code_must_be_short_text(workspace, code):
+    with pytest.raises(SandboxError, match='code'):
+        DockerSandbox(workspace, popen=_never).run_python_code(code)

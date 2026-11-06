@@ -573,6 +573,33 @@
         "Missing, invalid or contradictory writes never removes tools."
       ],
       "evidence": "tests/test_route_selection.py 28 passed (8 new); current tests 160 passed/12 skipped; init.ps1 PASS. Historical 9138ac1: 1021 passed, 1 new expected failure (agent/test_runtime.py::test_failed_tool_replans_and_preserves_prior_valid_results asserts the joined answer), 3 known failures and 4 V1 collection errors unchanged. Live (authorized 6, billing_qa, auto, sandbox): strict 3/6 (was 0/6); all 6 routed single and read-only; the 5 completed runs answered one JSON object and left the workspace unchanged (was 4/6 changed); 2 runs miscomputed fee_200_15 without run tools; 1 run failed with StepFormatError because the model returned the answer JSON instead of the step outcome object."
+    },
+    {
+      "id": "readonly-run-001",
+      "name": "Read-only tasks run code in the sandbox with the workspace mounted read-only",
+      "description": "User asked 2026-11-05 ('可以，但是会保留近似的性能吗', '那跑验证看看') after D-027 cost accuracy: read-only tasks could not compute values. The sandbox adds run_python_code (inline code up to 8000 characters, workspace mounted /work:ro, only /tmp writable, same limits). task_registry gives it only to read-only tasks, which still lose write_file, run_tests and run_python; every other task loses run_python_code. DECISIONS D-028.",
+      "status": "done",
+      "dependencies": [
+        "answer-readonly-001"
+      ],
+      "acceptance": [
+        "run_python_code mounts the workspace read-only and refuses empty or over-long code.",
+        "In a real container it imports workspace modules but cannot change or create workspace files.",
+        "Only read-only tasks see run_python_code; other tasks keep their previous tools."
+      ],
+      "evidence": "Related tests 60 passed; real-container tests 12 passed (1 new), no leftover containers; current tests 167 passed/13 skipped; init.ps1 PASS; historical 9138ac1: 1021 passed, the same 4 failures and 4 collection errors. Live (authorized 6, billing_qa, auto, sandbox): strict 6/6 (was 3/6 after D-027), workspace unchanged, routing and read-only marking 6/6; tool calls are not recorded, so the run_python_code effect is inferred."
+    },
+    {
+      "id": "tidy-001",
+      "name": "Project tidiness check: leftover test directories and stale status lines",
+      "description": "User asked 2026-11-05 ('顺便检查一下项目下文件整洁性，是否有测试软件没删过，按harness管理方式'). Checked untracked/ignored files, tmp/, output/, TEMP and sandbox containers. Removed the ten tmp/pytest-harness-* directories (long paths, not permissions) and this session's TEMP pytest-of-* directory. Kept the external backup, the cleanup-check leftovers, output/pdf, Milvus containers and app/agent/mcp_demo (documented examples, referenced by README). Updated status lines that still said tests/ held only the smoke test.",
+      "status": "done",
+      "dependencies": [],
+      "acceptance": [
+        "No untracked files in the repository; tmp/ is empty; no sandbox containers left.",
+        "AGENTS.md, PROJECT_HANDOVER.md and progress.md describe the current tests/ directory."
+      ],
+      "evidence": "git status shows no untracked files; tmp/ has 0 entries; docker ps label aletheia.sandbox=1 lists none."
     }
   ],
   "cleanup_2026_11_04": {

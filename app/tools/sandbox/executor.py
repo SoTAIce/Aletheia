@@ -6,6 +6,8 @@ images, mounts or commands: callers can only run one workspace Python file or
 pytest. Only the per-task workspace is mounted. Output is capped while it is
 read, a timeout kills and removes the container, and results carry no host
 details beyond exit code, flags and capped output.
+run_python_code runs a short inline snippet with the workspace mounted read-only,
+so read-only tasks can compute values without changing any file (D-028).
 
 This is isolation against faulty or ordinary malicious code, not against
 kernel exploits (see design section 10).
@@ -39,6 +41,7 @@ class SandboxLimits:
     tmpfs_mb: int = 64
     output_chars: int = 20_000
     max_args: int = 16
+    code_chars: int = 8_000
 
 
 @dataclass(frozen=True)
@@ -102,8 +105,10 @@ class DockerSandbox:
         return args
 
     # ---- docker command ----
-    def build_command(self, argv: list[str], name: str) -> list[str]:
+    def build_command(self, argv: list[str], name: str, *, workspace_mode: str = 'rw') -> list[str]:
         lim = self.limits
+        if workspace_mode not in ('rw', 'ro'):
+            raise SandboxError('workspace mode must be rw or ro')
         return [
             self.docker, 'run', '--rm', '--name', name, '--label', LABEL,
             '--network', 'none',
@@ -112,7 +117,7 @@ class DockerSandbox:
             '--memory', lim.memory, '--memory-swap', lim.memory, '--cpus', lim.cpus,
             '--pids-limit', str(lim.pids),
             '--env', 'PYTHONDONTWRITEBYTECODE=1', '--env', 'HOME=/tmp',
-            '--volume', f'{self.workspace}:/work:rw', '--workdir', '/work',
+            '--volume', f'{self.workspace}:/work:{workspace_mode}', '--workdir', '/work',
             self.image, *argv,
         ]
 
@@ -122,6 +127,14 @@ class DockerSandbox:
             raise SandboxError('only .py files can be run')
         return self._execute(['python', target, *self._args(args)])
 
+    def run_python_code(self, code: str) -> RunResult:
+        """Run inline Python with the workspace read-only; workspace modules are importable."""
+        if not isinstance(code, str) or not code.strip() or '\x00' in code:
+            raise SandboxError('code must be nonempty text')
+        if len(code) > self.limits.code_chars:
+            raise SandboxError(f'code must be at most {self.limits.code_chars} characters')
+        return self._execute(['python', '-c', code], workspace_mode='ro')
+
     def run_tests(self, path: str | None = None) -> RunResult:
         argv = ['python', '-m', 'pytest', '-q', '-p', 'no:cacheprovider', '--color=no']
         if path:
@@ -129,9 +142,9 @@ class DockerSandbox:
         return self._execute(argv)
 
     # ---- execution ----
-    def _execute(self, argv: list[str]) -> RunResult:
+    def _execute(self, argv: list[str], *, workspace_mode: str = 'rw') -> RunResult:
         name = 'aletheia-sbx-' + uuid.uuid4().hex[:12]
-        cmd = self.build_command(argv, name)
+        cmd = self.build_command(argv, name, workspace_mode=workspace_mode)
         # The docker CLI itself needs the host env (DOCKER_HOST etc.); the container gets none of it.
         started = time.monotonic()
         try:

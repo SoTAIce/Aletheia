@@ -254,7 +254,7 @@ async def test_a_read_only_task_runs_without_write_tools(monkeypatch):
 
     @asynccontextmanager
     async def registry(memory, **kw):
-        yield _tools('read_file', 'write_file', 'run_python')
+        yield _tools('read_file', 'write_file', 'run_python', 'run_python_code')
     monkeypatch.setattr(module, 'open_tool_registry', registry)
     service = _service(monkeypatch, Model(reply('single', writes=False), reply('single')),
                        execution_mode='auto', team_options=SANDBOX)
@@ -262,7 +262,8 @@ async def test_a_read_only_task_runs_without_write_tools(monkeypatch):
         await service.query_result('what does late_fee return?', 's')
         await service.query_result('fix late_fee', 's')
     read_only, writer = FakeRuntime.created
-    assert [d.name for d in read_only.registry.list_definitions()] == ['read_file']
+    # D-028: the read-only task keeps a read-only run tool; the writing task never sees it.
+    assert [d.name for d in read_only.registry.list_definitions()] == ['read_file', 'run_python_code']
     assert [d.name for d in writer.registry.list_definitions()] == ['read_file', 'write_file', 'run_python']
 
 
@@ -288,3 +289,13 @@ async def test_single_mode_answers_with_the_last_step_result():
     assert result.status is TaskStatus.COMPLETED and result.content == '{"max_retries": 3}'
     assert [r.content for r in memory.task_state.scratchpad.intermediate_results] == [
         'read billing.py: MAX_RETRIES = 3', '{"max_retries": 3}']     # earlier results are kept
+
+
+def test_task_registry_keeps_the_read_only_run_tool_for_read_only_tasks_only():
+    from app.agent.route_selection import task_registry
+    full = _tools('read_file', 'write_file', 'run_tests', 'run_python', 'run_python_code')
+    assert [d.name for d in task_registry(full, True).list_definitions()] == ['read_file', 'run_python_code']
+    assert [d.name for d in task_registry(full, False).list_definitions()] == [
+        'read_file', 'write_file', 'run_tests', 'run_python']
+    plain = _tools('read_file', 'write_file')
+    assert task_registry(plain, False) is plain                       # nothing to hide: same registry
