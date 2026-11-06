@@ -19,6 +19,11 @@
 
 ## Session Record
 
+### 2026-11-06 — 清洁状态检查与基线刷新
+
+- **Result**：按 `docs/harness/clean-state-checklist.md` 检查：仓库内无 `__pycache__`、`.pytest_cache`、`.pyc`；`tmp/` 为空；无 aletheia 容器；功能表无 `in_progress` 条目；删除了本轮直接运行 pytest 留下的系统临时目录 `pytest-of-*`。2026-11-04 基线清单已过时（中文注释和后续提交改变了哈希，清单中被删的测试已按 D-030 恢复），新建 `docs/harness/history/baseline-2026-11-06.json` 并把核对命令、文档索引、清单和交接指向它；核对结果：基础提交 OK、drift none、deleted-restored none。
+- **Not done**：系统临时目录里有 2026-11-04 留下的 `Aletheia-cleanup-*`、`aletheia-cleanup-check-*` 和 `aletheia-cleanup-current.txt`，不是本会话产生，未删除；`output/` 下的评测报告在被忽略的目录中保留；已按用户“先提交基线刷新”提交。
+
 ### 2026-11-06 — model-retry-001：模型调用偶发错误重试
 
 - **Result**：查明服务商出错时整条链路都不重试（SDK `max_retries=0`、运行时直接失败）。模型适配层改为对超时、连接失败、限流、5xx、无效或空回复最多再请求 2 次（0.5 秒、1 秒退避）；截断、过滤、拒答、上下文超长、其他 4xx、工具参数解不开不重试；预算用完不重试（D-039）。

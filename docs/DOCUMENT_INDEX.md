@@ -23,7 +23,7 @@
 | [评测集说明](../bench/README.md) | 任务、运行命令、授权与上限、判定口径 |
 | [single/team 前端任务对照 2026-11-04](harness/frontend-compare-2026-11-04.md) | 真实模型各跑 1 次单文件 HTML 任务：single、team 都失败（0/1），未产出 HTML |
 | [Team 一致性审查 2026-11-04](harness/team-audit-2026-11-04.md) | Team V1 文档声明逐条对照代码；历史 Team 测试 68 passed；修订上限表述更正 |
-| [已记录基线](harness/baseline.md) | HEAD + 工作区差异哈希清单（[JSON](harness/history/baseline-2026-11-04.json)）及核对命令 |
+| [已记录基线](harness/baseline.md) | HEAD + 工作区差异哈希清单（[JSON](harness/history/baseline-2026-11-06.json)）及核对命令 |
 | [AGENTS.md](../AGENTS.md)、[CLAUDE.md](../CLAUDE.md) | 公共工程约束与 Claude 入口 |
 | [session-handoff.md](../session-handoff.md)、[progress.md](../progress.md)、[feature_list.json](../feature_list.json) | 当前状态、执行记录、功能证据 |
 

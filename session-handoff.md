@@ -96,7 +96,7 @@ Done when: 每条文档声明都有 一致/不一致 + 文件:行号 证据；TE
 ## Still broken or unverified
 
 - **Team 交付质量没有改善**：本轮只做核对；真实任务严格交付仍是 Team 0/3。
-- **工作区仍有用户差异**：长期记忆源码（未验收）、README、旧 tests/scripts 删除项，记录在 [基线清单](docs/harness/history/baseline-2026-11-04.json) 中。
+- **工作区仍有用户差异**：长期记忆源码（未验收）、README、三个文件的中文注释、`scripts/` 下三个脚本的删除，记录在 [基线清单](docs/harness/history/baseline-2026-11-06.json) 中（2026-11-06 刷新）。
 - 外部备份目录 `C:\Users\48174\AppData\Local\Temp\Aletheia-cleanup-jjfezytd` 仍在，但本会话读取 `removed.zip` 被拒；已跟踪的旧测试可直接从 git 历史取出（D-011）。
 - TEMP 里还有之前清理留下的 `aletheia-cleanup-check-*`（无权读取）和 `aletheia-cleanup-current.txt`（指向备份目录），没有处理。
 - 2026-11-05 整洁性检查：`tmp/pytest-harness-*` 10 个残留目录已删除（原因是路径过长，不是权限），`tmp/` 现在为空；仓库没有未跟踪文件。
