@@ -81,9 +81,12 @@ async def test_full_agent_lifecycle_with_background_summary_faults(tmp_path, mod
     ]
     service = RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
                               memory_directory=tmp_path, conversation_compressor=LLMCompressor(client, 'offline-provider'))
+    # The scheduler's timeout also covers the lock wait and archive reads before the provider
+    # call; .15s expired before the provider was reached on a loaded machine. The provider
+    # never answers in timeout mode, so 1s still times out every attempt.
     service._summary_scheduler = SummaryScheduler(service._conversations, max_concurrency=1, max_pending=4,
         scan_interval_seconds=.01, max_wait_seconds=.02, retry_delay_seconds=.01,
-        timeout_seconds=.15 if mode == 'timeout' else 5)
+        timeout_seconds=1.0 if mode == 'timeout' else 5)
     try:
         blocked = await asyncio.wait_for(service.query_result('  Get clock evidence and report\n', 's', request_id='first'), 5)
         assert blocked.status is TaskStatus.BLOCKED

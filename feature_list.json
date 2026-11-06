@@ -721,6 +721,18 @@
         "__builtins__, __globals__, __dict__, __subclasses__, __code__, __getattribute__ and __class__ are still refused."
       ],
       "evidence": "tests/test_bench_graders.py updated; init.ps1 PASS 1374 passed, 16 skipped. Live 2026-11-06 (1 authorized run): the answer was refused for __slots__ only and passes 39/39 under the new guard."
+    },
+    {
+      "id": "flaky-summary-e2e-001",
+      "name": "Widen the summary timeout in the lifecycle e2e test so a loaded machine cannot starve the provider call",
+      "description": "User asked 2026-11-06 ('那现在是否所有测试全部通过了，没通过的是什么原因调查一下', then '调宽超时'). The timeout mode of tests/agent/test_summary_lifecycle_e2e.py gave the summary scheduler 0.15s, but that budget also covers the memory lock wait and archive reads before the provider call; on a loaded machine both attempts expired before the provider was reached and the test waited 5s for a call that never came. Reproduced deterministically by slowing one archive read by 0.2s. The test now uses 1s; the provider never answers in that mode, so every attempt still times out. Production default is 30s and is unchanged.",
+      "status": "done",
+      "dependencies": [],
+      "acceptance": [
+        "The timeout case passes with archive reads slowed by 0.2s and 0.5s.",
+        "The whole suite passes repeatedly."
+      ],
+      "evidence": "Slowed copy 2 passed; the e2e file 3x10 passed; init.ps1 PASS 1374 passed, 16 skipped, and a second full run 1374 passed."
     }
   ],
   "cleanup_2026_11_04": {
