@@ -128,10 +128,26 @@ def test_python_grader_fails_the_shipped_buggy_inventory():
     ('open("x")\n', 'forbidden_name'),
     ('().__class__.__bases__\n', 'forbidden_attribute'),
     ('def f(:\n', 'syntax_error'),
+    ('x = __builtins__\n', 'forbidden_name'),
+    ('g = f.__globals__\n', 'forbidden_attribute'),
+    ('d = obj.__dict__\n', 'forbidden_attribute'),
+    ('s = object.__subclasses__()\n', 'forbidden_attribute'),
+    ('c = f.__code__\n', 'forbidden_attribute'),
+    ('a = obj.__getattribute__("x")\n', 'forbidden_attribute'),
 ])
 def test_static_guard_rejects_unsafe_code(code, reason):
     assert static_guard(code) == reason
     assert summarize(grade_python(code, TASKS / 'parse_duration' / 'checker.py'))[2] is False
+
+
+def test_static_guard_allows_harmless_data_model_names():
+    """A live semver answer declared __slots__ and was refused before D-038."""
+    code = ('"""Versions."""\n__version__ = "1.0"\n\n\nclass V:\n'
+            '    __slots__ = ("major",)\n    __hash__ = None\n\n'
+            '    def __lt__(self, other):\n        return self.major < other.major\n\n'
+            '    def __le__(self, other):\n        return self.__lt__(other) or self.__eq__(other)\n\n'
+            '    def __str__(self):\n        return str(self.major)\n\n\nDOC = __doc__\n')
+    assert static_guard(code) is None
 
 
 def test_static_guard_allows_plain_re_code():

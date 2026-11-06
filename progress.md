@@ -6,7 +6,7 @@
 
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1367 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
+- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1374 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
 - **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
 
@@ -18,6 +18,12 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-06 — grader-guard-001：评分守卫放行无害名字
+
+- **Result**：经用户授权跑 1 次 `semver_compare` 并保存答案：答案只有代码，唯一被拒的是 `__slots__`。评分器守卫的允许名单加入无害的数据模型名字，危险名字仍拒绝；放宽后这份答案 39/39 通过（D-038）。保存的答案已删除。
+- **Verification**：`tests/test_bench_graders.py` 新增放行和拒绝用例；init.ps1 PASS，1374 passed、16 skipped。
+- **Not done**：`config_merge_qa` 的无效响应、`sales_csv_qa` 的手算错误未处理；已按用户“提交”提交。
 
 ### 2026-11-06 — final-answer-form-001：最后一步按目标形式交付
 

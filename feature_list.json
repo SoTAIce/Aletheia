@@ -707,6 +707,20 @@
         "The host never rewrites or extracts the answer."
       ],
       "evidence": "tests/agent/test_final_step.py 3 passed; init.ps1 PASS 1367 passed, 16 skipped. Live re-run 2026-11-06 (2 authorized runs, single): fix_rate_limiter passed 24/24 with a code-only answer; semver_compare was refused by the grader guard (forbidden_name), cause not inspected."
+    },
+    {
+      "id": "grader-guard-001",
+      "name": "Let the bench's static guard accept harmless data-model names",
+      "description": "User asked 2026-11-06 ('先查 semver_compare', one authorized live run). The kept answer was code only and was refused solely for a class-level __slots__; with the guard's allow list extended to harmless data-model names it passes 39/39. Names that reach interpreter internals stay refused. DECISIONS D-038.",
+      "status": "done",
+      "dependencies": [
+        "final-answer-form-001"
+      ],
+      "acceptance": [
+        "__slots__, __hash__, __version__, __doc__ and comparison/str/len/iter dunders pass the guard.",
+        "__builtins__, __globals__, __dict__, __subclasses__, __code__, __getattribute__ and __class__ are still refused."
+      ],
+      "evidence": "tests/test_bench_graders.py updated; init.ps1 PASS 1374 passed, 16 skipped. Live 2026-11-06 (1 authorized run): the answer was refused for __slots__ only and passes 39/39 under the new guard."
     }
   ],
   "cleanup_2026_11_04": {

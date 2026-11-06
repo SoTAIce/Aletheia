@@ -122,7 +122,15 @@ def extract_code(text: str, kind: str) -> str:
 
 _ALLOWED_IMPORTS ={'re', 'math', 'typing', 'dataclasses', 'collections', 'functools', 'itertools', 'string'}
 _BANNED_NAMES = {'open', 'exec', 'eval', 'compile', '__import__', 'input', 'breakpoint'}
-_ALLOWED_DUNDERS = {'__init__', '__name__', '__repr__', '__eq__', '__all__'}
+_ALLOWED_DUNDERS = {
+    '__init__', '__name__', '__repr__', '__eq__', '__all__',
+    # Harmless data-model names that ordinary solutions use (D-038). Names that reach
+    # interpreter internals (__class__, __dict__, __globals__, __builtins__, __subclasses__,
+    # __code__, __getattribute__, __import__ ...) stay refused.
+    '__slots__', '__hash__', '__version__', '__doc__', '__post_init__',
+    '__str__', '__ne__', '__lt__', '__le__', '__gt__', '__ge__', '__bool__',
+    '__len__', '__iter__', '__next__', '__contains__', '__getitem__',
+}
 
 
 def static_guard(code: str):
