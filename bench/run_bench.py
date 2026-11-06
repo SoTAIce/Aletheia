@@ -160,7 +160,8 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
         for name in task['files']:
             shutil.copyfile(task['dir'] / name, root / name)
         env = dict(os.environ, TAVILY_API_KEY='', PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8',
-                   ALETHEIA_TEAM_TRACE='1')
+                   ALETHEIA_TEAM_TRACE='1',
+                   CONVERSATION_STORAGE_DIR='')   # no archive: ids differ per run, keep data/ clean
         goal = task['write_goal'] if write and not answer_only else task['goal']
         if sandbox and not answer_only:
             goal += SANDBOX_HINT

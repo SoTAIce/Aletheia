@@ -749,6 +749,34 @@
         "A spent token budget or too little remaining time stops retrying."
       ],
       "evidence": "tests/agent/test_model_retry.py passed; init.ps1 PASS 1397 passed, 16 skipped. Not verified live."
+    },
+    {
+      "id": "interactive-cli-001",
+      "name": "Interactive CLI: one session across turns, blocked tasks answered in place",
+      "description": "User asked 2026-11-06 ('开始产品形态'). With no goal (or -i) the CLI keeps one RagAgentService and session open; each line is a turn and a blocked task's answer is the next line, sent with resume_task_id. Commands /help, /new, /exit; end of input exits; Ctrl+C stops the program. Each turn has its own meter and budget. DECISIONS D-040.",
+      "status": "done",
+      "dependencies": [
+        "observability-001"
+      ],
+      "acceptance": [
+        "A blocked task is resumed by the next line; /new drops it.",
+        "Commands and blank lines never reach the service; refusals print only the exception type.",
+        "One service serves the whole interactive session; each turn gets a fresh meter.",
+        "--result-json is refused in the interactive mode; the single-goal output is unchanged."
+      ],
+      "evidence": "tests/agent/test_interactive_cli.py passed; real entry smoke with /help, /new, an unknown command, /exit and end of input (no model call); init.ps1 PASS 1409 passed, 16 skipped. Not run live."
+    },
+    {
+      "id": "archive-default-001",
+      "name": "Conversation archive on by default at data/conversations",
+      "description": "User asked 2026-11-06 ('开始产品形态'). CONVERSATION_STORAGE_DIR defaults to data/conversations resolved from the project root; empty still turns archiving off. The bench's child processes and the test suite (tests/conftest.py) turn it off. Built by a parallel session and checked here. DECISIONS D-041.",
+      "status": "done",
+      "dependencies": [],
+      "acceptance": [
+        "The default resolves to <project root>/data/conversations; an empty value disables archiving.",
+        "Bench children and tests never write to data/conversations."
+      ],
+      "evidence": "tests/test_archive_default.py passed; init.ps1 PASS 1409 passed, 16 skipped; data/conversations absent before and after the run."
     }
   ],
   "cleanup_2026_11_04": {

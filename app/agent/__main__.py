@@ -1,4 +1,4 @@
-"""Run from the project root: python -m app.agent \"Your goal\"."""
+"""Run from the project root: python -m app.agent "Your goal", or with no goal for the interactive mode."""
 
 import argparse
 import asyncio
@@ -69,6 +69,80 @@ def write_result(path, result) -> None:
     temporary.replace(target)
 
 
+def report(result, write=print) -> None:
+    """Print one outcome: the answer, the Chinese explanation, then the status line the bench parses."""
+    write(result.content)
+    if getattr(result, 'user_message', None):
+        # The first line stays the English diagnostic the bench parses; this explains it (D-033).
+        write(f"\n说明：{result.user_message}")
+    write(f"\nStatus: {result.status.value}; executions: {result.execution_count}; replans: {result.replan_count}")
+
+
+INTERACTIVE_HELP = ('直接输入目标开始一个任务；任务等待回答时，直接输入回答即可继续。'
+                    '命令：/help 显示帮助，/new 放弃正在等待回答的任务，/exit 退出（Ctrl+D、Ctrl+Z 回车同样退出）。')
+
+
+async def _read_line(prompt):
+    return await asyncio.to_thread(input, prompt)
+
+
+async def interactive(service, args, read_line=None, write=print) -> int:
+    """Keep one service and session open across turns (D-040).
+
+    A blocked task lives only in this process, so the next line answers it unless /new
+    drops it. Each turn gets its own token and time budget. Ctrl+C stops the program; the
+    service records the interrupted turn as cancelled.
+    """
+    read_line = read_line or _read_line
+    write('Aletheia 交互模式，会话：' + args.session_id + '。' + INTERACTIVE_HELP)
+    waiting = None          # task id of a blocked task waiting for an answer
+    queued = args.goal      # a goal given on the command line is the first turn
+    while True:
+        if queued is not None:
+            line, queued = queued, None
+        else:
+            try:
+                line = await read_line('回答> ' if waiting else '> ')
+            except EOFError:
+                write('')
+                return 0
+        command = line.strip()
+        if not command:
+            continue
+        if command in ('/exit', '/quit'):
+            return 0
+        if command == '/help':
+            write(INTERACTIVE_HELP)
+            continue
+        if command == '/new':
+            write('已放弃正在等待回答的任务。' if waiting else '当前没有等待回答的任务。')
+            waiting = None
+            continue
+        if command.startswith('/'):
+            write(f'未知命令：{command}。' + INTERACTIVE_HELP)
+            continue
+        meter = RunMeter(max_total_tokens=getattr(args, 'max_tokens', None),
+                         timeout_seconds=getattr(args, 'max_seconds', None))
+        try:
+            with metering(meter):
+                result = await service.query_result(line, args.session_id, resume_task_id=waiting)
+        except Exception as exc:
+            # Host-side refusals (for example no resumable task); never print provider text.
+            write(f'请求没有执行：{type(exc).__name__}')
+            waiting = None
+            continue
+        report(result, write)
+        usage = result.usage or {}
+        if usage.get('model_calls'):
+            write(f"用量：模型调用 {usage['model_calls']} 次，令牌 {usage.get('total_tokens', 0)}，"
+                  f"耗时 {usage.get('seconds', 0)} 秒")
+        if result.status is TaskStatus.BLOCKED:
+            waiting = result.task_id
+            write('任务在等待你的回答：直接输入回答继续，输入 /new 放弃。')
+        else:
+            waiting = None
+
+
 def sandbox_problem(write_root, sandbox):
     """Reason the sandbox cannot be used, checked before any model call; None when fine."""
     if not sandbox:
@@ -114,17 +188,15 @@ async def main(args) -> int:
             team_options=team_options,
             step_timeout_seconds=step_timeout_for(sandbox, team_options),
         ))
+        if args.goal is None or getattr(args, 'interactive', False):
+            return await interactive(service, args)
         meter = RunMeter(max_total_tokens=getattr(args, 'max_tokens', None),
                          timeout_seconds=getattr(args, 'max_seconds', None))
         with metering(meter):
             result = await service.query_result(args.goal, args.session_id)
     if getattr(args, 'result_json', None):
         write_result(args.result_json, result)
-    print(result.content)
-    if getattr(result, 'user_message', None):
-        # The first line stays the English diagnostic the bench parses; this explains it (D-033).
-        print(f"\n说明：{result.user_message}")
-    print(f"\nStatus: {result.status.value}; executions: {result.execution_count}; replans: {result.replan_count}")
+    report(result)
     return 0 if result.status is TaskStatus.COMPLETED else (2 if result.status is TaskStatus.BLOCKED else 1)
 
 
@@ -142,7 +214,10 @@ def _positive(kind):
 
 def build_parser():
     parser = argparse.ArgumentParser(description="Aletheia plan/execute/replan runtime")
-    parser.add_argument("goal")
+    parser.add_argument("goal", nargs="?",
+                        help="The task; omit it (or pass --interactive) for the interactive mode")
+    parser.add_argument('-i', '--interactive', action='store_true',
+                        help='Keep the session open: run several tasks and answer blocked ones (D-040)')
     parser.add_argument("--session-id", default="cli")
     parser.add_argument("--filesystem-root", help="Directory exposed by the filesystem MCP server")
     parser.add_argument("--write-root", help="Optional writable directory; omitted means read-only")
@@ -166,7 +241,18 @@ def build_parser():
     return parser
 
 
+def parse_args(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if (args.goal is None or args.interactive) and args.result_json:
+        parser.error('--result-json needs a single goal, not the interactive mode')
+    return args
+
+
 if __name__ == "__main__":
     from app.core.logging_setup import configure_logging
     configure_logging()
-    raise SystemExit(asyncio.run(main(build_parser().parse_args())))
+    try:
+        raise SystemExit(asyncio.run(main(parse_args())))
+    except KeyboardInterrupt:
+        raise SystemExit(130)

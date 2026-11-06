@@ -1,9 +1,12 @@
 """Type-safe application configuration loaded from environment variables."""
 
+from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class Settings(BaseSettings):
@@ -57,7 +60,9 @@ class Settings(BaseSettings):
     rag_rerank_cache_dir: str = "data/models/huggingface"
     rag_rerank_timeout_seconds: float = Field(default=10.0, gt=0)
     rag_context_token_budget: int = Field(default=1800, gt=0)
-    conversation_storage_dir: str = ""
+    # Archived by default; an explicit empty value keeps the in-memory mode.
+    # Relative paths are anchored at the project root, not the working directory.
+    conversation_storage_dir: str = Field(default="data/conversations", validate_default=True)
     context_window_tokens: int = Field(default=32768, gt=0)
     # Per-call output cap; 2048 cut off whole modules and pages in the bench (D-036).
     context_output_tokens: int = Field(default=8192, gt=0)
@@ -77,6 +82,15 @@ class Settings(BaseSettings):
 
     prometheus_base_url: str = "http://127.0.0.1:9090"
     prometheus_request_timeout: float = 10.0
+
+    @field_validator("conversation_storage_dir", mode="after")
+    @classmethod
+    def anchor_conversation_storage_dir(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return ""
+        path = Path(value).expanduser()
+        return str(path if path.is_absolute() else PROJECT_ROOT / path)
 
     @model_validator(mode="after")
     def validate_chunk_config(self) -> "Settings":

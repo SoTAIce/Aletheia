@@ -137,6 +137,16 @@ async def execute_goal(goal, planner_model, tool_model, servers, get_answer):
         return result
 ```
 
+From the command line, the interactive mode does this for you (D-040): run
+`.venv/Scripts/python.exe -m app.agent --no-knowledge` with no goal (or with
+`-i`). One service and session stay open across turns, so later goals see the
+earlier conversation; when a task blocks, the next line is its answer. `/new`
+drops the waiting task, `/help` shows the commands, `/exit` or end of input
+leaves, and Ctrl+C stops the program (the interrupted turn is recorded as
+cancelled). `--max-tokens` and `--max-seconds` apply to each turn separately;
+`--result-json` needs a single goal. A blocked task lives only in that process: a
+restart restores the archived history, not the waiting task.
+
 ## Current limits
 
 The service reads `RAG_MODEL_TIMEOUT_SECONDS` (default 30),
@@ -174,10 +184,12 @@ the step successfully.
 
 ## Recoverable Memory and Context (P0/P1)
 
-Conversation persistence is opt-in to preserve existing disk-free callers. Set
-`CONVERSATION_STORAGE_DIR=data/conversations`, or pass
-`RagAgentService(memory_directory="data/conversations")`. Empty configuration
-keeps the previous in-memory mode. The application must own this directory and
+Conversation persistence is on by default: `CONVERSATION_STORAGE_DIR` defaults
+to `data/conversations`, and a relative value resolves from the project root, not
+the working directory. Set `CONVERSATION_STORAGE_DIR=` (empty), or pass
+`RagAgentService(memory_directory="")`, to keep the in-memory mode. The test suite
+(`tests/conftest.py`) and the bench (`bench/run_bench.py`) turn the default archive
+off; tests that need one pass `tmp_path`. The application must own this directory and
 supply the authenticated session ID; a session ID is a storage scope, not an
 authentication mechanism. Custom archive directories must also be excluded from Git.
 

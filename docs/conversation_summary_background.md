@@ -41,14 +41,14 @@ async with open_conversation_compressor() as compressor:
 
 The factory uses the existing local compressor's model/base URL. It owns a separate client with SDK retries disabled, leaving the scheduler in control of attempts. Existing global client/model settings are unchanged. Injected compressors can have their own transport retries; callers must account for those separately.
 
-CLI opt-in:
+CLI opt-in (archive storage is on by default at `data/conversations`; setting
+`CONVERSATION_STORAGE_DIR` is only needed for another location):
 
 ```powershell
-$env:CONVERSATION_STORAGE_DIR = 'data/conversations'
 .venv/Scripts/python.exe -m app.agent 'Your goal' --compress-history
 ```
 
-The flag requires archive storage and uses the existing local model. Without it, previous CLI behavior is retained. The CLI closes service background work before closing its owned summary client. No real CLI/model request was executed during this implementation.
+The flag requires archive storage (an empty `CONVERSATION_STORAGE_DIR` turns it off) and uses the existing local model. Without it, previous CLI behavior is retained. The CLI closes service background work before closing its owned summary client. No real CLI/model request was executed during this implementation.
 
 For manual lifetime management, call await service.aclose(timeout_seconds=5). Closing stops admission/scans, permits queued immediately eligible work and current generation to settle within the deadline, then cancels outstanding work. Delayed retries do not bypass backoff to run during shutdown. Uncommitted staged artifacts stay invisible. Do not expect a short-lived CLI command to drain an arbitrarily large backlog in5s.
 

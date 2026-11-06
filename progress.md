@@ -6,7 +6,7 @@
 
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1397 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
+- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1409 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
 - **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
 
@@ -18,6 +18,12 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-06 — interactive-cli-001、archive-default-001：产品形态（交互与归档）
+
+- **Result**：命令行不给目标或加 `-i` 进入交互模式：一个会话连续多轮，被阻塞的任务由下一行原地回答，`/new` 放弃，`/help`、`/exit`，每轮单独预算（D-040）。对话归档默认开启，存到项目根下的 `data/conversations`，设为空关闭；评测和测试不写这个目录（D-041，由并行会话实现，主会话检查后合入）。
+- **Verification**：新增 `tests/agent/test_interactive_cli.py`、`tests/test_archive_default.py`、`tests/conftest.py`；真实入口冒烟（只用命令，不调用模型）；init.ps1 PASS，1409 passed、16 skipped；`data/conversations` 运行前后都不存在。
+- **Not done**：未用真实模型跑交互流程；长期记忆需用户决定如何处理其未提交的改动；已按用户“先提交这两项”提交。
 
 ### 2026-11-06 — 清洁状态检查与基线刷新
 
