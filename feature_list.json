@@ -809,6 +809,74 @@
         "The blocked reason reaches the user unchanged and the answer reaches the resumed step."
       ],
       "evidence": "tests/agent/test_blocked_and_resume_prompts.py 3 passed; init.ps1 PASS 1431 passed, 16 skipped. Live re-run 2026-11-06 (2 authorized turns): the blocked reason was a direct question; the resumed step used no tools (2 calls, 5532 tokens vs 6 calls, 21980 before)."
+    },
+    {
+      "id": "web-design-001",
+      "name": "Design the web backend and first frontend",
+      "description": "User asked 2026-11-06 ('先写设计稿') for a design before adding a web backend and frontend. The design separates runs from HTTP requests, streams host-authored progress events over SSE, keeps the agent core change to an optional on_event callback and two read-only methods, and limits the first version to local use with a static page. DECISIONS D-044. Not implemented.",
+      "status": "done",
+      "dependencies": [
+        "interactive-cli-001",
+        "blocked-resume-prompt-001"
+      ],
+      "acceptance": [
+        "docs/web_backend_design.md lists what exists, what is missing, endpoints, events, errors, concurrency, cancellation, identity, configuration, frontend, tests and implementation order.",
+        "Every existing interface the design relies on is named by its real location.",
+        "Open questions for the user are listed."
+      ],
+      "evidence": "docs/web_backend_design.md; no code changed; init.ps1 PASS 1431 passed, 16 skipped."
+    },
+    {
+      "id": "web-events-001",
+      "name": "Report run progress through a callback and read session history",
+      "description": "First implementation step of the web design (D-044), started after the user answered '都按推荐' on 2026-11-06. AgentRuntime.run and RagAgentService.query_result take an optional synchronous on_event callback receiving host-authored route, plan and step records; the service gains list_sessions and session_turns read from the archive. DECISIONS D-045.",
+      "status": "done",
+      "dependencies": [
+        "web-design-001"
+      ],
+      "acceptance": [
+        "Events arrive as route, plan, then one step record per step, equal to step_log and free of model text.",
+        "A blocked step is reported and the resumed run reports again.",
+        "A failing callback never changes the result.",
+        "Sessions are listed per user newest first; turns show user text, reply, status and whether the task can still be answered.",
+        "An unknown session returns no turns and creates no directory; history without an archive comes from memory.",
+        "Archive listing ignores directories whose label does not hash to their name."
+      ],
+      "evidence": "tests/test_progress_and_history.py 12 passed; init.ps1 PASS 1443 passed, 16 skipped. Not run live."
+    },
+    {
+      "id": "web-backend-001",
+      "name": "Web backend: background runs, progress events, resume, cancel and memory",
+      "description": "Second step of the web design, asked by the user on 2026-11-06 ('做后端接口'). app/api adds a RunManager for background runs with replayable SSE events, a FastAPI app with session, run and memory endpoints, token authentication and code-only errors, and a launcher (python -m app.api) that refuses to start without a token except on loopback. DECISIONS D-046.",
+      "status": "done",
+      "dependencies": [
+        "web-events-001"
+      ],
+      "acceptance": [
+        "A message starts a background run whose events arrive as accepted, route, plan, step and a terminal event, and can be replayed after Last-Event-ID.",
+        "A repeated request_id returns the same run; a changed message under it conflicts.",
+        "A blocked question is answered by the next message with resume_task_id; a task that is gone is refused.",
+        "One run per session, a global limit, cancellation that frees the session, and shutdown that cancels late runs.",
+        "Invalid input is refused before any work; errors carry a code and a Chinese message without exception text; every endpoint needs the token.",
+        "Memory endpoints act on the server's user and report when memory is off.",
+        "The launcher refuses an empty token, and a waived token off loopback."
+      ],
+      "evidence": "tests/test_web_api.py 21 passed; init.ps1 PASS 1464 passed, 16 skipped; launcher smoke-tested locally without model calls. Not run live with a model."
+    },
+    {
+      "id": "web-frontend-001",
+      "name": "Static web page for chat, progress, answers, cancel and memory",
+      "description": "Third step of the web design, asked by the user on 2026-11-06 ('做前端页面'). A build-free page served by the backend: sign-in with the access token kept in the tab only, session list, history, sending with live step progress, answering a blocked question in place, cancel, a long-term memory panel, narrow and dark layouts. Strict security headers; all model text is written as plain text. DECISIONS D-047.",
+      "status": "done",
+      "dependencies": [
+        "web-backend-001"
+      ],
+      "acceptance": [
+        "The page and its two files are served with a content security policy limited to this origin; other static names are 404.",
+        "The script never writes HTML from data, loads nothing from elsewhere and keeps the token out of localStorage.",
+        "In a browser against a scripted fake model: sign-in, progress, blocked answer, cancel, reload, new session, memory add and delete, narrow and wide, dark mode all work without console errors."
+      ],
+      "evidence": "tests/test_web_api.py 23 passed (2 for the page); browser walk-through on a local fake-model server; init.ps1 PASS 1466 passed, 16 skipped. Not tried with a real model."
     }
   ],
   "cleanup_2026_11_04": {

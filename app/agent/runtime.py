@@ -118,6 +118,7 @@ class AgentRuntime:
         self._conversation_outcome: tuple | None = None
         self._pending_result: AgentRunResult | None = None
         self._outcome_version: int | None = None
+        self._on_event = None       # progress callback of the current run (D-045)
 
     def _assemble_runner(self, model, registry, context_manager):
         """The sole construction path for both initial and resumed bindings."""
@@ -148,57 +149,74 @@ class AgentRuntime:
     def format_repair_count(self) -> int:
         return self._planner.format_repair_count + self._runner.format_repair_count
 
-    async def run(self) -> AgentRunResult:
+    async def run(self, *, on_event=None) -> AgentRunResult:
+        """on_event, if given, is called synchronously with host-authored progress
+        records ('plan', 'step'); it must not block, and its errors never affect the task."""
         async with self._lock:
-            conversation = self._conversation
-            task = self.memory.task_state
-            # The service supplies exact inbound text itself. This optional,
-            # low-level compatibility path can only see the task goal/answer.
-            if conversation is not None and self._conversation_outcome is not None:
-                pending = self._pending_result
-                await self._finish_turn()
-                return pending if pending is not None else self._result('Previous interaction did not complete')
-            if conversation is not None and self._reported_version != task.state_version:
-                if self._active_turn is None:
-                    answers = [q for q in task.scratchpad.open_questions
-                               if q.resolved_at is not None and q.goal_revision == task.goal_revision]
-                    text = answers[-1].answer if answers and self._reported_version is not None else task.active_goal
-                    self._active_turn = ConversationTurn([ConversationMessage(MessageRole.USER, text)],
-                                                        task_id=task.task_id, status=TurnStatus.RECEIVED)
+            self._on_event = on_event
             try:
-                if conversation is not None and self._active_turn is not None:
-                    await finish_conversation_write(conversation.add(self._active_turn))
-                with self._meter_scope():
-                    result = await self._run()
-                logger.info('Task {}: executions {}, replans {}, model calls {}, tokens {}',
-                            result.status.value, result.execution_count, result.replan_count,
-                            result.usage['model_calls'], result.usage['total_tokens'])
-            except StaleExecutionError:
-                # A newer task/step owns this workspace. Even exception cleanup
-                # must not fail that state or publish an old interaction result.
-                raise
-            except (Exception, asyncio.CancelledError) as exc:
-                status = TurnStatus.CANCELLED if isinstance(exc, asyncio.CancelledError) else TurnStatus.FAILED
-                content = ('Agent execution cancelled; tool side effects may already exist'
-                           if status is TurnStatus.CANCELLED else f'Agent execution failed: {type(exc).__name__}')
-                if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
-                    task.fail_task(content)
-                if conversation is not None and self._active_turn is not None:
-                    try:
-                        await conversation.read_turn(self._active_turn.turn_id)
-                    except KeyError:
-                        self._active_turn = None  # Original publication failed; nothing to finish.
-                    else:
-                        self._conversation_outcome = (status, content, None)
-                        self._outcome_version = task.state_version
-                        await self._finish_turn()
-                raise
+                return await self._run_locked()
+            finally:
+                self._on_event = None
+
+    def _emit(self, event: dict) -> None:
+        if self._on_event is None:
+            return
+        try:
+            self._on_event(event)
+        except Exception as exc:
+            logger.warning('Progress callback failed: {}', type(exc).__name__)
+
+    async def _run_locked(self) -> AgentRunResult:
+        conversation = self._conversation
+        task = self.memory.task_state
+        # The service supplies exact inbound text itself. This optional,
+        # low-level compatibility path can only see the task goal/answer.
+        if conversation is not None and self._conversation_outcome is not None:
+            pending = self._pending_result
+            await self._finish_turn()
+            return pending if pending is not None else self._result('Previous interaction did not complete')
+        if conversation is not None and self._reported_version != task.state_version:
+            if self._active_turn is None:
+                answers = [q for q in task.scratchpad.open_questions
+                           if q.resolved_at is not None and q.goal_revision == task.goal_revision]
+                text = answers[-1].answer if answers and self._reported_version is not None else task.active_goal
+                self._active_turn = ConversationTurn([ConversationMessage(MessageRole.USER, text)],
+                                                    task_id=task.task_id, status=TurnStatus.RECEIVED)
+        try:
             if conversation is not None and self._active_turn is not None:
-                self._pending_result = result
-                self._outcome_version = task.state_version
-                self._conversation_outcome = (TurnStatus(result.status.value), result.content, asdict(result))
-                await self._finish_turn()
-            return result
+                await finish_conversation_write(conversation.add(self._active_turn))
+            with self._meter_scope():
+                result = await self._run()
+            logger.info('Task {}: executions {}, replans {}, model calls {}, tokens {}',
+                        result.status.value, result.execution_count, result.replan_count,
+                        result.usage['model_calls'], result.usage['total_tokens'])
+        except StaleExecutionError:
+            # A newer task/step owns this workspace. Even exception cleanup
+            # must not fail that state or publish an old interaction result.
+            raise
+        except (Exception, asyncio.CancelledError) as exc:
+            status = TurnStatus.CANCELLED if isinstance(exc, asyncio.CancelledError) else TurnStatus.FAILED
+            content = ('Agent execution cancelled; tool side effects may already exist'
+                       if status is TurnStatus.CANCELLED else f'Agent execution failed: {type(exc).__name__}')
+            if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                task.fail_task(content)
+            if conversation is not None and self._active_turn is not None:
+                try:
+                    await conversation.read_turn(self._active_turn.turn_id)
+                except KeyError:
+                    self._active_turn = None  # Original publication failed; nothing to finish.
+                else:
+                    self._conversation_outcome = (status, content, None)
+                    self._outcome_version = task.state_version
+                    await self._finish_turn()
+            raise
+        if conversation is not None and self._active_turn is not None:
+            self._pending_result = result
+            self._outcome_version = task.state_version
+            self._conversation_outcome = (TurnStatus(result.status.value), result.content, asdict(result))
+            await self._finish_turn()
+        return result
 
     @contextmanager
     def _meter_scope(self):
@@ -262,6 +280,8 @@ class AgentRuntime:
                                           else self._planner.plan(context))
                     self._executor.accept_plan(proposal)
                     logger.info('Plan revision {}: {} step(s)', task.plan_revision, len(task.plan))
+                    self._emit({'type': 'plan', 'revision': task.plan_revision,
+                                'steps': [step.description for step in task.plan]})
                 except Exception as exc:
                     spent = self._meter.budget_problem()
                     if spent:
@@ -346,6 +366,7 @@ class AgentRuntime:
         self._step_log.append(entry)
         tools = ', '.join(f"{c['tool']} {'ok' if c['success'] else 'failed'}" for c in entry['tools']) or 'none'
         logger.info('Step {} {} in {:.1f}s; tools: {}', entry['step'], outcome, entry['seconds'], tools)
+        self._emit({'type': 'step', **entry, 'tools': [dict(c) for c in entry['tools']]})
 
     def _last_failure(self) -> str:
         """The latest recorded step failure, so a limit message keeps its root cause (D-033)."""

@@ -146,7 +146,7 @@ class FakeRuntime:
         self.planner, self.memory, self.registry, self.options = planner, memory, registry, options
         FakeRuntime.created.append(self)
 
-    async def run(self):
+    async def run(self, **kwargs):
         status = FakeRuntime.status
         return AgentRunResult(self.memory.task_state.task_id, status, 'done', (), 1, 0)
 

@@ -6,7 +6,7 @@
 
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1431 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
+- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1466 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
 - **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
 
@@ -18,6 +18,30 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-06 — web-frontend-001：静态前端页面
+
+- **Result**：新增 `app/api/static/`（`index.html`、`app.js`、`app.css`），后端提供页面并给所有响应加安全头（D-047）。页面能登录、列会话、看历史、发送并看逐步进度、停下后直接回答、取消、管理长期记忆，适配窄屏和深色。
+- **Verification**：`tests/test_web_api.py` 增加 2 项（页面和文件的提供与安全头；脚本不写 HTML、不引用外部地址、令牌不进 `localStorage`）；用假模型演示服务器在内置浏览器里走完登录、进度、回答、取消、刷新、新建会话、记忆、窄屏宽屏、深色，发现并修了 4 处（停下的步骤显示成红色、历史里显示英文诊断、窄屏两个侧栏能同时打开、登录按钮不醒目）；init.ps1 PASS，1466 passed、16 skipped。演示服务器已停止，临时目录已删除。
+- **Not done**：没有用真实模型走过网页流程（`web-live-001`，需授权次数）；未提交。
+
+### 2026-11-06 — web-backend-001：后端接口
+
+- **Result**：新增 `app/api/`（`runs.py` 运行管理和事件缓冲、`app.py` 接口、`__main__.py` 启动入口），配置增加 `WEB_*` 八项（`.env.example` 已写，`.env` 未动），服务增加 `resumable`（D-046）。
+- **Verification**：新增 `tests/test_web_api.py` 21 项（后台运行和事件、断线续发、重复编号、阻塞后回答、会话占用和全局上限、取消、失败不带异常原文、输入校验、令牌、过期、关闭、记忆接口、启动检查）；实际启动冒烟检查通过（不调用模型）；init.ps1 PASS，1464 passed、16 skipped。
+- **Not done**：前端（`web-frontend-001`）未开始；没有用真实模型走过网页流程；Windows 下 Ctrl+C 正常关闭未实测；未提交。
+
+### 2026-11-06 — web-events-001：进度回调和会话历史
+
+- **Result**：`AgentRuntime.run`、`RagAgentService.query_result` 增加可选的同步回调 `on_event`，依次收到 `route`、`plan`、每步的 `step` 记录（与 `step_log` 相同，不含模型原文）；回调出错不影响任务。服务增加 `list_sessions`、`session_turns`，归档增加 `exists`、`session_ids`（D-045）。
+- **Verification**：新增 `tests/test_progress_and_history.py` 12 项；`tests/test_route_selection.py` 的假运行时 `run()` 接受关键字参数；init.ps1 PASS，1443 passed、16 skipped。
+- **Not done**：后端接口（`web-backend-001`）未开始；未提交。
+
+### 2026-11-06 — web-design-001：网页后端和前端设计稿
+
+- **Result**：写了 [设计稿](docs/web_backend_design.md)：运行和 HTTP 请求分开、服务器推送进度事件、阻塞恢复和取消接口、错误码不带异常原文、本机令牌身份、全局运行上限、静态页面，以及实施顺序（`web-events-001` → `web-backend-001` → `web-frontend-001` → `web-live-001`）。决策 D-044（提议）。
+- **Verification**：只改文档；稿中引用的方法和文件都按源码核对；init.ps1 PASS，1431 passed、16 skipped。
+- **Not done**：未实现；未提交。用户对第 11 节四个问题答“都按推荐”，已写回设计稿和 D-044。
 
 ### 2026-11-06 — blocked-resume-prompt-001：阻塞直接提问、恢复直接用回答
 

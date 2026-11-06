@@ -10,6 +10,7 @@
 | [PROJECT_HANDOVER.md](PROJECT_HANDOVER.md) | 给 Claude 的系统总交接：核心模块、现状、验收、风险、下一步 |
 | [Harness 手册](harness/README.md) | 管理闭环、状态字段与课程映射、任务契约、验证分级及方法来源 |
 | [DECISIONS.md](DECISIONS.md) | 设计决策、理由、被否方案（来源指向原报告） |
+| [网页后端与前端设计稿](web_backend_design.md) | 2026-11-06：薄后端包装现有服务、服务器推送进度、阻塞恢复和取消、本机令牌身份、静态页面；D-044 已确认，实施中 |
 | [clean-state 清单](harness/clean-state-checklist.md)、[evaluator-rubric](harness/evaluator-rubric.md)、[质量文档](harness/quality-document.md) | 会话退出检查、评审打分、领域/层质量与可观测性 |
 | [合规审查 2026-11-04](harness/conformance-audit-2026-11-04.md) | 对照 Learn Harness Engineering 的逐项结论与剩余缺口 |
 | [沙盒真实评测 2026-11-04](harness/sandbox-live-2026-11-04.md) | 写文件 + 沙盒运行：普通模式 2/2 严格通过（各运行沙盒 7 次），团队模式 0/2（参数 JSON 错误、类型未采集） |

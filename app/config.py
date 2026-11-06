@@ -74,6 +74,16 @@ class Settings(BaseSettings):
     context_output_tokens: int = Field(default=8192, gt=0)
     context_safety_tokens: int = Field(default=1024, ge=0)
 
+    # Web backend (D-046): local only by default; a token is required unless explicitly waived.
+    web_host: str = "127.0.0.1"
+    web_port: int = Field(default=8000, gt=0, lt=65536)
+    web_access_token: str = ""
+    web_allow_no_token: bool = False
+    web_user_id: str = Field(default="local", min_length=1, max_length=256)
+    web_max_concurrent_runs: int = Field(default=2, ge=1, le=32)
+    web_event_retention_seconds: float = Field(default=1800.0, gt=0, allow_inf_nan=False)
+    web_shutdown_timeout_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+
     chunk_max_size: int = Field(default=800, gt=0)
     chunk_overlap: int = Field(default=100, ge=0)
     rag_supported_extensions: tuple[str, ...] = (".md", ".txt", ".py", ".json")

@@ -44,6 +44,44 @@ class ConversationArchive:
         # Derived, body-free metadata only. Rebuild after restart; never authoritative.
         self._turn_metadata: dict[str, tuple[tuple, str, int, TurnStatus | None, str | None]] = {}
 
+    @classmethod
+    def _session_directory(cls, root: str | Path, session_id: str) -> Path:
+        digest = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        return cls._filesystem_path(Path(os.path.abspath(root))) / f"session-{digest}" / "turns"
+
+    @classmethod
+    def exists(cls, root: str | Path, session_id: str) -> bool:
+        """Whether this session has an archive directory, without creating one."""
+        if not isinstance(session_id, str) or not session_id:
+            raise ValueError("invalid archive session_id")
+        directory = cls._session_directory(root, session_id)
+        cls._check_path(directory)
+        return directory.is_dir()
+
+    @classmethod
+    def session_ids(cls, root: str | Path) -> list[str]:
+        """Session labels archived directly under root (D-045).
+
+        A label is read from the session's newest record and kept only when it
+        hashes to that directory; open the archive to read validated turns.
+        """
+        base = cls._filesystem_path(Path(os.path.abspath(root)))
+        cls._check_path(base)
+        if not base.is_dir():
+            return []
+        labels = []
+        for directory in sorted(base.glob("session-*")):
+            try:
+                newest = max((directory / "turns").glob("*.json"), default=None)
+                if newest is None:
+                    continue
+                label = json.loads(newest.read_text(encoding="utf-8"))["session_id"]
+                if isinstance(label, str) and label and cls._session_directory(root, label).parent.name == directory.name:
+                    labels.append(label)
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
+        return labels
+
     @property
     def root(self) -> Path:
         return self._root

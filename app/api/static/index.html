@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aletheia</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div id="login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <h1>Aletheia</h1>
+      <p>请输入启动服务时设置的访问令牌。令牌只保存在这个标签页里，关闭后需要重新输入。</p>
+      <input id="login-token" type="password" autocomplete="current-password" placeholder="访问令牌" required>
+      <p id="login-error" class="error" hidden></p>
+      <button type="submit" class="primary">进入</button>
+    </form>
+  </div>
+
+  <div id="app" class="app" hidden>
+    <header class="topbar">
+      <button id="toggle-sessions" class="icon-button narrow-only" type="button" aria-label="会话列表">☰</button>
+      <span class="brand">Aletheia</span>
+      <span id="badge-write" class="badge"></span>
+      <span id="badge-memory" class="badge"></span>
+      <button id="toggle-memory" class="icon-button" type="button" hidden>长期记忆</button>
+    </header>
+
+    <aside id="sessions" class="sessions">
+      <button id="new-session" class="primary wide" type="button">新建会话</button>
+      <ul id="session-list" class="session-list"></ul>
+      <p id="sessions-empty" class="muted" hidden>还没有会话。</p>
+    </aside>
+
+    <main class="chat">
+      <div id="conversation" class="conversation" aria-live="polite"></div>
+      <div id="notice" class="notice" hidden></div>
+      <form id="composer" class="composer">
+        <textarea id="input" rows="3" placeholder="输入目标，回车发送，Shift+回车换行"></textarea>
+        <div class="composer-actions">
+          <button id="cancel" type="button" class="danger" hidden>取消任务</button>
+          <button id="send" type="submit" class="primary">发送</button>
+        </div>
+      </form>
+    </main>
+
+    <aside id="memory" class="memory" hidden>
+      <h2>长期记忆</h2>
+      <form id="memory-form" class="memory-form">
+        <textarea id="memory-input" rows="2" maxlength="2000" placeholder="要记住的内容"></textarea>
+        <button type="submit">记住</button>
+      </form>
+      <ul id="memory-list" class="memory-list"></ul>
+      <p id="memory-empty" class="muted" hidden>还没有长期记忆。</p>
+    </aside>
+  </div>
+</body>
+</html>

@@ -56,6 +56,32 @@ def _restore_result(data: dict) -> AgentRunResult:
     data['step_log'] = tuple(data.get('step_log', ()))   # older archives have no run log (D-034)
     return AgentRunResult(steps=tuple(steps), **data)
 
+def _emit(on_event, event: dict) -> None:
+    """Report host-authored progress; a failing callback never affects the request (D-045)."""
+    if on_event is None:
+        return
+    try:
+        on_event(event)
+    except Exception as exc:
+        logger.warning('Progress callback failed: %s', type(exc).__name__)
+
+
+def _turn_view(turn: ConversationTurn, resumable: bool) -> dict:
+    """The user-facing fields of one archived turn; never tool output or run details."""
+    reply = turn.messages[-1].content if len(turn.messages) > 1 and turn.messages[-1].role is MessageRole.ASSISTANT else None
+    return {'turn_id': turn.turn_id, 'task_id': turn.task_id,
+            'status': turn.status.value if turn.status is not None else None,
+            'question_id': turn.question_id, 'resumable': resumable,
+            'created_at': turn.created_at.isoformat(),
+            'finished_at': turn.finished_at.isoformat() if turn.finished_at else None,
+            'user': turn.messages[0].content, 'reply': reply}
+
+
+def _check_limit(limit) -> None:
+    if type(limit) is not int or not 1 <= limit <= 200:
+        raise ValueError('limit must be an integer between 1 and 200')
+
+
 def _team_requirements(context):
     from app.agent.runner_router import RunnerRequirements
     return RunnerRequirements(frozenset({'agent_team'}))
@@ -189,8 +215,10 @@ class RagAgentService:
     async def query_result(
         self, question: str, session_id: str, *, user_id: str | None = None,
         request_id: str | None = None, resume_task_id: str | None = None,
-        question_id: str | None = None,
+        question_id: str | None = None, on_event=None,
     ) -> AgentRunResult:
+        """on_event, if given, receives host-authored progress records ('route',
+        then the runtime's 'plan' and 'step'); see AgentRuntime.run (D-045)."""
         if self._closed:
             raise RuntimeError('service is closed')
         self._validate_input(question, session_id)
@@ -208,11 +236,8 @@ class RagAgentService:
                 label = self._archive_label(user_id, session_id)
                 archive = None
                 if self._memory_directory:
-                    root = Path(self._memory_directory)
-                    if user_id is not None:
-                        root = root / "user-scoped"
                     archive = await asyncio.to_thread(
-                        ConversationArchive, root, label
+                        ConversationArchive, self._archive_root(user_id), label
                     )
                 conversation = ConversationMemory(label, compressor=self._conversation_compressor, archive=archive,
                                                   background_compression=archive is not None)
@@ -324,6 +349,7 @@ class RagAgentService:
                             choice = await self._choose_route(question, model)
                         self._routes[(key, task.task_id)] = choice
                         route = choice.mode
+                        _emit(on_event, {'type': 'route', 'mode': route, 'read_only': choice.read_only})
                         # Read-only tasks lose write tools and get read-only runs (D-027/D-028).
                         from app.agent.route_selection import task_registry
                         registry = task_registry(registry, choice.read_only)
@@ -343,7 +369,7 @@ class RagAgentService:
                                                    **self._limits, **runner_options, context_manager=context_manager)
                         else:
                             runtime.rebind(planner, model, registry, context_manager=context_manager)
-                        result = await runtime.run()
+                        result = await runtime.run(on_event=on_event)
                         # Retain the result before resource cleanup or durable completion can fail.
                         self._pending_outcomes[outcome_key] = (TurnStatus(result.status.value), result.content, asdict(result))
                         if result.status is TaskStatus.BLOCKED:
@@ -372,6 +398,77 @@ class RagAgentService:
                 raise
             await _durable(self._publish_outcome(conversation, outcome_key))
             return result
+
+    def _archive_root(self, user_id: str | None) -> Path:
+        root = Path(self._memory_directory)
+        return root / "user-scoped" if user_id is not None else root
+
+    def _resumable(self, key, turn: ConversationTurn) -> bool:
+        return turn.status is TurnStatus.BLOCKED and turn.task_id is not None and self._live_blocked(key, turn.task_id)
+
+    def _live_blocked(self, key, task_id: str) -> bool:
+        runtime = self._tasks.get((key, task_id))
+        return runtime is not None and runtime.memory.task_state.status is TaskStatus.BLOCKED
+
+    def resumable(self, session_id: str, task_id: str, *, user_id: str | None = None) -> bool:
+        """Whether this process still holds that blocked task, so an answer can resume it (D-046)."""
+        return self._live_blocked(self._session_key(user_id, session_id), task_id)
+
+    async def list_sessions(self, *, user_id: str | None = None, limit: int = 50) -> list[dict]:
+        """This user's sessions, newest first, with the latest user message (D-045)."""
+        self._validate_identity(user_id)
+        _check_limit(limit)
+        sessions = []
+        if self._memory_directory:
+            root = self._archive_root(user_id)
+            for label in await asyncio.to_thread(ConversationArchive.session_ids, root):
+                if user_id is None:
+                    session_id = label
+                else:
+                    try:
+                        kind, owner, session_id = json.loads(label)
+                    except (ValueError, TypeError):
+                        continue
+                    if kind != 'user' or owner != user_id or self._archive_label(user_id, session_id) != label:
+                        continue
+                try:
+                    turns = await asyncio.to_thread(ConversationArchive(root, label).load_turns, 1)
+                except ValueError as exc:
+                    logger.warning('Skipping unreadable session archive: %s', type(exc).__name__)
+                    continue
+                if turns:
+                    sessions.append((session_id, turns[-1]))
+        else:
+            for key, conversation in self._conversations.items():
+                if user_id is None:
+                    session_id = key if isinstance(key, str) else None
+                else:
+                    session_id = key[2] if isinstance(key, tuple) and key[1] == user_id else None
+                turns = conversation.retrieve_turns(1) if session_id is not None else []
+                if turns:
+                    sessions.append((session_id, turns[-1]))
+        sessions.sort(key=lambda item: item[1].finished_at or item[1].created_at, reverse=True)
+        return [{'session_id': session_id,
+                 'updated_at': (turn.finished_at or turn.created_at).isoformat(),
+                 'last_message': turn.messages[0].content[:200]}
+                for session_id, turn in sessions[:limit]]
+
+    async def session_turns(self, session_id: str, *, user_id: str | None = None, limit: int = 20) -> list[dict]:
+        """The latest turns of one session, oldest first; an unknown session has none (D-045)."""
+        self._validate_identity(user_id)
+        if not isinstance(session_id, str) or not session_id.strip():
+            raise ValueError("session_id must not be empty")
+        _check_limit(limit)
+        key = self._session_key(user_id, session_id)
+        if self._memory_directory:
+            root, label = self._archive_root(user_id), self._archive_label(user_id, session_id)
+            if not await asyncio.to_thread(ConversationArchive.exists, root, label):
+                return []
+            turns = await asyncio.to_thread(ConversationArchive(root, label).load_turns, limit)
+        else:
+            conversation = self._conversations.get(key)
+            turns = conversation.retrieve_turns(limit) if conversation is not None else []
+        return [_turn_view(turn, self._resumable(key, turn)) for turn in turns]
 
     async def _choose_route(self, question, model):
         """single/team keep the configured runner; auto applies host rules, then one model call."""
