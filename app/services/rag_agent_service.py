@@ -57,6 +57,23 @@ def _restore_result(data: dict) -> AgentRunResult:
     data['step_log'] = tuple(data.get('step_log', ()))   # older archives have no run log (D-034)
     return AgentRunResult(steps=tuple(steps), **data)
 
+def _total_tokens(usage) -> int:
+    value = (usage or {}).get('total_tokens') if isinstance(usage, dict) else None
+    return value if type(value) is int and value > 0 else 0
+
+
+def _archived_tokens(archive) -> int:
+    """Tokens the archived runs of a conversation used, from their stored results (D-060)."""
+    total = 0
+    for turn in archive.load_turns():
+        try:
+            result = archive.read_turn_result(turn.turn_id)
+        except (KeyError, ValueError):
+            continue
+        total += _total_tokens((result or {}).get('usage'))
+    return total
+
+
 def _emit(on_event, event: dict) -> None:
     """Report host-authored progress; a failing callback never affects the request (D-045)."""
     if on_event is None:
@@ -132,6 +149,7 @@ class RagAgentService:
         if hooks is not None and not isinstance(hooks, HookSet):
             raise TypeError('hooks must be a HookSet')
         self._hooks = hooks
+        self._spent_tokens: dict = {}       # conversation key -> tokens used, for the cap (D-060)
         self._memory_directory = config.conversation_storage_dir if memory_directory is None else memory_directory
         self._conversation_compressor = conversation_compressor
         self._planner_model = planner_model
@@ -216,10 +234,11 @@ class RagAgentService:
         return 'aletheia-' + hashlib.sha256(label.encode('utf-8')).hexdigest()[:24]
 
     @asynccontextmanager
-    async def _models(self, cache_key: str | None = None):
-        """The run's models, each wrapped once in HookedModel, inside the service's hooks (D-059)."""
+    async def _models(self, cache_key: str | None = None, hooks=None):
+        """The run's models, each wrapped once in HookedModel, inside the run's hooks (D-059)."""
         from app.agent.hooks import HookedModel, using_hooks
-        with using_hooks(self._hooks) if self._hooks is not None else nullcontext():
+        hooks = hooks if hooks is not None else self._hooks
+        with using_hooks(hooks) if hooks is not None else nullcontext():
             async with self._base_models(cache_key) as (planner_model, model):
                 yield planner_model, HookedModel(model)
 
@@ -242,6 +261,24 @@ class RagAgentService:
                 prompt_cache_key=cache_key,
             )
             yield self._planner_model or PlanningModel(model), model
+
+    async def _run_hooks(self, key, conversation):
+        """This run's hooks: the service's (or the caller's), plus the audit log and the
+        conversation token cap when configured (D-060). Returns (hooks, audit or None)."""
+        from app.agent.builtin_hooks import AuditHook, ConversationTokenCap
+        from app.agent.hooks import HookSet, current_hooks
+        hooks = self._hooks if self._hooks is not None else current_hooks()
+        audit = None
+        if config.hooks_audit and conversation.archive is not None:
+            audit = AuditHook(conversation.archive)
+            hooks = hooks.with_observers(audit)
+        if config.conversation_max_tokens is not None:
+            if key not in self._spent_tokens:
+                self._spent_tokens[key] = (await asyncio.to_thread(_archived_tokens, conversation.archive)
+                                           if conversation.archive is not None else 0)
+            cap = ConversationTokenCap(config.conversation_max_tokens, self._spent_tokens[key])
+            hooks = HookSet(hooks.observers, (*hooks.gates, cap), gate_timeout=hooks.gate_timeout)
+        return hooks, audit
 
     def run_options(self) -> dict:
         """Per-request choices this service accepts (D-051). A mode outside these is refused; the
@@ -407,7 +444,8 @@ class RagAgentService:
                         except Exception as exc:
                             logger.warning('Long-term recall unavailable: %s', type(exc).__name__)
                 cache_key = self._prompt_cache_key(self._archive_label(user_id, session_id))
-                async with self._models(cache_key) as (planner_model, model):
+                run_hooks, audit = await self._run_hooks(key, conversation)
+                async with self._models(cache_key, run_hooks) as (planner_model, model):
                     if self._planner_model is None:
                         planner_model = PlanningModel(ContextManagedModel(model, context_manager))
                     async with open_tool_registry(
@@ -431,6 +469,8 @@ class RagAgentService:
                         self._routes[(key, task.task_id)] = choice
                         self._task_options[(key, task.task_id)] = options
                         route = choice.mode
+                        if audit is not None:
+                            audit.note(mode=route, read_only=choice.read_only)
                         _emit(on_event, {'type': 'route', 'mode': route, 'read_only': choice.read_only,
                                          'options': dict(options)})
                         # Read-only tasks lose write tools and get read-only runs (D-027/D-028).
@@ -456,6 +496,8 @@ class RagAgentService:
                         else:
                             runtime.rebind(planner, model, registry, context_manager=context_manager)
                         result = await runtime.run(on_event=on_event)
+                        if key in self._spent_tokens:
+                            self._spent_tokens[key] += _total_tokens(result.usage)
                         # Retain the result before resource cleanup or durable completion can fail.
                         self._pending_outcomes[outcome_key] = (TurnStatus(result.status.value), result.content, asdict(result))
                         if result.status is TaskStatus.BLOCKED:

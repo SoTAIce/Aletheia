@@ -44,7 +44,20 @@ FAILURE_MESSAGES = {
     'business': '任务无法完成。',
     'budget': '已用完本次任务的令牌或时间预算，任务停止。',
     'internal': '运行时内部出错，任务停止。',
+    'policy': '一次模型调用被规则拒绝（例如这个对话的令牌用量已达上限），任务停止。',
 }
+
+
+def _policy_denial(exc):
+    """The gate refusal behind an error, if any (D-060); its reason is host-authored."""
+    from app.agent.hooks import PolicyDeniedError
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, PolicyDeniedError):
+            return exc
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +317,9 @@ class AgentRuntime:
                     spent = self._meter.budget_problem()
                     if spent:
                         return self._fail(spent, 'budget')
+                    denied = _policy_denial(exc)
+                    if denied is not None:
+                        return self._fail(f'Model call denied by {denied.hook}: {denied.reason}', 'policy')
                     # Planner validation messages are host-authored (see bench _SAFE_FAILURE).
                     return self._fail(f"Planning failed: {type(exc).__name__}: {exc}", 'planning')
             next_step = next((step for step in task.plan if step.status is StepStatus.PENDING), None)
@@ -332,6 +348,9 @@ class AgentRuntime:
             except (StepFormatError, StepModelError, StepRoutingError) as exc:
                 # Local format repair is exhausted, or the provider failed.
                 # Replanning would repeat completed tools without fixing either.
+                denied = _policy_denial(exc)
+                if denied is not None:
+                    return self._fail(f'Model call denied by {denied.hook}: {denied.reason}', 'policy')
                 kind = ('format' if isinstance(exc, StepFormatError) else
                         'routing' if isinstance(exc, StepRoutingError) else 'model')
                 return self._fail(f"{type(exc).__name__}: {exc.message}", kind)

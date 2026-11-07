@@ -413,6 +413,32 @@ class ConversationArchive:
         self._check_path(directory)
         return directory
 
+    def save_audit(self, name: str, records: list[dict]) -> Path:
+        """Write one run's audit records as JSON Lines under this session (D-060).
+
+        They live next to the turns, so they go when the session's directory goes.
+        """
+        if not isinstance(name, str) or not re.fullmatch(r"[0-9A-Za-z_-]{1,120}", name):
+            raise ValueError("invalid audit name")
+        lines = "".join(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n" for record in records)
+        with self._lock:
+            directory = self._directory.parent / "audit"
+            self._check_path(directory)
+            directory.mkdir(exist_ok=True)
+            self._check_path(directory)
+            path = directory / f"{name}.jsonl"
+            self._check_path(path)
+            fd, temporary = tempfile.mkstemp(prefix=".audit-", suffix=".tmp", dir=directory)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(lines)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, path)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+        return path
+
     def _artifact_path(self, ref: str) -> Path:
         if not isinstance(ref, str):
             raise ValueError("invalid archive reference")

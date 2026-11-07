@@ -86,6 +86,11 @@ class Settings(BaseSettings):
     # are routed together and hit the prompt cache more often (D-057); turn off if refused.
     agent_model_prompt_cache_key: bool = True
 
+    # Hooks (D-060): one audit file per run in the conversation's archive directory, and an
+    # optional token allowance per conversation (empty means no limit).
+    hooks_audit: bool = True
+    conversation_max_tokens: int | None = Field(default=None, gt=0)
+
     # Web backend (D-046): local only by default; a token is required unless explicitly waived.
     web_host: str = "127.0.0.1"
     web_port: int = Field(default=8000, gt=0, lt=65536)

@@ -19,6 +19,12 @@
 
 ## Session Record
 
+### 2026-11-07 — hooks-builtin-001：hooks 第 2 步
+
+- **Result**：新增审计记录（每次运行在会话目录 `audit/` 下写一份 JSON Lines，只有宿主记录）和对话令牌上限（`CONVERSATION_MAX_TOKENS`，超过后拒绝模型调用，运行以 `policy` 失败，重启后从归档结果累计）（D-060）。
+- **Verification**：`tests/test_builtin_hooks.py` 8 项通过；init.ps1 PASS，1572 passed、16 skipped。
+- **Not done**：没有真实运行；第 3 步（网页人工确认）未开始；未提交。
+
 ### 2026-11-07 — hooks-core-001：hooks 第 1 步
 
 - **Result**：新增 `app/agent/hooks.py`（事件、观察型和拦截型 hook、`HookedTool`、`HookedModel`）；任务注册表包装每个工具对象，团队成员同样经过；服务包装底层模型并标明调用用途；运行时经 hooks 发事件，`on_event` 改为观察型 hook，收到的内容不变（D-059）。

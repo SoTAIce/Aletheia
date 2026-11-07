@@ -1080,6 +1080,22 @@
         "Existing on_event tests pass unchanged."
       ],
       "evidence": "tests/test_hooks.py 13 passed; init.ps1 PASS 1564 passed, 16 skipped. Not run with a real model."
+    },
+    {
+      "id": "hooks-builtin-001",
+      "name": "Hooks step 2: audit log and conversation token cap",
+      "description": "Step 2 of docs/hooks_design.md (user said '做第 2 步' on 2026-11-07). app/agent/builtin_hooks.py: AuditHook keeps one run's hook events in memory and writes them once at task_end as JSON Lines (a header with mode and read-only, then the events; at most 2000 events, the rest counted) through ConversationArchive.save_audit into the session's audit directory; ConversationTokenCap is a before_model gate that refuses calls once the conversation's earlier runs (summed from archived results on first use, then kept in memory) plus the current run reach CONVERSATION_MAX_TOKENS. A refusal fails the run with the new failure kind 'policy' and a Chinese message. Config: HOOKS_AUDIT (default true), CONVERSATION_MAX_TOKENS (default empty). DECISIONS D-060.",
+      "status": "done",
+      "dependencies": [
+        "hooks-core-001"
+      ],
+      "acceptance": [
+        "Each run, including a blocked run and its resume, leaves one audit file in its session directory without model text, tool output or the user's words.",
+        "No audit when turned off or without an archive.",
+        "The cap stops further model calls of a conversation, survives a restart and counts per conversation.",
+        "A refused call fails the run as 'policy' with the gate's host-authored reason."
+      ],
+      "evidence": "tests/test_builtin_hooks.py 8 passed; init.ps1 PASS 1572 passed, 16 skipped. Not run with a real model."
     }
   ],
   "cleanup_2026_11_04": {
