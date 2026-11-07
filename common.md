@@ -77,6 +77,9 @@ $env:PYTHONDONTWRITEBYTECODE = '1'
 # 留出集 13 题，普通模式各 1 次（真实调用；改动定稿后才跑，不要根据它的失败去改提示词）
 .venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks all --split holdout --modes single --runs 1 --max-runs 13 --out output\bench-holdout-single.json
 
+# 调参集 11 题，普通模式改用单一循环（架构第 1 阶段试验，D-062；真实调用）
+.venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks all --modes single --single-runner loop --runs 1 --max-runs 11 --out output\bench-tune-loop.json
+
 # 单独跑某几题，普通模式和团队模式各 1 次（真实调用）
 .venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks billing_qa todo_html --modes single team --runs 1 --out output\bench-some.json
 ```

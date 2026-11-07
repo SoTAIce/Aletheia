@@ -1126,6 +1126,36 @@
         "With the real model the page asks before write_file; the file is written only after Allow; after Deny it is not written."
       ],
       "evidence": "Tune 11/11 strictly (same as before hooks); 52 model calls (was 53), 336 s (was 395), 1,091,043 tokens (was 1,111,557); no failed tool calls. Web: 'write upper.txt' stopped at the card (写入文件：upper.txt，19 字符), nothing written before Allow, correct file after; the audit file listed plan, step and wrap-up calls and both tools. 'write lower.txt' denied: no file; the model turned the denial into a blocked question asking whether to allow the write."
+    },
+    {
+      "id": "arch-review-001",
+      "name": "Architecture review of the agent before changing the control flow",
+      "description": "User asked on 2026-11-07 to review the agent architecture first instead of adding a single loop directly. docs/architecture_review.md maps the current layers and one request's path, compares each core abstraction's intent with its actual use (plans of one step, goal revisions, constraints and resource contexts never used in production, team mode forced through a one-step plan), groups the problems by root cause (plan steps as the unit of control flow, oversized task state, limits in many layers, ad hoc model wrappers and context policy, JSON envelope for step results, fat service method, duplicated tool list, unreferenced modules), lists what to keep, proposes an agent loop as the only control flow with todo, delegate and ask_user as tools, and a five-stage migration where stage 1 is a measurable trial. Design only; no code changed.",
+      "status": "done",
+      "dependencies": [
+        "hooks-live-001"
+      ],
+      "acceptance": [
+        "Every claim about current code is checked against the code at c19aa95.",
+        "The proposal keeps the verified safety designs and gives stages that can each be measured and rolled back.",
+        "Open questions for the user are listed."
+      ],
+      "evidence": "Checked by reading runtime, service, planner, executors, routing, team, task state and context manager, and by searching for callers: update_goal, add_constraint, select_context and add_open_question have no production caller; app/agent/aiops, two mcp_demo clients and vector_index_service are unreferenced. Section 8 questions are not answered yet."
+    },
+    {
+      "id": "loop-trial-001",
+      "name": "Architecture stage 1: one agent loop for single mode, as a trial",
+      "description": "Stage 1 of docs/architecture_review.md (user said '先做一阶段的实验' on 2026-11-07). app/agent/agent_loop.py: AgentLoopRunner runs the whole task as one loop (model and tools until a plain-text answer, no JSON envelope), with two control tools handled by the loop itself: todo (the model's checklist, reported to observers as a 'todo' event) and ask_user (blocks the task with one question). It is a Runner under the existing runtime, entered through LoopPlanner, a fixed one-step plan without a planning model call. Budget: 20 tool rounds, 40 calls, 480 s; when spent, one wrap-up request with the tools shown only, as D-053/D-057. The duplicated available_tools pin and empty fields are left out of the context. Old tool results are compacted with the team's CompactingManager, moved to model_view. RagAgentService(single_runner='loop'), CLI --single-runner loop and bench --single-runner loop; the default stays 'plan'. In loop mode the runtime does not replan (max_replans 0); a blocked loop restarts after the answer with it in resolved_questions. DECISIONS D-062.",
+      "status": "done",
+      "dependencies": [
+        "arch-review-001"
+      ],
+      "acceptance": [
+        "Single mode can run as one loop with no planning call; the default is unchanged.",
+        "Plain text ends the task; todo and ask_user work; the budget ends with one wrap-up; unavailable tools, raising tools and empty replies are bounded.",
+        "The tune set and holdout set are compared against the plan runner before any default change."
+      ],
+      "evidence": "tests/test_agent_loop.py 13 passed; init.ps1 PASS 1594 passed, 16 skipped. Tune set live, 1 run per task (user said '跑调参集', AGENT_MODEL_CONTEXT_TOKENS=128000 for the run only, report in the ignored output/bench-tune-loop.json): 11/11 strictly, same as the plan runner; 44 model calls (plan runner 52), 878,778 tokens (1,091,043, -19%), 308 s (336); no failed tool calls, no replans. The five read-and-answer tasks took 2 calls and about 41k tokens each (plan runner 4 to 5 calls, 87k to 110k); the three fix tasks took 5 to 7 calls and 146k to 149k tokens (plan runner 5 to 6 calls, 110k to 136k). Holdout live, 1 run per task (user said '跑留出集', report in the ignored output/bench-holdout-loop.json): 12/13 strictly (plan runner 11/13 in bench-holdout-single-d057); call_chain_qa now passes, side_effects_qa still fails on mutates_arguments; 57 model calls (67), 1,321,752 tokens (1,282,560, +3%), 362 s (467). Token totals are noisy: some calls through the relay carry about 15k extra prompt tokens and some do not (role_perms_qa: 4 plan calls used 18.6k tokens, 6 loop calls 173.6k)."
     }
   ],
   "cleanup_2026_11_04": {

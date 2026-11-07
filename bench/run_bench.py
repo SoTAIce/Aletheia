@@ -148,7 +148,7 @@ SANDBOX_HINT = ('写完后先写测试，再用 run_tests 或 run_python 在沙�
 
 
 def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=False, team_timeout=None,
-            team_acceptance=False):
+            team_acceptance=False, single_runner='plan'):
     write = write or sandbox
     # Answer tasks are graded on the final answer even when write and sandbox tools are offered;
     # offering them is what lets auto routing consider the team (D-026).
@@ -175,6 +175,8 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             cmd += ['--write-root', str(root)]
         if sandbox:
             cmd.append('--sandbox')
+        if mode == 'single' and single_runner != 'plan':
+            cmd += ['--single-runner', single_runner]     # loop-trial-001
         teamish = mode in ('team', 'auto')   # auto may route to the team (D-026)
         if team_timeout is not None and teamish:
             cmd += ['--team-timeout', str(team_timeout)]
@@ -202,6 +204,8 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
                'status': 'timeout' if timed_out else status,
                'executions': executions, 'replans': replans, 'seconds': seconds,
                'result_source': 'result_json' if record is not None else 'stdout'}
+        if mode == 'single':
+            row['runner'] = single_runner
         if record is not None:
             row.update(usage_fields(record))
         traces = _TEAM_TRACE.findall(stderr)
@@ -353,6 +357,8 @@ def main(argv=None):
     parser.add_argument('--team-timeout', type=float, help='team time budget per run in seconds')
     parser.add_argument('--team-acceptance', action='store_true',
                         help='team V2 + sandbox: opt in to independent acceptance tests (D-022)')
+    parser.add_argument('--single-runner', choices=['plan', 'loop'], default='plan',
+                        help='how single mode runs: plan then steps, or one agent loop (loop-trial-001)')
     parser.add_argument('--write', action='store_true',
                         help='let the agent write the deliverable file into its TEMP root and grade that file')
     args = parser.parse_args(argv)
@@ -364,7 +370,7 @@ def main(argv=None):
     planned = len(tasks) * len(args.modes) * args.runs
     plan = (f'{planned} agent run(s): tasks={[t["id"] for t in tasks]} modes={args.modes} runs={args.runs} '
             f'splits={sorted({t.get("split", "tune") for t in tasks})} '
-            f'team_acceptance={args.team_acceptance} '
+            f'team_acceptance={args.team_acceptance} single_runner={args.single_runner} '
             f'delivery={"file" if args.write or args.sandbox else "answer"} sandbox={args.sandbox}')
     if not args.confirm_live:
         over = f' (exceeds --max-runs {args.max_runs}; a live run would be refused)' if planned > args.max_runs else ''
@@ -380,7 +386,7 @@ def main(argv=None):
                 for index in range(1, args.runs + 1):
                     rows.append(run_one(task, mode, index, args.timeout, args.keep_answers, args.write,
                                         args.sandbox, args.team_timeout,
-                                        args.team_acceptance))
+                                        args.team_acceptance, args.single_runner))
                     print(json.dumps(rows[-1], ensure_ascii=False), file=sys.stderr, flush=True)
     finally:
         # The MCP stdio child does not inherit PYTHONDONTWRITEBYTECODE (DECISIONS D-011).

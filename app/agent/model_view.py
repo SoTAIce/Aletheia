@@ -95,3 +95,30 @@ def compact_model_view(messages, tools, manager, *, share=VIEW_COMPACT_SHARE, al
             message = shorten_output(message)
         view.append(message)
     return tuple(view)
+
+
+class CompactingManager:
+    """Worker context manager whose model view drops old file bodies (D-019 follow-up).
+
+    prepare() never shrinks tool-call arguments, so workers that rewrite whole files
+    overflowed the window (ContextBudgetError in 3 of 4 live parse_duration runs).
+    Tier 1 (above 60%): superseded write_file bodies and older outputs. Tier 2 (above
+    85% after tier 1): every write_file body but the most recent. Records stay intact.
+    """
+    STRONG_SHARE = 0.85
+
+    def __init__(self, manager):
+        self._manager, self.compacted, self.strong = manager, 0, 0
+
+    def __getattr__(self, name):
+        return getattr(self._manager, name)
+
+    async def generate(self, model, messages, tools):
+        manager = self._manager
+        view = compact_model_view(messages, tools, manager)
+        if view != tuple(messages):
+            self.compacted += 1
+        if manager.count_request(view, tools) > manager.window_tokens * self.STRONG_SHARE:
+            view = compact_model_view(view, tools, manager, share=0, all_but_last_write=True)
+            self.strong += 1
+        return await manager.generate(model, view, tools)

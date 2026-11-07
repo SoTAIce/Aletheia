@@ -141,6 +141,7 @@ class RagAgentService:
         runner_registry: RunnerRegistry | None = None, routing_policy: RoutingPolicy | None = None,
         runner_requirements: RequirementsProvider | None = None,
         execution_mode: str = 'single', team_options=None, hooks=None,
+        single_runner: str = 'plan', loop_options=None,
     ) -> None:
         self.streaming = streaming
         self.model = model
@@ -163,6 +164,17 @@ class RagAgentService:
         if (execution_mode != 'single' or team_options is not None) and runner_registry is not None:
             raise ValueError('use register_delegating_team_runner for custom registry assembly')
         self._execution_mode = execution_mode
+        # How single mode runs (loop-trial-001): 'plan' plans then executes steps; 'loop' is one
+        # agent loop entered through a fixed one-step plan (docs/architecture_review.md stage 1).
+        if single_runner not in ('plan', 'loop'):
+            raise ValueError('single_runner must be plan or loop')
+        if single_runner == 'loop' and runner_registry is not None:
+            raise ValueError('single_runner loop assembles its own runner registry')
+        from app.agent.agent_loop import LoopOptions
+        if loop_options is not None and not isinstance(loop_options, LoopOptions):
+            raise TypeError('loop_options must be LoopOptions')
+        self._single_runner = single_runner
+        self._loop_options = loop_options or LoopOptions()
         self._team_options = team_options or (DelegationOptions() if execution_mode == 'team' else None)
         self._routes: dict[tuple[object, str], object] = {}   # task -> ModeChoice made at its start (D-026)
         self._task_options: dict[tuple[object, str], dict] = {}   # task -> run options chosen at its start (D-051)
@@ -485,9 +497,13 @@ class RagAgentService:
                         from app.agent.route_selection import task_registry
                         registry = task_registry(registry, choice.read_only)
                         # Team V2 owns the whole task: one fixed plan step, one team (DECISIONS D-019).
+                        loop = route == 'single' and self._single_runner == 'loop'
                         if route == 'team':
                             from app.agent.team_v2 import SingleStepPlanner
                             planner = SingleStepPlanner(planner_model, max_steps=1, context_manager=context_manager)
+                        elif loop:
+                            from app.agent.agent_loop import LoopPlanner
+                            planner = LoopPlanner(planner_model, max_steps=1, context_manager=context_manager)
                         else:
                             planner = Planner(planner_model, context_manager=context_manager)
                         if runtime is None:
@@ -499,6 +515,19 @@ class RagAgentService:
                                 # A team step must outlast the team's own timeout.
                                 limits['step_timeout_seconds'] = max(limits['step_timeout_seconds'],
                                                                      team_options.timeout_seconds + 5)
+                            elif loop:
+                                from app.agent.agent_loop import loop_requirements, register_agent_loop_runner
+                                from app.agent.runner_registry import default_runner_registry
+                                loop_registry = default_runner_registry()
+                                register_agent_loop_runner(loop_registry, options=self._loop_options)
+                                runner_options['runner_registry'] = loop_registry
+                                if runner_options['runner_requirements'] is None:
+                                    runner_options['runner_requirements'] = loop_requirements
+                                # The whole task is one step; restarting the loop after a failure
+                                # would repeat its work, so the runtime does not replan it.
+                                limits['step_timeout_seconds'] = max(limits['step_timeout_seconds'],
+                                                                     self._loop_options.timeout_seconds + 5)
+                                limits['max_replans'] = 0
                             runtime = AgentRuntime(planner, model, memory, registry,
                                                    **limits, **runner_options, context_manager=context_manager)
                         else:

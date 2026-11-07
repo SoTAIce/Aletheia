@@ -21,7 +21,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 
 from app.agent.json_output import load_json, unwrap_json_fence
-from app.agent.model_view import compact_model_view
+from app.agent.model_view import CompactingManager
 from app.agent.planner import Planner, PlannerContext, PlanProposal
 from app.agent.runner_registry import RunnerDefinition
 from app.agent.step_models import (
@@ -95,31 +95,8 @@ class _Counted:
         return await self._model.generate(messages, tools)
 
 
-class _CompactingManager:
-    """Worker context manager whose model view drops old file bodies (D-019 follow-up).
-
-    prepare() never shrinks tool-call arguments, so workers that rewrite whole files
-    overflowed the window (ContextBudgetError in 3 of 4 live parse_duration runs).
-    Tier 1 (above 60%): superseded write_file bodies and older outputs. Tier 2 (above
-    85% after tier 1): every write_file body but the most recent. Records stay intact.
-    """
-    STRONG_SHARE = 0.85
-
-    def __init__(self, manager):
-        self._manager, self.compacted, self.strong = manager, 0, 0
-
-    def __getattr__(self, name):
-        return getattr(self._manager, name)
-
-    async def generate(self, model, messages, tools):
-        manager = self._manager
-        view = compact_model_view(messages, tools, manager)
-        if view != tuple(messages):
-            self.compacted += 1
-        if manager.count_request(view, tools) > manager.window_tokens * self.STRONG_SHARE:
-            view = compact_model_view(view, tools, manager, share=0, all_but_last_write=True)
-            self.strong += 1
-        return await manager.generate(model, view, tools)
+# Moved to model_view so the agent loop can use it too (loop-trial-001).
+_CompactingManager = CompactingManager
 
 
 ACCEPTANCE_PREFIX = 'test_acceptance'
@@ -702,6 +679,7 @@ class SingleStepPlanner(Planner):
     """
 
     STEP = 'Deliver the active goal as one team task: the Team Lead delegates and verifies the work.'
+    REASON = 'team v2 single step'
 
     def _proposal(self, context):
         if not isinstance(context, PlannerContext):
@@ -709,7 +687,7 @@ class SingleStepPlanner(Planner):
         if not isinstance(context.active_goal, str) or not context.active_goal.strip():
             raise ValueError('active_goal must be a non-empty string')
         return PlanProposal(steps=(self.STEP,), goal_revision=context.goal_revision,
-                            base_state_version=context.state_version, reason='team v2 single step',
+                            base_state_version=context.state_version, reason=self.REASON,
                             created_at=datetime.now(timezone.utc), task_id=context.task_id,
                             base_resource_context_version=context.resource_context_version)
 
