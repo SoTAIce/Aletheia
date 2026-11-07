@@ -1048,6 +1048,38 @@
         "All 13 holdout tasks run once with the current code and the result is recorded."
       ],
       "evidence": "11/13 passed strictly (95% interval 58%-96%). Failed: call_chain_qa (5/6 checks, unreachable) and side_effects_qa (4/5, mutates_arguments); all implement and fix tasks passed. 67 model calls, 467 s, 1,282,560 tokens, no failed tool calls. Three QA runs used only 17,793-25,196 tokens while the others used 87,826-174,829; the two failures are among those three, which may mean the relay sent them to a different upstream (not verified)."
+    },
+    {
+      "id": "hooks-design-001",
+      "name": "Design hooks for the agent",
+      "description": "User asked on 2026-11-07 ('先写 hooks 设计稿') for a design before adding hooks. docs/hooks_design.md: fixed events (task, plan, before/after model, before/after tool, step, task end), read-only observers and deny-only gates, wrapping at the tool object and the base model so single and team mode both pass through, host-authored event fields only, four built-in hooks (progress replacing on_event, audit log, per-conversation cost cap, web approval for side-effect tools) and five open questions with recommendations.",
+      "status": "done",
+      "dependencies": [
+        "web-backend-001"
+      ],
+      "acceptance": [
+        "docs/hooks_design.md lists the current scattered logic, events, interfaces, attach points, denial handling, approval flow, configuration, tests, order and risks.",
+        "Every existing interface the design relies on is named by its real location.",
+        "Open questions for the user are listed with recommendations."
+      ],
+      "evidence": "docs/hooks_design.md written; the user answered section 11 on 2026-11-07 (all as recommended, D-058); no code changed."
+    },
+    {
+      "id": "hooks-core-001",
+      "name": "Hooks step 1: events, observers, gates and the wrappers",
+      "description": "Step 1 of docs/hooks_design.md (user said '开始第 1 步' on 2026-11-07). app/agent/hooks.py: HookSet (observers, deny-only gates; a gate error, timeout or non-decision is a denial; 5-second default), events task_start, plan, before/after_model, before/after_tool, step, task_end; HookedTool wraps each tool object (the task registry is a HookedToolRegistry, so tools copied into team member registries stay wrapped); HookedModel wraps the base model in RagAgentService._models; model calls are labelled plan, route, step or wrap_up; ToolRegistry.invoke exposes the call id; the runtime emits through the hooks and on_event became an observer that still receives only plan and step. RagAgentService takes hooks=HookSet. No built-in hooks yet, so behaviour is unchanged. DECISIONS D-059.",
+      "status": "done",
+      "dependencies": [
+        "hooks-design-001"
+      ],
+      "acceptance": [
+        "Events come in order and carry no model text, tool output or file contents.",
+        "A failing observer never changes the result; a failing or slow gate denies.",
+        "A denied tool is not run and the model gets 'not executed'; a denied model call reaches no provider.",
+        "A tool copied into another registry still passes the hooks, and is not wrapped twice.",
+        "Existing on_event tests pass unchanged."
+      ],
+      "evidence": "tests/test_hooks.py 13 passed; init.ps1 PASS 1564 passed, 16 skipped. Not run with a real model."
     }
   ],
   "cleanup_2026_11_04": {

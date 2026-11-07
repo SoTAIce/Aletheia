@@ -64,7 +64,8 @@ async def open_tool_registry(
     AsyncExitStack closes every connected server on success, failure or cancellation.
     Duplicate tool names are rejected by the existing registry, never overwritten.
     """
-    registry = ToolRegistry()
+    from app.agent.hooks import HookedToolRegistry
+    registry = HookedToolRegistry()          # every tool passes the run's hooks (D-059)
     registry.register(CurrentTimeTool())
     if include_knowledge:
         registry.register(KnowledgeRegistryTool(memory, conversation, knowledge_search, context_manager=context_manager))

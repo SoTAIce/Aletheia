@@ -152,20 +152,34 @@ class AgentRuntime:
     async def run(self, *, on_event=None) -> AgentRunResult:
         """on_event, if given, is called synchronously with host-authored progress
         records ('plan', 'step'); it must not block, and its errors never affect the task."""
+        from app.agent.hooks import CallbackHook, TASK_END, TASK_START, current_hooks, using_hooks
         async with self._lock:
-            self._on_event = on_event
-            try:
-                return await self._run_locked()
-            finally:
-                self._on_event = None
+            # The callback becomes one observer among the run's hooks (D-059).
+            hooks = current_hooks()
+            if on_event is not None:
+                hooks = hooks.with_observers(CallbackHook(on_event))
+            with using_hooks(hooks):
+                self._on_event = on_event
+                hooks.emit({'type': TASK_START, 'task_id': self.memory.task_state.task_id})
+                try:
+                    result = await self._run_locked()
+                except BaseException as exc:
+                    hooks.emit({'type': TASK_END, 'task_id': self.memory.task_state.task_id,
+                                'status': 'cancelled' if isinstance(exc, asyncio.CancelledError) else 'error',
+                                'error': type(exc).__name__})
+                    raise
+                finally:
+                    self._on_event = None
+                usage = result.usage or {}
+                hooks.emit({'type': TASK_END, 'task_id': result.task_id, 'status': result.status.value,
+                            'failure_kind': result.failure_kind, 'model_calls': usage.get('model_calls'),
+                            'total_tokens': usage.get('total_tokens'),
+                            'cached_prompt_tokens': usage.get('cached_prompt_tokens')})
+                return result
 
     def _emit(self, event: dict) -> None:
-        if self._on_event is None:
-            return
-        try:
-            self._on_event(event)
-        except Exception as exc:
-            logger.warning('Progress callback failed: {}', type(exc).__name__)
+        from app.agent.hooks import current_hooks
+        current_hooks().emit(event)          # observer errors are logged by type only (D-045, D-059)
 
     async def _run_locked(self) -> AgentRunResult:
         conversation = self._conversation

@@ -9,7 +9,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from uuid import uuid4
 from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
@@ -123,10 +123,15 @@ class RagAgentService:
         longterm_timeout_seconds: float = 3.0,
         runner_registry: RunnerRegistry | None = None, routing_policy: RoutingPolicy | None = None,
         runner_requirements: RequirementsProvider | None = None,
-        execution_mode: str = 'single', team_options=None,
+        execution_mode: str = 'single', team_options=None, hooks=None,
     ) -> None:
         self.streaming = streaming
         self.model = model
+        # Hooks of every run of this service (D-059); None keeps the caller's.
+        from app.agent.hooks import HookSet
+        if hooks is not None and not isinstance(hooks, HookSet):
+            raise TypeError('hooks must be a HookSet')
+        self._hooks = hooks
         self._memory_directory = config.conversation_storage_dir if memory_directory is None else memory_directory
         self._conversation_compressor = conversation_compressor
         self._planner_model = planner_model
@@ -212,6 +217,14 @@ class RagAgentService:
 
     @asynccontextmanager
     async def _models(self, cache_key: str | None = None):
+        """The run's models, each wrapped once in HookedModel, inside the service's hooks (D-059)."""
+        from app.agent.hooks import HookedModel, using_hooks
+        with using_hooks(self._hooks) if self._hooks is not None else nullcontext():
+            async with self._base_models(cache_key) as (planner_model, model):
+                yield planner_model, HookedModel(model)
+
+    @asynccontextmanager
+    async def _base_models(self, cache_key: str | None = None):
         if self.model is not None:
             yield self._planner_model or PlanningModel(self.model), self.model
             return
@@ -548,7 +561,9 @@ class RagAgentService:
             choice = ModeChoice(mode, 'user', mode)
             log_choice(choice)
             return choice
-        return await choose_mode(question, team_options, model)
+        from app.agent.hooks import model_purpose
+        with model_purpose('route'):
+            return await choose_mode(question, team_options, model)
 
     def _team_registry(self, options=None):
         from app.agent.runner_registry import default_runner_registry

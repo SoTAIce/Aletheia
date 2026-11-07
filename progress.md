@@ -19,6 +19,19 @@
 
 ## Session Record
 
+### 2026-11-07 — hooks-core-001：hooks 第 1 步
+
+- **Result**：新增 `app/agent/hooks.py`（事件、观察型和拦截型 hook、`HookedTool`、`HookedModel`）；任务注册表包装每个工具对象，团队成员同样经过；服务包装底层模型并标明调用用途；运行时经 hooks 发事件，`on_event` 改为观察型 hook，收到的内容不变（D-059）。
+- **Verification**：`tests/test_hooks.py` 13 项通过，原有测试不改全部通过；init.ps1 PASS，1564 passed、16 skipped。
+- **Not done**：没有内置 hook（第 2、3 步）；没有真实运行；未提交。
+
+### 2026-11-07 — hooks-design-001：hooks 设计稿
+
+- **Result**：用户“先写 hooks 设计稿”。写了 `docs/hooks_design.md`：固定事件点，观察型和拦截型两种 hook，在工具对象和底层模型上包装以覆盖团队模式，四个内置 hook（进度、审计、对话费用上限、网页人工确认），第 11 节列了 5 个待确认问题和推荐答案。
+- **Verification**：设计稿引用的现有接口都按实际位置核对过；没有改代码。
+- **确认**：用户 2026-11-07 答“都按推荐”，记为 D-058。
+- **Not done**：未实现；未提交。
+
 ### 2026-11-06 — bench-holdout-001：留出集首次运行
 
 - **Result**：用户“跑留出集”。普通模式、每题 1 次、13 题，走中转站模型：**11/13 严格通过**（95% 区间 58%～96%）。没通过：`call_chain_qa`（6 项检查过 5 项，`unreachable` 错）、`side_effects_qa`（5 项过 4 项，`mutates_arguments` 错）；实现和修复类 6 题全部通过。共 67 次模型调用，467 秒，约 128 万令牌，没有工具调用失败。报告在被忽略的 `output/bench-holdout-single-d057.json`。

@@ -1,8 +1,17 @@
 """In-memory tool registration, lookup, and validated invocation."""
 
 
+from contextvars import ContextVar
+
 from app.agent.step_models import ToolDefinition, ToolCall, ToolResult, ToolOutput
 from app.tools.tool import Tool
+
+# The call being dispatched, so a wrapped tool object can name it in hook events (D-059).
+_call_id: ContextVar[str | None] = ContextVar('aletheia_tool_call_id', default=None)
+
+
+def current_call_id() -> str | None:
+    return _call_id.get()
 
 
 class ToolRegistry:
@@ -80,7 +89,11 @@ class ToolRegistry:
         ):
             raise TypeError("call.arguments must be a dict with string keys")
         tool = self.get(tool_name)
-        output = await tool.invoke(call.arguments)
+        token = _call_id.set(call_id)
+        try:
+            output = await tool.invoke(call.arguments)
+        finally:
+            _call_id.reset(token)
 
         if not isinstance(output, ToolOutput):
             raise TypeError("tool.invoke() must return ToolOutput")
