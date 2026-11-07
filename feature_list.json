@@ -1022,6 +1022,32 @@
         "Two steps of one task share their system message and context up to the per-step fields."
       ],
       "evidence": "tests/test_prompt_cache_layout.py 9 passed; 5 older tests updated for the new message order and wrap-up tools; init.ps1 PASS 1551 passed, 16 skipped. One authorized relay run: both parameters accepted; within the step every request kept 100% of the previous one, the wrap-up included; 49,620 cached (32%, was 28%), hits alternating (calls 3 and 5 nearly full, 4 and 6 not reported), most likely the relay spreading neighbouring requests over upstreams. Every call carried about 13,900 more prompt tokens than the previous run, the unchanged planner request included (6,167 to 20,083), so the relay added text of its own; 157,024 tokens in all."
+    },
+    {
+      "id": "bench-tune-rerun-002",
+      "name": "Tune set rerun after D-052 to D-057",
+      "description": "User asked on 2026-11-06 to rerun the tune set. Single mode, 1 run per task, 11 tasks, through the relay (AGENT_MODEL, AGENT_MODEL_CONTEXT_TOKENS=128000 set for the run only). Report in the ignored output/bench-tune-single-d057.json. The earlier 6/11 run used the DashScope model before D-037 to D-057, so the two runs differ in both model and agent; the gain cannot be credited to the agent changes alone.",
+      "status": "done",
+      "dependencies": [
+        "prompt-cache-layout-001"
+      ],
+      "acceptance": [
+        "All 11 tune tasks run with the current code and the result is recorded."
+      ],
+      "evidence": "11/11 passed strictly (95% interval 74%-100%; earlier 6/11). 53 model calls (earlier 137), 395 s, 1,111,557 tokens (earlier 876,837); each relay call carried about 14,000-18,000 extra prompt tokens, so totals are not comparable. No failed tool calls. Holdout set not run."
+    },
+    {
+      "id": "bench-holdout-001",
+      "name": "First holdout run after D-052 to D-057",
+      "description": "User asked on 2026-11-06 to run the holdout set after the tune rerun. Single mode, 1 run per task, 13 tasks, through the relay (AGENT_MODEL_CONTEXT_TOKENS=128000 for the run only). Report in the ignored output/bench-holdout-single-d057.json. Per D-035 the holdout failures are not to be used to tune prompts.",
+      "status": "done",
+      "dependencies": [
+        "bench-tune-rerun-002"
+      ],
+      "acceptance": [
+        "All 13 holdout tasks run once with the current code and the result is recorded."
+      ],
+      "evidence": "11/13 passed strictly (95% interval 58%-96%). Failed: call_chain_qa (5/6 checks, unreachable) and side_effects_qa (4/5, mutates_arguments); all implement and fix tasks passed. 67 model calls, 467 s, 1,282,560 tokens, no failed tool calls. Three QA runs used only 17,793-25,196 tokens while the others used 87,826-174,829; the two failures are among those three, which may mean the relay sent them to a different upstream (not verified)."
     }
   ],
   "cleanup_2026_11_04": {
