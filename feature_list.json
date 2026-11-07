@@ -935,6 +935,93 @@
         "In a browser on a fake-model server: bare, fenced and broken SVG; light, dark and phone layouts; turning writes off reaches the run as read_only with write false."
       ],
       "evidence": "tests/test_run_options.py 25 passed; tests/test_web_api.py 24 passed; browser walk-through on a local fake-model server; init.ps1 PASS 1498 passed, 16 skipped. Not tried with a real model."
+    },
+    {
+      "id": "long-file-reading-001",
+      "name": "Read long files: window-scaled budgets, raw archives, line ranges",
+      "description": "A real web run (2026-11-06) failed to explain app/agent/runtime.py: the 22.6K-byte read was archived as JSON (46K characters, offsets off), each archive read above 8000 characters was archived again, a step allows 8 tool calls and source text does not reach the next step, so the plan ran out of replans after 24 model calls and 513K tokens. Now inline tool-result and preview budgets scale with the agent model's window (AGENT_MODEL_CONTEXT_TOKENS, default CONTEXT_WINDOW_TOKENS; 32K keeps 8000/1200, capped at 120000/8000), the size is measured on the text, an archive keeps the tool's own text, read_context_artifact is bounded by the same budget, never re-archived and says where to continue, read_file takes start_line/max_lines, and the planner keeps reading and analysis in one step. The MCP adapter no longer appends a structured copy that only repeats the text (FastMCP returned every read_file twice). DECISIONS D-052.",
+      "status": "done",
+      "dependencies": [
+        "agent-model-endpoint-001"
+      ],
+      "acceptance": [
+        "A 32K window keeps the old 8000/1200 budgets; larger windows keep a source file inline.",
+        "Archived text equals the tool's text; reading it back in pieces reassembles it and no piece is archived again.",
+        "read_file line ranges end with a note giving the total and where to continue."
+      ],
+      "evidence": "tests/test_tool_result_budgets.py 14 passed; three older tests updated to the new behaviour; init.ps1 PASS 1512 passed, 16 skipped. One authorized real re-run (window 128000, 400K token cap): step 1 read runtime.py in two line ranges, then step 2 hit the tool-round limit and the run stopped at the token cap (13 calls, 476K tokens vs 24 calls, 513K before); the doubled MCP content found there was fixed afterwards. A second authorized re-run after that fix read files at the right size and step 1 succeeded, but the 3-step plan failed in step 2 (business error) and step 3 (tool-round limit) and stopped at the token cap (18 calls, 628K tokens). Remaining: over-split plans, all reading lost when a step hits the round limit, and every round resending the step's tool results."
+    },
+    {
+      "id": "step-wrap-up-001",
+      "name": "Spent tool budget asks for the outcome; question tasks plan one step",
+      "description": "Follow-up to long-file-reading-001. In runtime mode a step whose tool rounds or calls are used up no longer fails at once: the over-budget batch is refused (not run), the model is told the budget is spent and asked once, without tools, for the step outcome from what it already read; a second over-budget batch still raises ToolRoundLimitError. Legacy mode is unchanged. The planner now prefers a single 'read what is needed and answer' step for explain/answer/summarise tasks. DECISIONS D-053.",
+      "status": "done",
+      "dependencies": [
+        "long-file-reading-001"
+      ],
+      "acceptance": [
+        "Over the round or call budget: refused batch, no tools on the next request, the step can succeed or fail with the earlier tool results kept.",
+        "Insisting after the wrap-up still raises ToolRoundLimitError; legacy runners keep the old error.",
+        "The planning prompt prefers one step for question tasks."
+      ],
+      "evidence": "tests/test_step_tool_budget.py 4 passed; init.ps1 PASS 1516 passed, 16 skipped. One authorized real re-run of the failed web task succeeded: a 1-step plan, 4 line-range reads, 6 model calls, about 177K tokens and 86 s (was 24 calls, 513K tokens, failed); spot-checked defaults in the answer match the code."
+    },
+    {
+      "id": "cache-usage-001",
+      "name": "Record prompt-cache hits",
+      "description": "User asked on 2026-11-06 to record cache hits before reducing per-round token cost. RunMeter adds cached_prompt_tokens (from usage.prompt_tokens_details.cached_tokens, capped at the call's prompt tokens) and calls_with_cache_report, so 'zero hits' and 'not reported' differ. The usage snapshot, the runtime's end-of-task log, the CLI usage line and the web reply footer show it. DECISIONS D-054.",
+      "status": "done",
+      "dependencies": [],
+      "acceptance": [
+        "SDK objects and plain dicts are read; a missing field counts as not reported, not as zero.",
+        "CLI says 缓存命中：服务商未报告 when no call reported; the web footer shows a percentage only when reported."
+      ],
+      "evidence": "tests/test_cache_usage.py 3 passed; one CLI test updated for the new usage line; init.ps1 PASS 1519 passed, 16 skipped. One authorized real run: task completed in one step, 7 calls, 189K tokens; the relay reported 72,700 of 185,859 prompt tokens as cached (39%) on 3 of 7 calls."
+    },
+    {
+      "id": "search-files-001",
+      "name": "search_files tool for locating code before reading",
+      "description": "User asked on 2026-11-06 for a code search tool so the agent reads only the lines it needs instead of whole files (each tool round resends what was read). The filesystem MCP server offers search_files(pattern, path, glob, regex, ignore_case, max_results): plain text or regex, returns {path, line, text} plus files searched/skipped and truncated. Read-only and bounded: 200-character pattern, 1-200 results, 5000 files, 300-character line text; hidden, secret (D-029), cache and virtual-environment directories, symlinks, binary files and files over the read limit are skipped. read_file's description points to it. Team members and verifiers get it as a read tool. DECISIONS D-055.",
+      "status": "done",
+      "dependencies": [
+        "long-file-reading-001"
+      ],
+      "acceptance": [
+        "Matches give path, line and trimmed text; secrets, .git, hidden, cache and node_modules directories, binary and oversized files never appear.",
+        "Bad patterns, globs and bounds are refused; paths outside the root or protected are refused.",
+        "The MCP server lists it and the adapter passes one copy of the result."
+      ],
+      "evidence": "tests/test_search_files.py 15 passed; two tool-list tests updated; init.ps1 PASS 1534 passed, 16 skipped. One authorized real run of the same task: completed in one step with 6 calls and about 78K tokens (189K before, -59%); the model searched first, then read in line ranges, batching its 8 tool calls into fewer rounds; total text read was similar."
+    },
+    {
+      "id": "cache-diagnosis-001",
+      "name": "Per-call cache figures and an endpoint cache probe",
+      "description": "User chose on 2026-11-06 to first find out why the prompt-cache hit rate is low. The run meter keeps one entry per model call (prompt, cached or not reported, completion, and the share of the request that starts exactly like the previous request to the same model), at most 200; the usage snapshot carries it as calls and the runtime logs one line per call. python -m app.agent.cache_probe sends 2-5 identical requests (a fixed made-up text of about 2,500 tokens, 16 output tokens) to the agent's endpoint, optionally with prompt_cache_key, and prints per-call numbers and a verdict; never the reply, key or provider text. DECISIONS D-056.",
+      "status": "done",
+      "dependencies": [
+        "cache-usage-001"
+      ],
+      "acceptance": [
+        "Each call's prompt, cached and shared-start figures are logged in order and bounded.",
+        "A request that only appends shares nearly all of its start; a changed system prompt shares almost none.",
+        "The probe sends identical requests, reports numbers only and refuses fewer than 2 or more than 5 calls."
+      ],
+      "evidence": "tests/test_cache_call_log.py 8 passed; init.ps1 PASS 1542 passed, 16 skipped. One authorized probe run (3 calls, model gpt-5.6-luna through the relay): every call reported 22,957 prompt tokens although the fixed text is only about 4,500, so the relay adds about 18,000 tokens of its own; calls 2 and 3 each hit 22,954 cached tokens, so the relay keeps its cache for identical requests. One authorized agent run (explain runtime.py): succeeded, 6 calls, 108,998 tokens, 29,952 cached (28%, 2/6 calls reported); the largest call (44,840 prompt tokens, the wrap-up after the tool budget, sent without tools) hit nothing. The shared-start ratio was then changed to measure the previous request kept, since the first version fell below 1 for appended requests."
+    },
+    {
+      "id": "prompt-cache-layout-001",
+      "name": "Stable request starts for the provider prompt cache",
+      "description": "User chose on 2026-11-06 to do phase two of the cache plan. (1) The separate agent endpoint gets prompt_cache_key, one per conversation (aletheia- plus 24 hex characters of a SHA-256 of the archive label, so session and user names are not sent); AGENT_MODEL_PROMPT_CACHE_KEY=false turns it off; DashScope never gets it. (2) When a step's tool budget is spent, the wrap-up request still lists the same tools (ToolsShownOnly) with tool_choice none instead of dropping them, so its start matches the earlier requests. (3) The step context is sent with the fields that stay the same across steps first (task, goal, constraints, pinned and resource contexts, resolved questions, earlier results) and the per-step fields last, and the final-step rules moved from the end of the system message to a system message after the context, so every step of a task starts the same way. DECISIONS D-057.",
+      "status": "done",
+      "dependencies": [
+        "cache-diagnosis-001"
+      ],
+      "acceptance": [
+        "A wrap-up request sends the same tools as before with tool_choice none.",
+        "prompt_cache_key is sent only to the separate endpoint, is a hash and can be turned off.",
+        "Two steps of one task share their system message and context up to the per-step fields."
+      ],
+      "evidence": "tests/test_prompt_cache_layout.py 9 passed; 5 older tests updated for the new message order and wrap-up tools; init.ps1 PASS 1551 passed, 16 skipped. One authorized relay run: both parameters accepted; within the step every request kept 100% of the previous one, the wrap-up included; 49,620 cached (32%, was 28%), hits alternating (calls 3 and 5 nearly full, 4 and 6 not reported), most likely the relay spreading neighbouring requests over upstreams. Every call carried about 13,900 more prompt tokens than the previous run, the unchanged planner request included (6,167 to 20,083), so the relay added text of its own; 157,024 tokens in all."
     }
   ],
   "cleanup_2026_11_04": {

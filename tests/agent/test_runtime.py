@@ -69,7 +69,8 @@ async def test_goal_to_completion_with_all_tool_sources_and_live_sessions(tmp_pa
     conversation = ConversationMemory("user")
     planner_model, model = AsyncMock(), AsyncMock()
     planner_model.generate.return_value = plan("Collect evidence", "Summarize the verified findings")
-    names = {"retrieve_knowledge", "get_current_time", "read_file", "list_directory", "search_web"}
+    names = {"retrieve_knowledge", "get_current_time", "read_file", "list_directory", "search_files",  # D-055
+             "search_web"}
     calls = (
         ToolCall("rag", "retrieve_knowledge", {"query": "internal"}),
         ToolCall("clock", "get_current_time", {"timezone": "UTC"}),

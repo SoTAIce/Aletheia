@@ -14,7 +14,7 @@ from app.agent.planner import Planner
 from app.agent.step_executor import StepExecutor
 from app.agent.step_models import StepExecutionReceipt
 from app.agent.side_effects import SideEffectWatch
-from app.agent.run_meter import RunMeter, current_meter, metering
+from app.agent.run_meter import RunMeter, cache_text as _cache_text, call_text as _call_text, current_meter, metering
 from app.agent.step_runner import (StepBlockedError, StepRunError, StepFormatError, StepModelError, StepRoutingError,
                                    StepToolError)
 from app.agent.tool_calling_model import ToolCallingModel
@@ -188,9 +188,12 @@ class AgentRuntime:
                 await finish_conversation_write(conversation.add(self._active_turn))
             with self._meter_scope():
                 result = await self._run()
-            logger.info('Task {}: executions {}, replans {}, model calls {}, tokens {}',
+            logger.info('Task {}: executions {}, replans {}, model calls {}, tokens {}, cached prompt tokens {}',
                         result.status.value, result.execution_count, result.replan_count,
-                        result.usage['model_calls'], result.usage['total_tokens'])
+                        result.usage['model_calls'], result.usage['total_tokens'],
+                        _cache_text(result.usage))
+            for number, entry in enumerate(result.usage.get('calls', ()), 1):    # D-056
+                logger.info('Task model call {}: {}', number, _call_text(entry))
         except StaleExecutionError:
             # A newer task/step owns this workspace. Even exception cleanup
             # must not fail that state or publish an old interaction result.

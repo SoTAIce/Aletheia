@@ -60,7 +60,7 @@ async def test_a_blocked_task_is_answered_by_the_next_line():
     text = '\n'.join(out)
     assert 'Which format?' in text and '任务在等待你的回答' in text
     assert '\nStatus: completed; executions: 1; replans: 0' in text
-    assert '用量：模型调用 3 次，令牌 120，耗时 1.5 秒' in text
+    assert '用量：模型调用 3 次，令牌 120，缓存命中：服务商未报告，耗时 1.5 秒' in text   # D-054
 
 
 async def test_commands_and_blank_lines_never_reach_the_service():

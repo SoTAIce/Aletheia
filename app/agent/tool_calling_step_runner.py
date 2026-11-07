@@ -7,7 +7,7 @@ from textwrap import dedent
 
 from app.agent.step_models import (
     StepExecutionContext, StepRunOutput, SystemMessage, ToolCall, ToolMessage, UserMessage,
-    ModelTurn, ToolResult, StepOutcome,
+    ModelTurn, ToolResult, StepOutcome, ToolsShownOnly,
 )
 from app.agent.step_runner import StepRunError, StepRunnerContractError, ToolRoundLimitError
 from app.agent.step_runner import StepFormatError, StepToolError, StepModelError, StepTimeoutError
@@ -17,6 +17,16 @@ from app.agent.tool_calling_model import ModelTimeoutError, ModelToolArgumentsEr
 from app.agent.tool_calling_model import tool_argument_repair_instruction
 from app.agent.team.diagnostics import failure_details, failure_types
 from app.tools.tool_registry import ToolRegistry
+
+
+# Context fields in the order sent: what stays the same across the steps of a task first,
+# what changes from step to step last, so later steps share a longer start with earlier
+# ones and the provider's prompt cache covers more of it (D-057).
+CONTEXT_FIELD_ORDER = (
+    'task_id', 'active_goal', 'goal_revision', 'constraints', 'pinned_contexts',
+    'resource_contexts', 'resolved_questions', 'intermediate_results',
+    'plan_revision', 'current_step', 'last_observation', 'open_question', 'final_step',
+)
 
 
 class _ShapeError(ValueError):
@@ -72,7 +82,7 @@ class ToolCallingStepRunner:
 
     def _build_initial_messages(
         self, context: StepExecutionContext
-    ) -> tuple[SystemMessage, UserMessage]:
+    ) -> tuple[SystemMessage | UserMessage, ...]:
         """Build initial messages without executing tools or changing memory."""
         if not isinstance(context, StepExecutionContext):
             raise TypeError("context must be a StepExecutionContext")
@@ -109,7 +119,7 @@ class ToolCallingStepRunner:
             by the runtime. After receiving tool results, decide whether more
             calls are necessary. When sufficient evidence exists, return concise
             final text describing the step result, evidence, and unresolved issues.
-            When the budget is exhausted, no tools will be supplied: finalize from
+            When the budget is exhausted, tools can no longer be called: finalize from
             existing evidence and report failed if required evidence is missing.
             Do not output a plan JSON. Do not claim success if the step is blocked
             or incomplete. Use the language of active_goal.
@@ -135,13 +145,17 @@ class ToolCallingStepRunner:
                 Keep the result concise; preserve useful citations rather than copying
                 entire files or repeating every observation.
             ''')
-        if context.final_step:
-            system += FINAL_STEP_RULES
         # Include all fields, retaining task identity and revision metadata.
-        user = json.dumps(
-            asdict(context), ensure_ascii=False, indent=2, default=encode_datetime
-        )
-        return SystemMessage(content=system), UserMessage(content=user)
+        fields = asdict(context)
+        ordered = {name: fields.pop(name) for name in CONTEXT_FIELD_ORDER if name in fields}
+        ordered.update(fields)
+        user = json.dumps(ordered, ensure_ascii=False, indent=2, default=encode_datetime)
+        messages = (SystemMessage(content=system), UserMessage(content=user))
+        if context.final_step:
+            # After the context rather than inside the first message, so the last step's
+            # request starts like the earlier steps' requests (D-057).
+            messages += (SystemMessage(content=FINAL_STEP_RULES.strip()),)
+        return messages
 
     async def _generate(self, messages, tools, source_refs):
         try:
@@ -234,11 +248,13 @@ class ToolCallingStepRunner:
         tool_rounds = 0
         self.argument_repair_count = 0
         unavailable_replies = 0
+        wrap_up_sent = False
 
         while True:
             request_tools = tools
             if tool_rounds >= self._max_tool_rounds or len(all_tool_calls) >= self._max_total_tool_calls:
-                request_tools = ()
+                # Still listed so the request starts as before (prompt cache), but not callable (D-057).
+                request_tools = ToolsShownOnly(tools)
             try:
                 turn = await self._generate(messages, request_tools, source_refs)
             except StepModelError as exc:
@@ -279,13 +295,12 @@ class ToolCallingStepRunner:
                 )
 
             # Reject the entire batch before executing any of its tools.
-            if tool_rounds >= self._max_tool_rounds:
+            over_rounds = tool_rounds >= self._max_tool_rounds
+            over_total = len(all_tool_calls) + len(turn.tool_calls) > self._max_total_tool_calls
+            if (over_rounds or over_total) and (not self._require_step_outcome or wrap_up_sent):
                 raise ToolRoundLimitError(
-                    f"tool round limit exceeded: {self._max_tool_rounds}", tuple(source_refs)
-                )
-            if len(all_tool_calls) + len(turn.tool_calls) > self._max_total_tool_calls:
-                raise ToolRoundLimitError(
-                    f"total tool call limit exceeded: {self._max_total_tool_calls}", tuple(source_refs)
+                    f"tool round limit exceeded: {self._max_tool_rounds}" if over_rounds
+                    else f"total tool call limit exceeded: {self._max_total_tool_calls}", tuple(source_refs)
                 )
             batch_ids: set[str] = set()
             unavailable = []
@@ -304,6 +319,27 @@ class ToolCallingStepRunner:
                 else:
                     self._tool_registry.get(call.tool_name)
                 batch_ids.add(call.call_id)
+
+            if over_rounds or over_total:
+                # The step's tool budget is spent. Instead of discarding what was read, refuse this
+                # batch and ask once for the step outcome from the evidence so far; the next
+                # request lists the tools but none can be called (D-057), and a second batch fails (D-053).
+                wrap_up_sent = True
+                messages.append(turn.to_assistant_message())
+                seen_call_ids.update(batch_ids)
+                budget = (f"this step's tool budget ({self._max_tool_rounds} rounds, "
+                          f"{self._max_total_tool_calls} calls) is used up")
+                for call in turn.tool_calls:
+                    messages.append(ToolMessage(call_id=call.call_id, content=json.dumps({
+                        "success": False, "content": "", "error": f"not executed: {budget}",
+                        "source_refs": []}, ensure_ascii=False)))
+                messages.append(SystemMessage(
+                    f"No more tools in this step: {budget}. Give the step outcome now from the tool "
+                    "results you already have. If they are enough for this step, report succeeded and "
+                    "write down every finding later steps need; otherwise report failed and say "
+                    "what is still missing."))
+                tool_rounds = self._max_tool_rounds
+                continue
 
             if unavailable:
                 # Nothing in the batch runs. Tell the model in this round instead of failing the step

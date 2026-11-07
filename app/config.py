@@ -79,6 +79,12 @@ class Settings(BaseSettings):
     # Per-call output cap; 2048 cut off whole modules and pages in the bench (D-036).
     context_output_tokens: int = Field(default=8192, gt=0)
     context_safety_tokens: int = Field(default=1024, ge=0)
+    # Context window of the agent's chat model when it differs from CONTEXT_WINDOW_TOKENS,
+    # e.g. a large GPT model behind AGENT_MODEL_BASE_URL. Tool-result budgets scale with it (D-052).
+    agent_model_context_tokens: int | None = Field(default=None, gt=0)
+    # Send prompt_cache_key (one per conversation) to the separate endpoint so its requests
+    # are routed together and hit the prompt cache more often (D-057); turn off if refused.
+    agent_model_prompt_cache_key: bool = True
 
     # Web backend (D-046): local only by default; a token is required unless explicitly waived.
     web_host: str = "127.0.0.1"
@@ -130,6 +136,11 @@ class Settings(BaseSettings):
         if bool(self.agent_model_base_url) != bool(self.agent_model_api_key):
             raise ValueError("AGENT_MODEL_BASE_URL and AGENT_MODEL_API_KEY must be set together")
         return self
+
+    @property
+    def agent_model_window_tokens(self) -> int:
+        """Context window of the agent's chat model (D-052)."""
+        return self.agent_model_context_tokens or self.context_window_tokens
 
     @property
     def agent_model_endpoint(self) -> tuple[str, str, str]:

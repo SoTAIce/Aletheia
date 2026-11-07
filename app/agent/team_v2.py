@@ -40,7 +40,8 @@ from app.tools.tool_registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 RUNNER_ID = 'agent_team'
-READ_TOOLS = frozenset({'get_current_time', 'read_file', 'list_directory', 'retrieve_knowledge', 'search_web'})
+READ_TOOLS = frozenset({'get_current_time', 'read_file', 'list_directory', 'search_files',   # D-055
+                        'retrieve_knowledge', 'search_web'})
 _LEAD_ARGUMENT_REPAIRS = 3
 
 
@@ -125,7 +126,7 @@ ACCEPTANCE_PREFIX = 'test_acceptance'
 _ACCEPTANCE_NAME = re.compile(r'test_acceptance[A-Za-z0-9_-]*\.py')
 _UNAVAILABLE = 'Model requested unavailable tool: '
 _TOOL_NAME = re.compile(r'[A-Za-z][A-Za-z0-9_.-]{0,63}')
-VERIFIER_TOOLS = frozenset({'read_file', 'list_directory', 'write_file', 'run_tests'})
+VERIFIER_TOOLS = frozenset({'read_file', 'list_directory', 'search_files', 'write_file', 'run_tests'})
 
 
 def _is_acceptance(path):

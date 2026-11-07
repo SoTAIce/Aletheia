@@ -15,8 +15,9 @@ async def test_large_tool_result_retains_original_with_recoverable_preview(tmp_p
     view = await manager.project_tool_result(result)
     assert view['success'] is True and view['truncated'] is True
     assert len(view['content']) <= 80
-    recovered = json.loads(archive.read_text(view['storage_ref'],limit=10000))
-    assert recovered['content'] == result.content and recovered['call_id'] == 'call'
+    # The archive keeps the tool's own text, so offsets match what was read (D-052).
+    assert archive.read_text(view['storage_ref'],limit=10000) == result.content
+    assert view['total_chars'] == len(result.content)
     assert len(result.content) > 5000
     assert await manager.project_tool_result(result) == view
 
@@ -26,8 +27,10 @@ async def test_archive_read_tool_is_bounded_and_session_scoped(tmp_path):
     ref = a.save_text('0123456789')
     tool = ContextArchiveTool(a)
     result = await tool.invoke({'ref':ref,'offset':2,'limit':4})
-    assert result.success and result.content == '2345'
-    for args in [{'ref':ref,'limit':16001},{'ref':'../../outside'}, {'ref':ref,'offset':True}]:
+    assert result.success and result.content == '2345\n[more text follows; continue with offset=6]'   # D-052
+    # A limit above the tool's maximum is served up to that maximum (D-052).
+    assert (await tool.invoke({'ref':ref,'limit':16001})).content == '0123456789'
+    for args in [{'ref':ref,'limit':0},{'ref':'../../outside'}, {'ref':ref,'offset':True}]:
         assert not (await tool.invoke(args)).success
     assert not (await ContextArchiveTool(b).invoke({'ref':ref})).success
 

@@ -536,6 +536,13 @@ function agentPart(turn, extra = {}) {
         stat.append(icon(name), document.createTextNode(text));
         foot.append(stat);
       }
+      // D-054: shown only when the provider reports cache hits; "not reported" is not "0".
+      if (usage.calls_with_cache_report && usage.prompt_tokens) {
+        const cached = usage.cached_prompt_tokens || 0;
+        const stat = el('span', 'stat', `命中缓存 ${Math.floor(cached * 100 / usage.prompt_tokens)}%`);
+        stat.title = `输入令牌 ${usage.prompt_tokens.toLocaleString('zh-CN')}，其中 ${cached.toLocaleString('zh-CN')} 命中服务商缓存`;
+        foot.append(stat);
+      }
     }
     if (turn.status === 'completed') foot.append(copyButton(() => turn.reply || '', '复制回复'));
     part.append(foot);

@@ -27,7 +27,7 @@ async def test_filesystem_stdio_registry(tmp_path, writable):
     registry = ToolRegistry()
     async with MCPClient.connect(parameters) as client:
         tools = await client.list_tools()
-        expected = {"read_file", "list_directory"}
+        expected = {"read_file", "list_directory", "search_files"}      # search_files: D-055
         if writable:
             expected.add("write_file")
         assert {tool.name for tool in tools} == expected

@@ -23,8 +23,9 @@ def _contexts(steps):
 
 
 def _system(context, **options):
+    """Every system message before the conversation starts, joined."""
     runner = ToolCallingStepRunner(AsyncMock(), ToolRegistry(), **options)
-    return runner._build_initial_messages(context)[0].content
+    return '\n\n'.join(m.content for m in runner._build_initial_messages(context) if m.role == 'system')
 
 
 def test_only_the_last_step_is_marked_final():
@@ -38,7 +39,11 @@ def test_final_step_rules_are_added_only_to_the_last_step():
     for options in ({}, {'require_step_outcome': True}):
         assert FINAL_STEP_RULES not in _system(first, **options)
         system = _system(last, **options)
-        assert system.endswith(FINAL_STEP_RULES)
+        assert system.endswith(FINAL_STEP_RULES.strip())
+        # After the context, so the last step's request starts like the earlier ones (D-057).
+        runner = ToolCallingStepRunner(AsyncMock(), ToolRegistry(), **options)
+        firsts, lasts = runner._build_initial_messages(first), runner._build_initial_messages(last)
+        assert firsts[0] == lasts[0] and lasts[-1].content == FINAL_STEP_RULES.strip()
     assert 'nothing else' in FINAL_STEP_RULES and 'however long' in FINAL_STEP_RULES
 
 

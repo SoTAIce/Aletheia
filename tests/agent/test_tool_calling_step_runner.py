@@ -33,9 +33,10 @@ def test_initial_messages_preserve_full_context_without_side_effects():
     runner = ToolCallingStepRunner(model, registry, max_tool_rounds=2, max_total_tool_calls=3)
     before = wm.snapshot()
     messages = runner._build_initial_messages(context)
-    assert isinstance(messages, tuple) and len(messages) == 2
-    system, user = messages
+    assert isinstance(messages, tuple) and len(messages) == 3      # the only step is the final one
+    system, user, final_rules = messages
     assert isinstance(system, SystemMessage) and isinstance(user, UserMessage)
+    assert isinstance(final_rules, SystemMessage)
     expected = json.loads(json.dumps(asdict(context), default=lambda v: v.isoformat()
                                      if isinstance(v, datetime) else v))
     assert json.loads(user.content) == expected
@@ -63,7 +64,7 @@ def test_initial_messages_empty_optional_fields_and_bad_type():
 
 from types import SimpleNamespace
 import asyncio
-from app.agent.step_models import ModelTurn, ToolCall, ToolDefinition, ToolOutput, AssistantMessage, ToolMessage
+from app.agent.step_models import ModelTurn, ToolCall, ToolDefinition, ToolOutput, AssistantMessage, ToolMessage, ToolsShownOnly
 from app.agent.step_runner import StepRunError, StepRunnerContractError, ToolRoundLimitError
 from app.agent.tool_calling_model import ModelRequestError
 
@@ -96,10 +97,10 @@ async def test_loop_messages_results_and_exact_budget():
     assert tool.invoke.await_count == 2 and model.generate.await_count == 2
     first = model.generate.call_args_list[0].args[0]
     second = model.generate.call_args_list[1].args[0]
-    assert len(first) == 2 and len(second) == 5
-    assert isinstance(second[2], AssistantMessage)
-    assert isinstance(second[3], ToolMessage) and second[3].call_id == "a"
-    assert json.loads(second[3].content)["success"] is True
+    assert len(first) == 3 and len(second) == 6
+    assert isinstance(second[3], AssistantMessage)
+    assert isinstance(second[4], ToolMessage) and second[4].call_id == "a"
+    assert json.loads(second[4].content)["success"] is True
 
 
 @pytest.mark.asyncio
@@ -227,7 +228,8 @@ async def test_exhausted_tool_budget_requests_finalization_without_more_tools():
     ], require_step_outcome=True, max_tool_rounds=1)
     output = await runner.run(context)
     assert output.content == 'Verified evidence'
-    assert model.generate.call_args.args[1] == ()
+    tools = model.generate.call_args.args[1]
+    assert isinstance(tools, ToolsShownOnly) and [t.name for t in tools] == ['read']   # listed, not callable
     tool.invoke.assert_awaited_once()
 
 

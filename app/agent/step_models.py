@@ -43,6 +43,14 @@ class ToolDefinition:
     description: str
     input_schema: dict[str, Any]
 
+
+class ToolsShownOnly(tuple):
+    """Tool definitions sent with a request in which no tool may be called (D-057).
+
+    Sending the same tools as the earlier requests keeps the request's start unchanged, so
+    the provider's prompt cache still applies; the provider is told not to call any of them.
+    """
+
 @dataclass(frozen = True, slots = True)
 class ToolCall:
 

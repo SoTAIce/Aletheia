@@ -122,7 +122,32 @@ class FileAccess:
 
         return resolved_path
 
-    def read_file(self, path: str) -> str:
+    def read_file(self, path: str, start_line: int | None = None, max_lines: int | None = None) -> str:
+        """Whole file, or a 1-based line range when start_line or max_lines is given (D-052).
+
+        A ranged read ends with a note naming the lines shown, the total, and where to
+        continue, so a long source file can be read piece by piece.
+        """
+        for name, value in (("start_line", start_line), ("max_lines", max_lines)):
+            if value is not None and (type(value) is not int or value < 1):
+                raise ValueError(f"{name} must be a positive integer")
+        text = self._read_whole(path)
+        if start_line is None and max_lines is None:
+            return text
+        lines = text.splitlines(keepends=True)
+        first = start_line or 1
+        if first > max(len(lines), 1):
+            raise ValueError(f"start_line {first} is past the end of the file ({len(lines)} lines)")
+        chosen = lines[first - 1:first - 1 + max_lines] if max_lines is not None else lines[first - 1:]
+        last = first + len(chosen) - 1
+        body = "".join(chosen)
+        if body and not body.endswith("\n"):
+            body += "\n"
+        note = f"[lines {first}-{last} of {len(lines)}"
+        note += f"; continue with start_line={last + 1}]" if last < len(lines) else "; end of file]"
+        return body + note
+
+    def _read_whole(self, path: str) -> str:
         resolved_path = self.resolve_read_path(path)
 
         with resolved_path.open("rb") as file:
@@ -132,7 +157,84 @@ class FileAccess:
             raise ValueError(
                 f"file exceeds the read limit of {self._max_read_bytes} bytes"
             )
+        return self._decode(data)
 
+    # ---- search (D-055) ---------------------------------------------------------------
+    # Directories never worth searching: caches, installed packages, virtual environments.
+    _SEARCH_SKIP_DIRS = frozenset({"__pycache__", "node_modules", "site-packages", "venv", ".venv"})
+    SEARCH_MAX_FILES = 5000
+    SEARCH_MAX_RESULTS = 200
+    SEARCH_LINE_CHARS = 300
+
+    def search_files(self, pattern: str, path: str = ".", glob: str | None = None,
+                     regex: bool = False, ignore_case: bool = False, max_results: int = 50) -> dict:
+        """Lines matching pattern under path, as {path, line, text}, for reading around them
+        with read_file(start_line=...). Read-only and bounded: hidden, secret and cache
+        directories, symlinks, binary files and files over the read limit are skipped."""
+        import fnmatch
+        if not isinstance(pattern, str) or not pattern or len(pattern) > 200:
+            raise ValueError("pattern must be a non-empty string of at most 200 characters")
+        if glob is not None and (not isinstance(glob, str) or not glob or len(glob) > 100):
+            raise ValueError("glob must be a non-empty string of at most 100 characters")
+        for name, value in (("regex", regex), ("ignore_case", ignore_case)):
+            if type(value) is not bool:
+                raise ValueError(f"{name} must be true or false")
+        if type(max_results) is not int or not 1 <= max_results <= self.SEARCH_MAX_RESULTS:
+            raise ValueError(f"max_results must be between 1 and {self.SEARCH_MAX_RESULTS}")
+        flags = re.IGNORECASE if ignore_case else 0
+        try:
+            matcher = re.compile(pattern if regex else re.escape(pattern), flags)
+        except re.error as exc:
+            raise ValueError(f"invalid regular expression: {exc.msg}") from None
+
+        start = self.resolve_read_path(path) if (self._root / path).is_file() else self.resolve_directory_path(path)
+        files = [start] if start.is_file() else self._search_walk(start)
+        matches, searched, skipped, truncated = [], 0, 0, False
+        for file in files:
+            relative = file.relative_to(self._root).as_posix()
+            if glob is not None and not (fnmatch.fnmatch(file.name, glob) or fnmatch.fnmatch(relative, glob)):
+                continue
+            if searched >= self.SEARCH_MAX_FILES:
+                truncated = True
+                break
+            searched += 1
+            try:
+                with file.open("rb") as handle:
+                    data = handle.read(self._max_read_bytes + 1)
+                if len(data) > self._max_read_bytes or b"\x00" in data:
+                    skipped += 1
+                    continue
+                text = self._decode(data)
+            except (OSError, ValueError):
+                skipped += 1
+                continue
+            for number, line in enumerate(text.splitlines(), 1):
+                if matcher.search(line[:2000]):
+                    if len(matches) >= max_results:
+                        truncated = True
+                        break
+                    matches.append({"path": relative, "line": number,
+                                    "text": line.strip()[:self.SEARCH_LINE_CHARS]})
+            if truncated:
+                break
+        return {"matches": matches, "files_searched": searched, "files_skipped": skipped,
+                "truncated": truncated}
+
+    def _search_walk(self, directory: Path):
+        for current, dirs, names in os.walk(directory, followlinks=False):
+            base = Path(current)
+            dirs[:] = sorted(d for d in dirs
+                             if not d.startswith(".") and d not in self._SEARCH_SKIP_DIRS
+                             and not (base / d).is_symlink()
+                             and not is_secret_path((base / d).relative_to(self._root).parts))
+            for name in sorted(names):
+                file = base / name
+                if file.is_symlink() or is_secret_path(file.relative_to(self._root).parts):
+                    continue
+                yield file
+
+    @staticmethod
+    def _decode(data: bytes) -> str:
         # A BOM is authoritative; malformed marked data must not fall back.
         # UTF-32 LE shares its first two BOM bytes with UTF-16 LE.
         if data.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):

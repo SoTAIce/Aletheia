@@ -15,8 +15,20 @@ import time
 from app.config import config
 
 
+MAX_CALL_LOG = 200
+
+
 def _non_negative_int(value):
     return value if type(value) is int and value >= 0 else None
+
+
+def _cached_tokens(usage):
+    """Cached prompt tokens as OpenAI-compatible providers report them
+    (usage.prompt_tokens_details.cached_tokens), or None when not reported."""
+    details = getattr(usage, 'prompt_tokens_details', None)
+    if isinstance(details, dict):
+        return _non_negative_int(details.get('cached_tokens'))
+    return _non_negative_int(getattr(details, 'cached_tokens', None))
 
 
 @dataclass(slots=True)
@@ -27,6 +39,14 @@ class RunMeter:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     calls_without_usage: int = 0
+    # Prompt tokens the provider served from its prompt cache (part of prompt_tokens), and how
+    # many calls reported that figure at all; 0 hits and "not reported" differ (D-054).
+    cached_prompt_tokens: int = 0
+    calls_with_cache_report: int = 0
+    # One entry per call, in order, to see which calls missed the cache (D-056): prompt,
+    # cached (None = not reported), completion, and how much of the previous request to the
+    # same model this one starts with unchanged (shared_prefix, 0..1; None = unknown).
+    call_log: list = field(default_factory=list)
     started: float = field(default_factory=time.monotonic)
 
     def __post_init__(self):
@@ -41,16 +61,26 @@ class RunMeter:
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
 
-    def record(self, usage) -> None:
+    def record(self, usage, shared_prefix: float | None = None) -> None:
         """Add one provider call; usage is the provider's usage object, or None."""
         self.model_calls += 1
         prompt = _non_negative_int(getattr(usage, 'prompt_tokens', None))
         completion = _non_negative_int(getattr(usage, 'completion_tokens', None))
+        cached = None if prompt is None and completion is None else _cached_tokens(usage)
+        if cached is not None and prompt is not None:
+            cached = min(cached, prompt)
+        if len(self.call_log) < MAX_CALL_LOG:
+            share = shared_prefix if isinstance(shared_prefix, float) and 0 <= shared_prefix <= 1 else None
+            self.call_log.append({'prompt': prompt, 'cached': cached, 'completion': completion,
+                                  'shared_prefix': None if share is None else round(share, 3)})
         if prompt is None and completion is None:
             self.calls_without_usage += 1
             return
         self.prompt_tokens += prompt or 0
         self.completion_tokens += completion or 0
+        if cached is not None:
+            self.calls_with_cache_report += 1
+            self.cached_prompt_tokens += cached
 
     def elapsed(self) -> float:
         return time.monotonic() - self.started
@@ -75,9 +105,31 @@ class RunMeter:
     def snapshot(self) -> dict:
         usage = {'model_calls': self.model_calls, 'prompt_tokens': self.prompt_tokens,
                  'completion_tokens': self.completion_tokens, 'total_tokens': self.total_tokens,
-                 'calls_without_usage': self.calls_without_usage, 'seconds': round(self.elapsed(), 3)}
+                 'calls_without_usage': self.calls_without_usage,
+                 'cached_prompt_tokens': self.cached_prompt_tokens,
+                 'calls_with_cache_report': self.calls_with_cache_report,
+                 'seconds': round(self.elapsed(), 3),
+                 'calls': [dict(entry) for entry in self.call_log]}
         usage['estimated_cost'] = estimated_cost(self.prompt_tokens, self.completion_tokens)
         return usage
+
+
+def cache_text(usage: dict) -> str:
+    """Log text for the cache figures of a usage snapshot (D-054)."""
+    reported, calls = usage.get('calls_with_cache_report', 0), usage.get('model_calls', 0)
+    if not reported:
+        return 'not reported'
+    prompt, cached = usage.get('prompt_tokens', 0), usage.get('cached_prompt_tokens', 0)
+    share = f'{cached * 100 // prompt}%' if prompt else '0%'
+    return f'{cached} ({share} of prompt; reported by {reported}/{calls} calls)'
+
+
+def call_text(entry: dict) -> str:
+    """Log text for one call of a usage snapshot (D-056)."""
+    cached = 'not reported' if entry.get('cached') is None else entry['cached']
+    share = entry.get('shared_prefix')
+    same = 'unknown' if share is None else f'{int(share * 100)}%'
+    return f"prompt {entry.get('prompt')}, cached {cached}, previous request kept {same}"
 
 
 def estimated_cost(prompt_tokens: int, completion_tokens: int) -> float | None:
@@ -104,7 +156,7 @@ def metering(meter: RunMeter):
         _current.reset(token)
 
 
-def record_model_call(usage) -> None:
+def record_model_call(usage, shared_prefix: float | None = None) -> None:
     meter = _current.get()
     if meter is not None:
-        meter.record(usage)
+        meter.record(usage, shared_prefix)

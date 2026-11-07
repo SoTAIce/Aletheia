@@ -13,6 +13,15 @@ from app.services.rag_agent_service import RagAgentService
 from app.tools.tool_loader import local_mcp_servers
 
 
+def cache_line(usage: dict) -> str:
+    """缓存命中的中文说明（D-054）：服务商没报告时直接说明，不显示成 0。"""
+    if not usage.get('calls_with_cache_report'):
+        return '缓存命中：服务商未报告'
+    prompt, cached = usage.get('prompt_tokens', 0), usage.get('cached_prompt_tokens', 0)
+    share = cached * 100 // prompt if prompt else 0
+    return f'其中输入命中缓存 {cached}（{share}%）'
+
+
 def team_options_for(execution_mode, write_root, sandbox=False, timeout_seconds=None, acceptance=False):
     """Options for the delegating team (DECISIONS D-019; the only team since D-025); None when no team can run.
 
@@ -172,7 +181,7 @@ async def interactive(service, args, read_line=None, write=print, memory=None) -
         usage = result.usage or {}
         if usage.get('model_calls'):
             write(f"用量：模型调用 {usage['model_calls']} 次，令牌 {usage.get('total_tokens', 0)}，"
-                  f"耗时 {usage.get('seconds', 0)} 秒")
+                  f"{cache_line(usage)}，耗时 {usage.get('seconds', 0)} 秒")
         if result.status is TaskStatus.BLOCKED:
             waiting = result.task_id
             write('任务在等待你的回答：直接输入回答继续，输入 /new 放弃。')

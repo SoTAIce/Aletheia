@@ -24,14 +24,35 @@ def create_server(
     mcp = FastMCP("AletheiaFilesystem")
 
     @mcp.tool()
-    def read_file(path: str) -> str:
+    def read_file(path: str, start_line: int | None = None, max_lines: int | None = None) -> str:
         """Read a text file relative to the configured READ root.
 
         Absolute paths and parent traversal are forbidden. Reads are bounded
         by the configured byte limit. Unicode BOMs are recognized; otherwise
         UTF-8 is tried before GB18030. The file must already exist.
+        Optional start_line (1-based) and max_lines read a range of lines; the
+        result then ends with a note like "[lines 1-200 of 540; continue with
+        start_line=201]". Use them for long files instead of reading saved copies.
+        To find where something is defined or used, call search_files first and
+        read only the lines around its matches.
         """
-        return file_access.read_file(path)
+        return file_access.read_file(path, start_line=start_line, max_lines=max_lines)
+
+    @mcp.tool()
+    def search_files(pattern: str, path: str = ".", glob: str | None = None, regex: bool = False,
+                     ignore_case: bool = False, max_results: int = 50) -> dict:
+        """Find lines containing pattern in text files under path (a directory or one file)
+        relative to the READ root. Returns matches as {path, line, text}, plus how many files
+        were searched or skipped and whether results were cut off.
+
+        pattern is plain text unless regex=true. glob filters file names or paths, e.g.
+        "*.py" or "app/agent/*.py". max_results is 1-200 (default 50). Hidden, secret and
+        cache directories, binary files and files over the read limit are skipped.
+        Use it to locate a function or name, then read_file(path, start_line=line-20,
+        max_lines=80) around the match instead of reading whole files.
+        """
+        return file_access.search_files(pattern, path=path, glob=glob, regex=regex,
+                                        ignore_case=ignore_case, max_results=max_results)
 
     if write_root is not None:
         read_root = root.resolve(strict=True)

@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import math
+import os
 from copy import deepcopy
 from collections.abc import Sequence
 from typing import Any
@@ -16,7 +17,7 @@ from openai.types.chat import ChatCompletion
 
 from app.agent.step_models import (
     AssistantMessage, ModelMessage, ModelTurn, SystemMessage,
-    ToolCall, ToolDefinition, ToolMessage, UserMessage,
+    ToolCall, ToolDefinition, ToolMessage, ToolsShownOnly, UserMessage,
 )
 from app.agent.tool_calling_model import ModelRequestError, ModelResponseError, ModelTimeoutError
 from app.agent.tool_calling_model import ModelContextOverflowError, ModelOutputLimitError
@@ -53,6 +54,7 @@ class OpenAICompatibleToolCallingModel:
         enable_thinking: bool | None = None,
         max_retries: int = 2,
         retry_delay_seconds: float = 0.5,
+        prompt_cache_key: str | None = None,
     ) -> None:
         create = getattr(getattr(getattr(client, "chat", None), "completions", None), "create", None)
         if not callable(create):
@@ -77,6 +79,9 @@ class OpenAICompatibleToolCallingModel:
                 raise ValueError("max_output_tokens must be greater than zero")
         if timeout_seconds is not None and timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be greater than zero")
+        if prompt_cache_key is not None and (
+                not isinstance(prompt_cache_key, str) or not prompt_cache_key.strip() or len(prompt_cache_key) > 64):
+            raise ValueError("prompt_cache_key must be a nonempty string of at most 64 characters or None")
         if type(max_retries) is not int or max_retries < 0:
             raise ValueError("max_retries must be a non-negative integer")
         if (isinstance(retry_delay_seconds, bool) or not isinstance(retry_delay_seconds, (int, float))
@@ -92,6 +97,12 @@ class OpenAICompatibleToolCallingModel:
         self._enable_thinking = enable_thinking
         self._max_retries = max_retries
         self._retry_delay_seconds = float(retry_delay_seconds)
+        # Requests with the same key are routed together by OpenAI-style providers, which
+        # raises prompt-cache hits (D-057); None sends nothing.
+        self._prompt_cache_key = prompt_cache_key
+        # The last request sent, serialized, to measure how much of the next one starts the
+        # same way (a provider prompt cache can only reuse a shared start; D-056).
+        self._previous_request: str | None = None
 
     @staticmethod
     def _require_text(value: object, field: str) -> None:
@@ -113,10 +124,17 @@ class OpenAICompatibleToolCallingModel:
         }
         if provider_tools:
             request_kwargs["tools"] = provider_tools
+            if isinstance(tools, ToolsShownOnly):
+                request_kwargs["tool_choice"] = "none"     # shown for the cache, not callable (D-057)
         if self._json_mode:
             request_kwargs["response_format"] = {"type": "json_object"}
+        extra_body = {}
         if self._enable_thinking is not None:
-            request_kwargs["extra_body"] = {"enable_thinking": self._enable_thinking}
+            extra_body["enable_thinking"] = self._enable_thinking
+        if self._prompt_cache_key is not None:
+            extra_body["prompt_cache_key"] = self._prompt_cache_key
+        if extra_body:
+            request_kwargs["extra_body"] = extra_body
 
         if self._temperature is not None:
             request_kwargs["temperature"] = self._temperature
@@ -129,7 +147,8 @@ class OpenAICompatibleToolCallingModel:
         attempt = 0
         while True:
             try:
-                return await self._request_once(request_kwargs)
+                shared = self._shared_start(request_kwargs)
+                return await self._request_once(request_kwargs, shared)
             except (ModelRequestError, ModelResponseError) as exc:
                 delay = self._retry_delay(exc, attempt)
                 if delay is None:
@@ -158,16 +177,31 @@ class OpenAICompatibleToolCallingModel:
                 return None
         return delay
 
-    async def _request_once(self, request_kwargs: dict[str, Any]) -> ModelTurn:
+    def _shared_start(self, request_kwargs: dict[str, Any]) -> float | None:
+        """Share of the previous request (tools, then messages) that this one starts with
+        unchanged, or None for the first request; only the ratio is kept (D-056). A request
+        that only appends to the previous one gives about 1, whatever it appends."""
+        current = json.dumps([request_kwargs.get("tools"), request_kwargs["messages"]],
+                             ensure_ascii=False, default=str)
+        previous, self._previous_request = self._previous_request, current
+        if not previous:
+            return None
+        # The serialized previous request ends with its closing brackets, which an appended
+        # request replaces; they do not count as a change.
+        kept = len(os.path.commonprefix([previous, current]))
+        return min(1.0, kept / max(1, len(previous.rstrip(']'))))
+
+    async def _request_once(self, request_kwargs: dict[str, Any], shared: float | None = None) -> ModelTurn:
         try:
             try:
                 raw_response = await self._client.chat.completions.create(
                     **request_kwargs
                 )
             except BaseException:
-                record_model_call(None)   # the request was sent; its usage is unknown (D-034)
+                # the request was sent; its usage is unknown (D-034)
+                record_model_call(None, shared)
                 raise
-            record_model_call(getattr(raw_response, 'usage', None))
+            record_model_call(getattr(raw_response, 'usage', None), shared)
         except APIResponseValidationError as exc:
             raise _retryable(ModelResponseError("provider returned an invalid response")) from exc
         except APITimeoutError as exc:

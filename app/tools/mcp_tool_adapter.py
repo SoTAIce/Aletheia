@@ -10,6 +10,24 @@ from app.agent.step_models import ToolDefinition, ToolOutput
 from app.tools.mcp_client import MCPClient
 
 
+def _same_as_text(structured: Any, text: str) -> bool:
+    """True when structuredContent only repeats the text blocks (D-052).
+
+    FastMCP returns a str result both as text and as {"result": text}, and a dict
+    result as its JSON text plus the dict; appending both doubled every read_file.
+    """
+    if not text:
+        return False
+    if structured == {"result": text}:
+        return True
+    try:
+        parsed = json.loads(text)
+    except ValueError:
+        return False
+    return parsed == structured or (isinstance(structured, dict) and structured.keys() == {"result"}
+                                    and parsed == structured["result"])
+
+
 class MCPToolAdapter:
     def __init__(self, client: MCPClient, tool: Tool) -> None:
         self._client = client
@@ -29,7 +47,7 @@ class MCPToolAdapter:
         if any(not isinstance(block, TextContent) for block in result.content):
             raise TypeError("MCPToolAdapter currently supports text/JSON results only")
         content = "\n".join(block.text for block in result.content)
-        if result.structuredContent is not None:
+        if result.structuredContent is not None and not _same_as_text(result.structuredContent, content):
             structured = json.dumps(result.structuredContent, ensure_ascii=False)
             content = f"{content}\n{structured}" if content else structured
         return ToolOutput(

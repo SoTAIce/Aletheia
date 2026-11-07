@@ -1,6 +1,7 @@
 """Session-facing service using Aletheia's single registry and AgentRuntime."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import math
@@ -201,8 +202,16 @@ class RagAgentService:
             ensure_ascii=False,
             separators=(",", ":"),
         )
+    @staticmethod
+    def _prompt_cache_key(label: str) -> str | None:
+        """Per-conversation cache routing key for the separate endpoint (D-057): a hash, so
+        the session and user names never leave the machine; DashScope gets none."""
+        if not (config.agent_model_base_url and config.agent_model_prompt_cache_key):
+            return None
+        return 'aletheia-' + hashlib.sha256(label.encode('utf-8')).hexdigest()[:24]
+
     @asynccontextmanager
-    async def _models(self):
+    async def _models(self, cache_key: str | None = None):
         if self.model is not None:
             yield self._planner_model or PlanningModel(self.model), self.model
             return
@@ -217,6 +226,7 @@ class RagAgentService:
                 # enable_thinking is a DashScope parameter; other endpoints may reject it.
                 enable_thinking=None if config.agent_model_base_url else config.rag_enable_thinking,
                 max_output_tokens=config.context_output_tokens,
+                prompt_cache_key=cache_key,
             )
             yield self._planner_model or PlanningModel(model), model
 
@@ -364,7 +374,7 @@ class RagAgentService:
                 raise
             try:
                 context_manager = ContextManager(
-                    window_tokens=config.context_window_tokens, output_tokens=config.context_output_tokens,
+                    window_tokens=config.agent_model_window_tokens, output_tokens=config.context_output_tokens,
                     safety_tokens=config.context_safety_tokens, archive=conversation.archive,
                 )
                 if runtime is not None:
@@ -383,13 +393,15 @@ class RagAgentService:
                                 task.pin_content(payload, 'longterm_memory')
                         except Exception as exc:
                             logger.warning('Long-term recall unavailable: %s', type(exc).__name__)
-                async with self._models() as (planner_model, model):
+                cache_key = self._prompt_cache_key(self._archive_label(user_id, session_id))
+                async with self._models(cache_key) as (planner_model, model):
                     if self._planner_model is None:
                         planner_model = PlanningModel(ContextManagedModel(model, context_manager))
                     async with open_tool_registry(
                         memory, mcp_servers=self._mcp_servers, conversation=conversation,
                         knowledge_search=self._knowledge_search, include_knowledge=self._include_knowledge,
-                        local_tools=(ContextArchiveTool(conversation.archive),) if conversation.archive else (),
+                        local_tools=(ContextArchiveTool(conversation.archive, context_manager.tool_result_chars),)
+                                    if conversation.archive else (),
                         context_manager=context_manager,
                     ) as registry:
                         # The mode is chosen once per task and kept when a blocked task resumes (D-026).

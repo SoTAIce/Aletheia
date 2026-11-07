@@ -477,7 +477,8 @@ class ConversationArchive:
             return self._publish_artifact(kind, text, metadata or {})
 
     def read_text(self, ref: str, offset: int = 0, limit: int = 8000) -> str:
-        if type(offset) is not int or offset < 0 or type(limit) is not int or not 0 <= limit <= 16000:
+        # The read size follows the model's inline tool-result budget, up to 120000 characters (D-052).
+        if type(offset) is not int or offset < 0 or type(limit) is not int or not 0 <= limit <= 200000:
             raise ValueError("invalid archive text offset or limit")
         with self._lock:
             return self._read_artifact(ref)["text"][offset:offset + limit]

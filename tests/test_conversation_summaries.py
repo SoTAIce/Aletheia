@@ -47,7 +47,7 @@ def test_text_artifacts_are_bounded_and_session_bound(tmp_path):
             archive.read_text(bad)
     with pytest.raises(ValueError):
         ConversationArchive(tmp_path, 'two').read_text(ref)
-    for kwargs in ({'offset': -1}, {'limit': 16001}, {'limit': True}):
+    for kwargs in ({'offset': -1}, {'limit': 200001}, {'limit': True}):
         with pytest.raises(ValueError):
             archive.read_text(ref, **kwargs)
 
