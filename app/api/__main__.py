@@ -1,7 +1,7 @@
 """Run the web backend from the project root: python -m app.api (D-046).
 
-Writing files and the sandbox are startup choices only (--write-root, --sandbox), never
-switched from the page. A token is required unless WEB_ALLOW_NO_TOKEN=true on a loopback host.
+Writing files and the sandbox are made available at startup (--write-root, --sandbox); each
+message may then turn writing off, pick its mode and skip long-term memory (D-051). A token is required unless WEB_ALLOW_NO_TOKEN=true on a loopback host.
 """
 
 import argparse
@@ -54,13 +54,16 @@ async def serve(args) -> int:
         if config.longterm_memory_dsn:
             from app.services.longterm_memory_setup import open_longterm_memory
             memory = await stack.enter_async_context(open_longterm_memory())
-        team_options = team_options_for(args.execution_mode, write_root, args.sandbox)
+        # The team is always prepared under the fixed-team rules so a message may pick it; the default
+        # mode stays --execution-mode, and auto still allows the team only with writes and the sandbox
+        # (D-026). The step timeout widens for team tasks only, inside the service (D-051).
+        team_options = team_options_for('team', write_root, args.sandbox)
         service = await stack.enter_async_context(RagAgentService(
             mcp_servers=local_mcp_servers(
                 filesystem_root=args.filesystem_root or config.mcp_filesystem_root or None,
                 write_root=write_root, tavily_api_key=config.tavily_api_key, sandbox=args.sandbox),
             include_knowledge=not args.no_knowledge, execution_mode=args.execution_mode,
-            team_options=team_options, step_timeout_seconds=step_timeout_for(args.sandbox, team_options),
+            team_options=team_options, step_timeout_seconds=step_timeout_for(args.sandbox, None),
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
         ))
         app = create_app(service, user_id=config.web_user_id, access_token=config.web_access_token,

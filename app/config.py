@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     rag_hybrid_candidate_k: int = Field(default=20, gt=0)
     rag_rrf_k: int = Field(default=60, gt=0)
     rag_model: str = "qwen-max"
+    # Optional separate endpoint for the agent's chat model only (D-050). Empty
+    # means the DashScope endpoint and RAG_MODEL; embeddings, knowledge and
+    # long-term memory always stay on DashScope.
+    agent_model_base_url: str = ""
+    agent_model_api_key: str = ""
+    agent_model: str = ""
     rag_json_mode: bool = True
     rag_enable_thinking: bool | None = None
     rag_model_timeout_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
@@ -113,6 +119,24 @@ class Settings(BaseSettings):
         if self.chunk_overlap >= self.chunk_max_size:
             raise ValueError("chunk_overlap must be smaller than chunk_max_size")
         return self
+
+    @model_validator(mode="after")
+    def validate_agent_model_endpoint(self) -> "Settings":
+        # A separate endpoint never falls back to the DashScope key, so that key
+        # is not sent to a third-party host; a separate key alone is meaningless.
+        self.agent_model_base_url = self.agent_model_base_url.strip()
+        self.agent_model_api_key = self.agent_model_api_key.strip()
+        self.agent_model = self.agent_model.strip()
+        if bool(self.agent_model_base_url) != bool(self.agent_model_api_key):
+            raise ValueError("AGENT_MODEL_BASE_URL and AGENT_MODEL_API_KEY must be set together")
+        return self
+
+    @property
+    def agent_model_endpoint(self) -> tuple[str, str, str]:
+        """(base_url, api_key, model) for the agent's chat model."""
+        if self.agent_model_base_url:
+            return self.agent_model_base_url, self.agent_model_api_key, self.agent_model or self.rag_model
+        return self.dashscope_base_url, self.dashscope_api_key, self.agent_model or self.rag_model
 
     @property
     def debug(self) -> bool:

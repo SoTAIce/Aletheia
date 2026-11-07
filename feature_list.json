@@ -877,6 +877,64 @@
         "In a browser against a scripted fake model: sign-in, progress, blocked answer, cancel, reload, new session, memory add and delete, narrow and wide, dark mode all work without console errors."
       ],
       "evidence": "tests/test_web_api.py 23 passed (2 for the page); browser walk-through on a local fake-model server; init.ps1 PASS 1466 passed, 16 skipped. Not tried with a real model."
+    },
+    {
+      "id": "web-ui-refresh-001",
+      "name": "Richer web page: layout, step timeline and formatted replies",
+      "description": "User found the first page too plain (2026-11-06). The page was rebuilt with a branded sidebar, grouped and searchable sessions, a status card, a welcome screen with examples, avatars and reply cards, a plan-matched step timeline, a question banner, a memory drawer and safe formatting of replies. The runtime's plan event now carries step_ids. DECISIONS D-048.",
+      "status": "done",
+      "dependencies": [
+        "web-frontend-001"
+      ],
+      "acceptance": [
+        "Step events can be matched to the plan by step_id.",
+        "Replies are formatted without parsing HTML; links are limited to http and https.",
+        "The page still loads nothing from elsewhere; only the SVG namespace string is allowed.",
+        "In a browser on a fake-model server: wide light, wide dark and phone layouts; send, timeline, formatted reply, question and answer, stop, new session and memory drawer work without console errors."
+      ],
+      "evidence": "tests/test_web_api.py and tests/test_progress_and_history.py 35 passed; browser walk-through on a local fake-model server; init.ps1 PASS 1466 passed, 16 skipped. Not tried with a real model."
+    },
+    {
+      "id": "web-ui-editorial-001",
+      "name": "Editorial documentation look for the web page",
+      "description": "User shared a screenshot of a documentation site on 2026-11-06 and asked for that look. The page now uses a warm paper background, serif titles, thin rules, a light grey left nav, a coral accent, a black pill button and a right-hand outline of the session's turns; each session reads as a document. Same API and features as D-048. DECISIONS D-049.",
+      "status": "done",
+      "dependencies": [
+        "web-ui-refresh-001"
+      ],
+      "acceptance": [
+        "The page tests still pass: same-origin files, strict headers, text-only rendering, no external addresses.",
+        "In a browser on a fake-model server: wide light, wide dark and phone layouts, outline jump and highlight, step list, formatted reply, question and answer, memory drawer, no horizontal scroll and no console errors beyond the pre-sign-in 401s."
+      ],
+      "evidence": "tests/test_web_api.py 23 passed; browser walk-through on a local fake-model server; init.ps1 PASS 1466 passed, 16 skipped. The frontend-design skill was not loadable in this session. Not tried with a real model."
+    },
+    {
+      "id": "agent-model-endpoint-001",
+      "name": "Separate endpoint for the agent's chat model",
+      "description": "User asked on 2026-11-06 to use GPT through a relay while embeddings stay on DashScope. New optional settings AGENT_MODEL_BASE_URL, AGENT_MODEL_API_KEY and AGENT_MODEL send only the agent's chat model (planning and steps) to another OpenAI-compatible endpoint. Base URL and key must be set together so the DashScope key is never sent to a third-party host. Empty means the old behaviour. DECISIONS D-050.",
+      "status": "done",
+      "dependencies": [],
+      "acceptance": [
+        "Without the new settings the agent uses DASHSCOPE_BASE_URL, DASHSCOPE_API_KEY and RAG_MODEL as before.",
+        "With them, agent requests go to the separate URL with the separate key and model; embeddings, knowledge and long-term memory settings are unchanged.",
+        "Setting only one of base URL and key fails at startup."
+      ],
+      "evidence": "tests/test_agent_model_endpoint.py 6 passed; init.ps1 PASS 1472 passed, 16 skipped. Not tried against a real relay."
+    },
+    {
+      "id": "web-feedback-001",
+      "name": "Web page: SVG pictures, clearer speakers, per-message mode, writes and memory",
+      "description": "User feedback on 2026-11-06 after real use: an SVG reply showed as code, the user's and Aletheia's turns were hard to tell apart, and mode, writes and memory should be chosen on the page. SVG in a reply (bare or fenced) is shown through an <img> data URL with view code, copy and download; a malformed one falls back to code. The user's words sit on a shaded card with a 'you' avatar; Aletheia's reply hangs off a coral rule. Each new message can pick single/team/auto, writes on or off and memory on or off, within what the server was started with; a resumed task keeps its own choices. Backend done in a separate session within agreed files. DECISIONS D-051.",
+      "status": "done",
+      "dependencies": [
+        "web-ui-editorial-001"
+      ],
+      "acceptance": [
+        "Model SVG never enters the page DOM: only an <img> with a data URL; scripts and external references inside it do not run or load.",
+        "health reports the available options; unavailable choices are refused with write_unavailable, memory_unavailable or mode_unavailable; a repeated request_id with different options conflicts.",
+        "In a browser on a fake-model server: bare, fenced and broken SVG; light, dark and phone layouts; turning writes off reaches the run as read_only with write false."
+      ],
+      "evidence": "tests/test_run_options.py 25 passed; tests/test_web_api.py 24 passed; browser walk-through on a local fake-model server; init.ps1 PASS 1498 passed, 16 skipped. Not tried with a real model."
     }
   ],
   "cleanup_2026_11_04": {

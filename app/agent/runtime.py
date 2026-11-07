@@ -281,7 +281,8 @@ class AgentRuntime:
                     self._executor.accept_plan(proposal)
                     logger.info('Plan revision {}: {} step(s)', task.plan_revision, len(task.plan))
                     self._emit({'type': 'plan', 'revision': task.plan_revision,
-                                'steps': [step.description for step in task.plan]})
+                                'steps': [step.description for step in task.plan],
+                                'step_ids': [step.step_id for step in task.plan]})
                 except Exception as exc:
                     spent = self._meter.budget_problem()
                     if spent:

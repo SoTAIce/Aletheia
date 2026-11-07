@@ -52,6 +52,8 @@ class Run:
     content: str
     resume_task_id: str | None
     question_id: str | None
+    requested: dict = field(default_factory=dict)   # options as submitted, for idempotency (D-051)
+    options: dict | None = None                     # options in effect: mode, write, memory (D-051)
     events: list[dict] = field(default_factory=list)
     status: str = 'running'          # running | completed | blocked | failed | cancelled
     finished_at: float | None = None
@@ -61,6 +63,8 @@ class Run:
     def add(self, event: dict) -> None:
         if self.finished_at is not None:
             return                    # a late record after the terminal event is dropped
+        if event.get('type') == 'route' and isinstance(event.get('options'), dict):
+            self.options = dict(event['options'])   # the service's record is the one in effect
         self.events.append({'id': len(self.events) + 1, **event})
         changed, self._changed = self._changed, asyncio.Event()
         changed.set()
@@ -74,7 +78,7 @@ class Run:
     def snapshot(self) -> dict:
         terminal = self.events[-1] if self.finished_at is not None and self.events else None
         return {'run_id': self.run_id, 'session_id': self.session_id, 'status': self.status,
-                'event_count': len(self.events), 'result': terminal}
+                'options': self.options, 'event_count': len(self.events), 'result': terminal}
 
     async def follow(self, after: int = 0):
         """Yield events with id > after, then stop once the run has finished."""
@@ -129,15 +133,19 @@ class RunManager:
         return run
 
     def start(self, session_id: str, content: str, request_id: str, *,
-              resume_task_id: str | None = None, question_id: str | None = None) -> tuple[Run, bool]:
-        """Start a run, or return the same run for a repeated request_id. Returns (run, created)."""
+              resume_task_id: str | None = None, question_id: str | None = None,
+              options: dict | None = None, requested: dict | None = None) -> tuple[Run, bool]:
+        """Start a run, or return the same run for a repeated request_id. Returns (run, created).
+
+        options are the resolved choices of a new task; a resume ignores them and keeps the
+        task's own (D-051). requested is what the client sent, compared for a repeated request_id."""
         if self._closing:
             raise ApiError(503, 'shutting_down', '服务正在关闭。')
         self._prune()
         existing = self._runs.get(request_id)
         if existing is not None:
-            if (existing.session_id, existing.content, existing.resume_task_id, existing.question_id) != (
-                    session_id, content, resume_task_id, question_id):
+            if (existing.session_id, existing.content, existing.resume_task_id, existing.question_id,
+                    existing.requested) != (session_id, content, resume_task_id, question_id, requested or {}):
                 raise ApiError(409, 'request_conflict', '这个请求编号已经用于另一条消息。')
             return existing, False
         if session_id in self._active_by_session:
@@ -147,7 +155,10 @@ class RunManager:
         if resume_task_id is not None and not self._service.resumable(
                 session_id, resume_task_id, user_id=self._user_id):
             raise ApiError(409, 'task_not_resumable', '这个任务已经不能接着回答了，请重新提问。')
-        run = Run(request_id, session_id, content, resume_task_id, question_id)
+        if resume_task_id is not None:
+            options = self._service.task_options(session_id, resume_task_id, user_id=self._user_id)
+        run = Run(request_id, session_id, content, resume_task_id, question_id, dict(requested or {}),
+                  dict(options) if options is not None else None)
         self._runs[request_id] = run
         self._active_by_session[session_id] = request_id
         run.add({'type': 'accepted', 'run_id': request_id, 'session_id': session_id})
@@ -155,10 +166,14 @@ class RunManager:
         return run, True
 
     async def _execute(self, run: Run) -> None:
+        choices = {}
+        if run.resume_task_id is None and run.options is not None:
+            choices = {'execution_mode': run.options['mode'], 'allow_writes': run.options['write'],
+                       'use_memory': run.options['memory']}
         try:
             result = await self._service.query_result(
                 run.content, run.session_id, user_id=self._user_id, request_id=run.run_id,
-                resume_task_id=run.resume_task_id, question_id=run.question_id, on_event=run.add)
+                resume_task_id=run.resume_task_id, question_id=run.question_id, on_event=run.add, **choices)
         except asyncio.CancelledError:
             run.finish('cancelled', {'type': 'cancelled', 'message': CANCELLED_MESSAGE}, self._clock())
         except Exception as exc:

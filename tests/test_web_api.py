@@ -198,7 +198,10 @@ async def test_the_token_is_required_everywhere(tmp_path):
                                          headers={'Authorization': 'Bearer wrong'})
         assert response.status_code == 401
         health = (await web.client.get('/api/health')).json()
-        assert health == {'status': 'ok', 'longterm_memory': False, 'write_enabled': False, 'active_runs': 0}
+        assert health == {'status': 'ok', 'longterm_memory': False, 'write_enabled': False, 'active_runs': 0,
+                          'options': {'modes': ['single'], 'default_mode': 'single',     # D-051
+                                      'write_available': False, 'write_default': False,
+                                      'memory_available': False, 'memory_default': False}}
 
 
 async def test_unknown_runs_and_paths_have_codes(tmp_path):
@@ -323,5 +326,18 @@ def test_the_page_writes_text_only_and_loads_nothing_from_elsewhere():
     assert 'innerHTML' not in script and 'outerHTML' not in script and 'eval(' not in script
     assert 'localStorage' not in script            # the token lives only in this tab (D-047)
     for name in ('index.html', 'app.js', 'app.css'):
-        text = (STATIC / name).read_text(encoding='utf-8')
+        # The SVG namespace is an identifier, not a resource the page loads.
+        text = (STATIC / name).read_text(encoding='utf-8').replace("'http://www.w3.org/2000/svg'", '')
         assert 'http://' not in text and 'https://' not in text, name
+    assert script.count("'http://www.w3.org/2000/svg'") == 1
+
+
+def test_svg_from_the_model_is_shown_only_as_an_image():
+    # An <img> document runs no scripts and loads nothing external (D-051); model markup is
+    # never parsed into the page.
+    from app.api.app import SECURITY_HEADERS, STATIC
+    script = (STATIC / 'app.js').read_text(encoding='utf-8')
+    assert "'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)" in script
+    for parser in ('DOMParser', 'importNode', 'adoptNode', 'insertAdjacent', 'createContextualFragment'):
+        assert parser not in script, parser
+    assert "img-src 'self' data:" in SECURITY_HEADERS['Content-Security-Policy']

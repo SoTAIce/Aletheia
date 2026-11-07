@@ -8,48 +8,106 @@
   <script src="/static/app.js" defer></script>
 </head>
 <body>
+  <svg width="0" height="0" class="sprite" aria-hidden="true">
+    <symbol id="i-logo" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" stroke="currentColor" stroke-width="2.2" fill="none"/><circle cx="12" cy="12" r="3.4" fill="currentColor"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="m16 16 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h13M13 6l6 6-6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V6M6 11l6-6 6 6" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-question" viewBox="0 0 24 24"><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round"/><circle cx="12" cy="17.3" r="1.3" fill="currentColor"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2" fill="none"/><path d="M12 8v4l2.5 2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M5 15V6a1 1 0 0 1 1-1h9" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  </svg>
+
   <div id="login" class="login" hidden>
     <form id="login-form" class="login-card">
-      <h1>Aletheia</h1>
-      <p>请输入启动服务时设置的访问令牌。令牌只保存在这个标签页里，关闭后需要重新输入。</p>
-      <input id="login-token" type="password" autocomplete="current-password" placeholder="访问令牌" required>
-      <p id="login-error" class="error" hidden></p>
-      <button type="submit" class="primary">进入</button>
+      <div class="wordmark"><svg class="logo"><use href="#i-logo"/></svg><span>Aletheia</span></div>
+      <h1 class="display">欢迎回来</h1>
+      <p class="lead">请输入启动服务时设置的访问令牌。令牌只保存在这个标签页里，关闭后需要重新输入。</p>
+      <input id="login-token" class="text-input" type="password" autocomplete="current-password" placeholder="访问令牌" required>
+      <p id="login-error" class="form-error" hidden></p>
+      <button type="submit" class="pill">进入 <svg><use href="#i-arrow"/></svg></button>
     </form>
   </div>
 
   <div id="app" class="app" hidden>
     <header class="topbar">
-      <button id="toggle-sessions" class="icon-button narrow-only" type="button" aria-label="会话列表">☰</button>
-      <span class="brand">Aletheia</span>
-      <span id="badge-write" class="badge"></span>
-      <span id="badge-memory" class="badge"></span>
-      <button id="toggle-memory" class="icon-button" type="button" hidden>长期记忆</button>
+      <button id="open-sessions" class="icon-btn narrow-only" type="button" aria-label="会话列表"><svg><use href="#i-menu"/></svg></button>
+      <a class="wordmark" href="/" aria-label="Aletheia 首页"><svg class="logo"><use href="#i-logo"/></svg><span>Aletheia</span></a>
+      <label class="search">
+        <svg><use href="#i-search"/></svg>
+        <input id="session-search" type="search" placeholder="搜索会话">
+        <kbd>Ctrl K</kbd>
+      </label>
+      <nav class="topnav">
+        <span class="status"><span id="dot-write" class="dot"></span>写文件 <b id="status-write"></b></span>
+        <span class="status"><span id="dot-memory" class="dot"></span>长期记忆 <b id="status-memory"></b></span>
+        <button id="toggle-memory" class="link-btn" type="button" hidden>记忆</button>
+      </nav>
+      <button id="new-session" class="pill" type="button">新建会话 <svg><use href="#i-arrow"/></svg></button>
     </header>
 
-    <aside id="sessions" class="sessions">
-      <button id="new-session" class="primary wide" type="button">新建会话</button>
-      <ul id="session-list" class="session-list"></ul>
-      <p id="sessions-empty" class="muted" hidden>还没有会话。</p>
+    <div id="scrim" class="scrim" hidden></div>
+
+    <aside id="sessions" class="sidenav">
+      <div class="sidenav-head">
+        <h2>会话</h2>
+        <button id="close-sessions" class="icon-btn narrow-only" type="button" aria-label="收起"><svg><use href="#i-close"/></svg></button>
+      </div>
+      <nav id="session-list" class="session-list" aria-label="会话"></nav>
     </aside>
 
-    <main class="chat">
+    <main class="main" id="main">
       <div id="conversation" class="conversation" aria-live="polite"></div>
-      <div id="notice" class="notice" hidden></div>
-      <form id="composer" class="composer">
-        <textarea id="input" rows="3" placeholder="输入目标，回车发送，Shift+回车换行"></textarea>
-        <div class="composer-actions">
-          <button id="cancel" type="button" class="danger" hidden>取消任务</button>
-          <button id="send" type="submit" class="primary">发送</button>
+      <div class="composer-wrap">
+        <div id="toast" class="toast" role="alert" hidden></div>
+        <div id="waiting-banner" class="waiting" hidden>
+          <span class="waiting-label">等待你的回答</span>
+          <span id="waiting-question"></span>
         </div>
-      </form>
+        <form id="composer" class="composer">
+          <textarea id="input" rows="1" placeholder="描述你想完成的事情"></textarea>
+          <div class="composer-bar">
+            <div id="run-options" class="run-options" hidden>
+              <label class="opt-mode" title="普通：一个执行者按计划逐步完成；团队：负责人把任务委派给执行者；自动：每个新任务先判断用哪种">
+                <span class="sr-only">执行模式</span>
+                <select id="opt-mode">
+                  <option value="single">普通模式</option>
+                  <option value="team">团队模式</option>
+                  <option value="auto">自动选择</option>
+                </select>
+              </label>
+              <button id="opt-write" class="chip" type="button" aria-pressed="false">写文件</button>
+              <button id="opt-memory" class="chip" type="button" aria-pressed="false">长期记忆</button>
+            </div>
+            <span id="hint" class="hint">Enter 发送，Shift+Enter 换行</span>
+            <span id="run-chip" class="running" hidden><span class="pulse"></span>运行中</span>
+            <button id="cancel" type="button" class="ghost-btn" hidden><svg><use href="#i-stop"/></svg>停止</button>
+            <button id="send" type="submit" class="send-btn" aria-label="发送"><svg><use href="#i-up"/></svg></button>
+          </div>
+        </form>
+      </div>
     </main>
 
-    <aside id="memory" class="memory" hidden>
-      <h2>长期记忆</h2>
+    <aside class="outline" aria-label="本页">
+      <h3>本会话</h3>
+      <nav id="outline-list" class="outline-list"></nav>
+      <div class="outline-status"><span id="dot-runs" class="dot"></span>运行中的任务 <b id="status-runs">0</b></div>
+    </aside>
+
+    <aside id="memory" class="drawer" hidden>
+      <div class="drawer-head">
+        <h2 class="display-sm">长期记忆</h2>
+        <button id="close-memory" class="icon-btn" type="button" aria-label="关闭"><svg><use href="#i-close"/></svg></button>
+      </div>
+      <p class="muted">记住的内容会在以后的任务里按需取用，只属于你自己。<span id="memory-count"></span></p>
       <form id="memory-form" class="memory-form">
-        <textarea id="memory-input" rows="2" maxlength="2000" placeholder="要记住的内容"></textarea>
-        <button type="submit">记住</button>
+        <textarea id="memory-input" class="text-input" rows="3" maxlength="2000" placeholder="例如：回答尽量简短，用中文"></textarea>
+        <button type="submit" class="pill pill-sm">记住</button>
       </form>
       <ul id="memory-list" class="memory-list"></ul>
       <p id="memory-empty" class="muted" hidden>还没有长期记忆。</p>

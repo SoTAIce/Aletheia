@@ -11,11 +11,12 @@ import logging
 import re
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, StrictBool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.runs import ApiError, RunManager, service_error
@@ -37,12 +38,21 @@ SECURITY_HEADERS = {
 }
 
 
+class RunOptionsIn(BaseModel):
+    """Choices for one message; an omitted one takes the server default (D-051)."""
+    model_config = ConfigDict(extra='forbid')
+    mode: Literal['single', 'team', 'auto'] | None = None
+    write: StrictBool | None = None
+    memory: StrictBool | None = None
+
+
 class MessageIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     content: str
     request_id: str
     resume_task_id: str | None = None
     question_id: str | None = None
+    options: RunOptionsIn | None = None
 
 
 class MemoryIn(BaseModel):
@@ -139,10 +149,29 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
 
     guarded = [Depends(authorize)]
 
+    def run_options() -> dict:
+        offered = service.run_options()
+        return {'modes': list(offered['modes']), 'default_mode': offered['default_mode'],
+                'write_available': write_enabled, 'write_default': write_enabled,
+                'memory_available': offered['memory_available'], 'memory_default': offered['memory_available']}
+
+    def resolve(requested: dict) -> dict:
+        """Fill omitted choices with the defaults; refuse ones this server cannot honour (D-051)."""
+        offered = run_options()
+        if requested.get('mode') is not None and requested['mode'] not in offered['modes']:
+            raise ApiError(400, 'mode_unavailable', '服务启动时没有准备团队能力，只能使用普通模式。')
+        if requested.get('write') and not offered['write_available']:
+            raise ApiError(400, 'write_unavailable', '服务启动时没有指定写入目录，不能写文件。')
+        if requested.get('memory') and not offered['memory_available']:
+            raise ApiError(400, 'memory_unavailable', '长期记忆没有开启，不能使用。')
+        return {'mode': requested.get('mode') or offered['default_mode'],
+                'write': offered['write_default'] if requested.get('write') is None else requested['write'],
+                'memory': offered['memory_default'] if requested.get('memory') is None else requested['memory']}
+
     @app.get('/api/health', dependencies=guarded)
     async def health():
         return {'status': 'ok', 'longterm_memory': memory is not None, 'write_enabled': write_enabled,
-                'active_runs': runs.active_count}
+                'active_runs': runs.active_count, 'options': run_options()}
 
     @app.get('/api/sessions', dependencies=guarded)
     async def sessions(limit: int = 50):
@@ -163,8 +192,12 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
             raise ApiError(400, 'invalid_input', f'消息不能为空，最长 {MAX_MESSAGE_CHARS} 字。')
         if body.question_id is not None and body.resume_task_id is None:
             raise ApiError(400, 'invalid_input', '回答问题时需要同时给出任务编号。')
+        requested = body.options.model_dump(exclude_none=True) if body.options is not None else {}
+        # A resumed task keeps the choices it started with, so the request's own are ignored (D-051).
+        options = resolve(requested) if body.resume_task_id is None else None
         run, created = runs.start(session_id, body.content, body.request_id,
-                                  resume_task_id=body.resume_task_id, question_id=body.question_id)
+                                  resume_task_id=body.resume_task_id, question_id=body.question_id,
+                                  options=options, requested=requested)
         payload = {'run_id': run.run_id, 'events': f'/api/runs/{run.run_id}/events', 'created': created}
         return JSONResponse(payload, status_code=202 if created else 200)
 

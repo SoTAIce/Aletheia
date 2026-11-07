@@ -82,6 +82,22 @@ def _check_limit(limit) -> None:
         raise ValueError('limit must be an integer between 1 and 200')
 
 
+MODES = ('single', 'team', 'auto')
+
+
+def _check_choice(name, value) -> None:
+    if value is not None and type(value) is not bool:
+        raise ValueError(f'{name} must be true, false or None')
+
+
+def _without_writes(options):
+    """Team options for a task whose writes are off: the same as starting without a write root (D-051)."""
+    from dataclasses import replace
+    from app.agent.route_selection import READ_ONLY_HIDDEN
+    return replace(options, allowed_tools=options.allowed_tools - READ_ONLY_HIDDEN,
+                   require_passing_run=False, acceptance_tests=False)
+
+
 def _team_requirements(context):
     from app.agent.runner_router import RunnerRequirements
     return RunnerRequirements(frozenset({'agent_team'}))
@@ -124,9 +140,8 @@ class RagAgentService:
             raise ValueError('use register_delegating_team_runner for custom registry assembly')
         self._execution_mode = execution_mode
         self._team_options = team_options or (DelegationOptions() if execution_mode == 'team' else None)
-        if execution_mode == 'team' and runner_requirements is None:
-            self._runner_options['runner_requirements'] = _team_requirements
         self._routes: dict[tuple[object, str], object] = {}   # task -> ModeChoice made at its start (D-026)
+        self._task_options: dict[tuple[object, str], dict] = {}   # task -> run options chosen at its start (D-051)
         self._mcp_servers = tuple(mcp_servers) if mcp_servers is not None else local_mcp_servers(
             filesystem_root=config.mcp_filesystem_root or None,
             write_root=config.mcp_filesystem_write_root or None,
@@ -139,9 +154,6 @@ class RagAgentService:
                                                   if step_timeout_seconds is None else step_timeout_seconds),
                             planning_timeout_seconds=(config.agent_planning_timeout_seconds
                                                       if planning_timeout_seconds is None else planning_timeout_seconds))
-        if self._team_options is not None and step_timeout_seconds is None:
-            self._limits['step_timeout_seconds'] = max(
-                self._limits['step_timeout_seconds'], self._team_options.timeout_seconds + 5)
         self._conversations: dict[object, ConversationMemory] = {}
         self._locks: dict[object, asyncio.Lock] = {}
         self._tasks: dict[tuple[object, str], AgentRuntime] = {}
@@ -194,16 +206,36 @@ class RagAgentService:
         if self.model is not None:
             yield self._planner_model or PlanningModel(self.model), self.model
             return
+        base_url, api_key, model_name = config.agent_model_endpoint      # D-050
         async with AsyncOpenAI(
-            api_key=config.dashscope_api_key, base_url=config.dashscope_base_url,
+            api_key=api_key, base_url=base_url,
             timeout=config.rag_model_timeout_seconds, max_retries=0,
         ) as client:
             model = OpenAICompatibleToolCallingModel(
-                client, config.rag_model, temperature=0,
-                json_mode=config.rag_json_mode, enable_thinking=config.rag_enable_thinking,
+                client, model_name, temperature=0,
+                json_mode=config.rag_json_mode,
+                # enable_thinking is a DashScope parameter; other endpoints may reject it.
+                enable_thinking=None if config.agent_model_base_url else config.rag_enable_thinking,
                 max_output_tokens=config.context_output_tokens,
             )
             yield self._planner_model or PlanningModel(model), model
+
+    def run_options(self) -> dict:
+        """Per-request choices this service accepts (D-051). A mode outside these is refused; the
+        default mode is always accepted. Team and auto need the team prepared at startup."""
+        accepted = {'single', self._execution_mode} | ({'team', 'auto'} if self._team_options is not None else set())
+        return {'modes': [m for m in MODES if m in accepted], 'default_mode': self._execution_mode,
+                'memory_available': self._longterm_memory is not None}
+
+    def task_options(self, session_id: str, task_id: str, *, user_id: str | None = None) -> dict | None:
+        """The run options a live blocked task started with; a resume keeps them (D-051)."""
+        options = self._task_options.get((self._session_key(user_id, session_id), task_id))
+        return dict(options) if options is not None else None
+
+    def _forget_task(self, key, task_id) -> None:
+        self._tasks.pop((key, task_id), None)
+        self._routes.pop((key, task_id), None)
+        self._task_options.pop((key, task_id), None)
 
     @staticmethod
     def _validate_input(question: str, session_id: str) -> None:
@@ -216,13 +248,24 @@ class RagAgentService:
         self, question: str, session_id: str, *, user_id: str | None = None,
         request_id: str | None = None, resume_task_id: str | None = None,
         question_id: str | None = None, on_event=None,
+        execution_mode: str | None = None, allow_writes: bool | None = None, use_memory: bool | None = None,
     ) -> AgentRunResult:
         """on_event, if given, receives host-authored progress records ('route',
-        then the runtime's 'plan' and 'step'); see AgentRuntime.run (D-045)."""
+        then the runtime's 'plan' and 'step'); see AgentRuntime.run (D-045).
+
+        execution_mode, allow_writes and use_memory choose for this request only; None keeps the
+        service default (D-051). allow_writes=False hides the write and run tools as for a read-only
+        task (D-027); use_memory=False skips long-term recall. A resumed task keeps its own choices."""
         if self._closed:
             raise RuntimeError('service is closed')
         self._validate_input(question, session_id)
         self._validate_identity(user_id)
+        if execution_mode is not None and execution_mode not in self.run_options()['modes']:
+            raise ValueError('execution mode is not available')
+        _check_choice('allow_writes', allow_writes)
+        _check_choice('use_memory', use_memory)
+        if use_memory and self._longterm_memory is None:
+            raise ValueError('long-term memory is not configured')
         for name, value in (('request_id', request_id), ('resume_task_id', resume_task_id), ('question_id', question_id)):
             if value is not None and (not isinstance(value, str) or not value.strip() or len(value) > 256):
                 raise ValueError(f'{name} must be a nonempty string of at most 256 characters')
@@ -285,8 +328,14 @@ class RagAgentService:
                 if not any(q.question_id == question_id for q in questions):
                     raise ValueError('question_id is not an unresolved blocking question of this task')
                 memory = runtime.memory
+                options = self._task_options.get((key, resume_task_id))
             else:
                 memory = WorkingMemory(TaskState(user_id or session_id, question))
+                options = None
+            if options is None:
+                options = {'mode': execution_mode or self._execution_mode,
+                           'write': True if allow_writes is None else allow_writes,
+                           'memory': (self._longterm_memory is not None) if use_memory is None else use_memory}
             task = memory.task_state
             turn = ConversationTurn([ConversationMessage(MessageRole.USER, question, stamp)], turn_id, stamp,
                                     task_id=task.task_id, status=TurnStatus.RECEIVED, question_id=question_id)
@@ -323,7 +372,7 @@ class RagAgentService:
                 else:
                     history = await context_manager.prepare_conversation(conversation, task.active_goal)
                     task.pin_content(history, 'conversation_memory')
-                    if self._longterm_memory is not None:
+                    if self._longterm_memory is not None and options['memory']:
                         try:
                             async with asyncio.timeout(self._longterm_timeout_seconds):
                                 hits = await self._longterm_memory.recall(
@@ -345,11 +394,20 @@ class RagAgentService:
                     ) as registry:
                         # The mode is chosen once per task and kept when a blocked task resumes (D-026).
                         choice = self._routes.get((key, task.task_id)) if runtime is not None else None
+                        team_options = self._team_options
+                        if team_options is not None and not options['write']:
+                            team_options = _without_writes(team_options)
                         if choice is None:
-                            choice = await self._choose_route(question, model)
+                            choice = await self._choose_route(question, model, options['mode'], team_options)
+                            if not options['write'] and not choice.read_only:
+                                # Writes off for this request: the D-027 read-only path, decided by the host.
+                                from dataclasses import replace
+                                choice = replace(choice, read_only=True)
                         self._routes[(key, task.task_id)] = choice
+                        self._task_options[(key, task.task_id)] = options
                         route = choice.mode
-                        _emit(on_event, {'type': 'route', 'mode': route, 'read_only': choice.read_only})
+                        _emit(on_event, {'type': 'route', 'mode': route, 'read_only': choice.read_only,
+                                         'options': dict(options)})
                         # Read-only tasks lose write tools and get read-only runs (D-027/D-028).
                         from app.agent.route_selection import task_registry
                         registry = task_registry(registry, choice.read_only)
@@ -360,13 +418,16 @@ class RagAgentService:
                         else:
                             planner = Planner(planner_model, context_manager=context_manager)
                         if runtime is None:
-                            runner_options = dict(self._runner_options)
+                            runner_options, limits = dict(self._runner_options), dict(self._limits)
                             if route == 'team':
-                                runner_options['runner_registry'] = self._team_registry()
+                                runner_options['runner_registry'] = self._team_registry(team_options)
                                 if runner_options['runner_requirements'] is None:
                                     runner_options['runner_requirements'] = _team_requirements
+                                # A team step must outlast the team's own timeout.
+                                limits['step_timeout_seconds'] = max(limits['step_timeout_seconds'],
+                                                                     team_options.timeout_seconds + 5)
                             runtime = AgentRuntime(planner, model, memory, registry,
-                                                   **self._limits, **runner_options, context_manager=context_manager)
+                                                   **limits, **runner_options, context_manager=context_manager)
                         else:
                             runtime.rebind(planner, model, registry, context_manager=context_manager)
                         result = await runtime.run(on_event=on_event)
@@ -375,8 +436,7 @@ class RagAgentService:
                         if result.status is TaskStatus.BLOCKED:
                             self._tasks[(key, task.task_id)] = runtime
                         else:
-                            self._tasks.pop((key, task.task_id), None)
-                            self._routes.pop((key, task.task_id), None)
+                            self._forget_task(key, task.task_id)
             except StaleExecutionError:
                 # This interaction no longer owns task state. Finish only its
                 # own durable turn; do not fail or remove the newer execution.
@@ -391,8 +451,7 @@ class RagAgentService:
                                else f'Request failed: {type(exc).__name__}')
                     if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                         task.fail_task(content)
-                    self._tasks.pop((key, task.task_id), None)
-                    self._routes.pop((key, task.task_id), None)
+                    self._forget_task(key, task.task_id)
                     self._pending_outcomes[outcome_key] = (status, content, None)
                 await _durable(self._publish_outcome(conversation, outcome_key))
                 raise
@@ -470,20 +529,20 @@ class RagAgentService:
             turns = conversation.retrieve_turns(limit) if conversation is not None else []
         return [_turn_view(turn, self._resumable(key, turn)) for turn in turns]
 
-    async def _choose_route(self, question, model):
-        """single/team keep the configured runner; auto applies host rules, then one model call."""
-        from app.agent.route_selection import SINGLE, TEAM, ModeChoice, choose_mode, log_choice
-        if self._execution_mode != 'auto':
-            choice = ModeChoice(TEAM if self._team_options is not None else SINGLE, 'user', self._execution_mode)
+    async def _choose_route(self, question, model, mode, team_options):
+        """single/team are the user's choice; auto applies host rules, then one model call."""
+        from app.agent.route_selection import ModeChoice, choose_mode, log_choice
+        if mode != 'auto':
+            choice = ModeChoice(mode, 'user', mode)
             log_choice(choice)
             return choice
-        return await choose_mode(question, self._team_options, model)
+        return await choose_mode(question, team_options, model)
 
-    def _team_registry(self):
+    def _team_registry(self, options=None):
         from app.agent.runner_registry import default_runner_registry
         from app.agent.team_v2 import register_delegating_team_runner
         registry = default_runner_registry()
-        register_delegating_team_runner(registry, options=self._team_options)
+        register_delegating_team_runner(registry, options=options or self._team_options)
         return registry
 
     async def _publish_outcome(self, conversation, outcome_key):
