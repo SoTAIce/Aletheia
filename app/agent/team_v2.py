@@ -658,8 +658,11 @@ class DelegatingTeamRunner:
     async def run(self, context):
         run, started, status, failure = _Run(), time.monotonic(), 'failed', None
         try:
-            async with asyncio.timeout(self.options.timeout_seconds):
-                output = await self._lead(run, context)
+            from app.agent.hooks import pausable_deadline
+            # Time spent waiting for the user's approval does not count (D-061).
+            async with asyncio.timeout(self.options.timeout_seconds) as deadline:
+                with pausable_deadline(deadline):
+                    output = await self._lead(run, context)
             status = output.outcome.value
             return output
         except TimeoutError:

@@ -96,6 +96,13 @@ class Settings(BaseSettings):
     web_port: int = Field(default=8000, gt=0, lt=65536)
     web_access_token: str = ""
     web_allow_no_token: bool = False
+    # Tools the web page asks the user to approve before each call (D-061); empty asks for none.
+    web_approval_tools: str = "write_file,run_python,run_tests"
+    web_approval_timeout_seconds: float = Field(default=300.0, gt=0, le=3600, allow_inf_nan=False)
+
+    @property
+    def web_approval_tool_names(self) -> frozenset[str]:
+        return frozenset(name.strip() for name in self.web_approval_tools.split(",") if name.strip())
     web_user_id: str = Field(default="local", min_length=1, max_length=256)
     web_max_concurrent_runs: int = Field(default=2, ge=1, le=32)
     web_event_retention_seconds: float = Field(default=1800.0, gt=0, allow_inf_nan=False)

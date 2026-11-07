@@ -70,7 +70,9 @@ async def serve(args) -> int:
                          memory=memory, write_enabled=bool(write_root),
                          max_concurrent_runs=config.web_max_concurrent_runs,
                          event_retention_seconds=config.web_event_retention_seconds,
-                         shutdown_timeout_seconds=config.web_shutdown_timeout_seconds)
+                         shutdown_timeout_seconds=config.web_shutdown_timeout_seconds,
+                         approval_tools=config.web_approval_tool_names,
+                         approval_wait_seconds=config.web_approval_timeout_seconds)
         server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_config=None,
                                                access_log=False, server_header=False))
         print(f'Aletheia 网页后端：http://{host}:{port}（写文件：{"开启" if write_root else "关闭"}）', flush=True)

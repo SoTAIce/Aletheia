@@ -58,6 +58,7 @@ class Run:
     status: str = 'running'          # running | completed | blocked | failed | cancelled
     finished_at: float | None = None
     task: asyncio.Task | None = None
+    approvals: dict = field(default_factory=dict)   # approval_id -> future awaiting the user (D-061)
     _changed: asyncio.Event = field(default_factory=asyncio.Event)
 
     def add(self, event: dict) -> None:
@@ -107,8 +108,10 @@ class RunManager:
     """Owns every run of one service: limits, idempotency, cancellation and shutdown."""
 
     def __init__(self, service, *, user_id: str, max_concurrent: int, retention_seconds: float,
-                 clock=time.monotonic) -> None:
+                 clock=time.monotonic, approval_tools: frozenset[str] = frozenset(),
+                 approval_wait_seconds: float = 300.0) -> None:
         self._service, self._user_id = service, user_id
+        self._approval_tools, self._approval_wait = frozenset(approval_tools), approval_wait_seconds
         self._max_concurrent, self._retention = max_concurrent, retention_seconds
         self._clock = clock
         self._runs: dict[str, Run] = {}
@@ -170,6 +173,11 @@ class RunManager:
         if run.resume_task_id is None and run.options is not None:
             choices = {'execution_mode': run.options['mode'], 'allow_writes': run.options['write'],
                        'use_memory': run.options['memory']}
+        if self._approval_tools:
+            # Side-effect tools wait for the person on the page (D-061).
+            from app.agent.hooks import HookSet
+            from app.api.approvals import ApprovalGate
+            choices['hooks'] = HookSet(gates=[ApprovalGate(run, self._approval_tools, self._approval_wait)])
         try:
             result = await self._service.query_result(
                 run.content, run.session_id, user_id=self._user_id, request_id=run.run_id,
@@ -187,6 +195,18 @@ class RunManager:
         finally:
             if self._active_by_session.get(run.session_id) == run.run_id:
                 del self._active_by_session[run.session_id]
+
+    def answer_approval(self, run_id: str, approval_id: str, decision: str) -> Run:
+        """Pass the user's answer to a waiting approval (D-061)."""
+        from app.api.approvals import DECISIONS
+        run = self.get(run_id)
+        if decision not in DECISIONS:
+            raise ApiError(400, 'invalid_input', '回答只能是允许、拒绝或本次运行都允许。')
+        future = run.approvals.get(approval_id) if isinstance(approval_id, str) else None
+        if future is None or future.done():
+            raise ApiError(409, 'approval_not_pending', '这个确认已经处理过或已经过期。')
+        future.set_result(decision)
+        return run
 
     async def cancel(self, run_id: str) -> Run:
         """Cancel a running run and wait for its cancelled event; a finished run is unchanged."""

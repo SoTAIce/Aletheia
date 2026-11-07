@@ -1096,6 +1096,22 @@
         "A refused call fails the run as 'policy' with the gate's host-authored reason."
       ],
       "evidence": "tests/test_builtin_hooks.py 8 passed; init.ps1 PASS 1572 passed, 16 skipped. Not run with a real model."
+    },
+    {
+      "id": "hooks-approval-001",
+      "name": "Hooks step 3: approval of side-effect tool calls on the web page",
+      "description": "Step 3 of docs/hooks_design.md (user said '做第 3 步' on 2026-11-07). app/api/approvals.py: ApprovalGate is a before_tool gate the web RunManager adds per run for WEB_APPROVAL_TOOLS (default write_file, run_python, run_tests); it emits approval_required with the tool and argument summary, waits in the run (one question at a time) for POST /api/runs/{run_id}/approvals with allow, deny or allow_all, and treats no answer within WEB_APPROVAL_TIMEOUT_SECONDS (default 300) as a denial; cancelling the run ends the wait. Step and team deadlines are registered as pausable: before waiting they move out by the longest wait and afterwards back by the unused part, so the wait does not count; the run meter's time budget moves with them. The page shows a card with 允许, 拒绝, 本次运行都允许 and keeps the answered card in the run's trace. Health lists approval_tools. RagAgentService.query_result takes per-request hooks. DECISIONS D-061.",
+      "status": "done",
+      "dependencies": [
+        "hooks-builtin-001"
+      ],
+      "acceptance": [
+        "An allowed call runs without asking the model again; a denied or unanswered call is not run and the model is told.",
+        "Allow-all covers the rest of the run; bad, unknown and late answers are refused with codes.",
+        "Waiting longer than the step timeout does not fail the step.",
+        "Cancelling a waiting run ends the wait; without approval tools nothing is asked."
+      ],
+      "evidence": "tests/test_web_approvals.py 9 passed; health test updated; init.ps1 PASS 1581 passed, 16 skipped. Page checked in the browser with a fake model: the card shows, and allow, deny and allow-all each reach the expected result. Not run with a real model."
     }
   ],
   "cleanup_2026_11_04": {

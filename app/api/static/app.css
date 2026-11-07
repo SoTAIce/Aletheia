@@ -335,3 +335,13 @@ kbd { font: 11.5px/1 var(--mono); padding: 3px 6px; border: 1px solid var(--rule
   .question-text { font-size: 19px; }
 }
 @media (prefers-reduced-motion: reduce) { .sidenav { transition: none; } }
+
+/* Approval of side-effect tool calls (D-061). */
+.approval { margin: 12px 0 4px; padding: 12px 14px; border: 1px solid var(--warn); border-radius: 10px; background: var(--warn-wash); }
+.approval.answered { border-color: var(--rule-strong); background: transparent; }
+.approval-title { font-size: 13px; color: var(--warn); margin-bottom: 4px; }
+.approval.answered .approval-title { color: var(--muted); }
+.approval-what { font-size: 14.5px; overflow-wrap: anywhere; }
+.approval-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
+.approval-actions button:disabled { opacity: .5; cursor: default; }
+.approval-result { font-size: 13.5px; color: var(--muted); }

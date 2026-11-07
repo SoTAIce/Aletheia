@@ -164,6 +164,33 @@ def model_purpose(purpose: str):
         _purpose.reset(token)
 
 
+_deadlines: ContextVar[tuple] = ContextVar('aletheia_pausable_deadlines', default=())
+
+
+@contextmanager
+def pausable_deadline(timeout):
+    """Register an asyncio.Timeout that time spent waiting for a person should not use up (D-061)."""
+    token = _deadlines.set((*_deadlines.get(), timeout))
+    try:
+        yield timeout
+    finally:
+        _deadlines.reset(token)
+
+
+def extend_deadlines(seconds: float) -> None:
+    """Move every registered deadline and the run meter's time budget by seconds (D-061):
+    out before waiting for a person, back by whatever of that wait was not used."""
+    if not seconds:
+        return
+    for timeout in _deadlines.get():
+        when = timeout.when()
+        if when is not None and not timeout.expired():
+            timeout.reschedule(when + seconds)
+    meter = current_meter()
+    if meter is not None and meter.timeout_seconds is not None:
+        meter.started += seconds
+
+
 class CallbackHook:
     """The old progress callback (D-045) as an observer: it still receives only the
     'plan' and 'step' records, unchanged."""

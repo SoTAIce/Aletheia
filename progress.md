@@ -19,6 +19,12 @@
 
 ## Session Record
 
+### 2026-11-07 — hooks-approval-001：hooks 第 3 步
+
+- **Result**：网页上写文件、运行代码前先问用户（允许、拒绝、本次运行都允许），运行原地等待，默认 300 秒没回答按拒绝；等待时间不计入步骤和团队时限（D-061）。
+- **Verification**：`tests/test_web_approvals.py` 9 项通过；init.ps1 PASS，1581 passed、16 skipped；浏览器里用假模型检查过三种回答的显示和结果。
+- **Not done**：没有用真实模型跑（设计稿第 4 步）；未提交。
+
 ### 2026-11-07 — hooks-builtin-001：hooks 第 2 步
 
 - **Result**：新增审计记录（每次运行在会话目录 `audit/` 下写一份 JSON Lines，只有宿主记录）和对话令牌上限（`CONVERSATION_MAX_TOKENS`，超过后拒绝模型调用，运行以 `policy` 失败，重启后从归档结果累计）（D-060）。

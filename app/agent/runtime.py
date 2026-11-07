@@ -336,8 +336,11 @@ class AgentRuntime:
             started = time.monotonic()
             try:
                 try:
-                    async with asyncio.timeout(self._meter.bound(self._step_timeout)):
-                        receipt = await self._step_executor.execute(next_step.step_id)
+                    from app.agent.hooks import pausable_deadline
+                    # Time spent waiting for the user's approval does not count (D-061).
+                    async with asyncio.timeout(self._meter.bound(self._step_timeout)) as deadline:
+                        with pausable_deadline(deadline):
+                            receipt = await self._step_executor.execute(next_step.step_id)
                 except BaseException as exc:
                     self._log_step(next_step.step_id, started, exc)
                     raise

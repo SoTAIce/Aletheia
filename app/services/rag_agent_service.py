@@ -262,12 +262,16 @@ class RagAgentService:
             )
             yield self._planner_model or PlanningModel(model), model
 
-    async def _run_hooks(self, key, conversation):
-        """This run's hooks: the service's (or the caller's), plus the audit log and the
-        conversation token cap when configured (D-060). Returns (hooks, audit or None)."""
+    async def _run_hooks(self, key, conversation, extra=None):
+        """This run's hooks: the service's (or the caller's), the request's own (extra, e.g. the
+        web page's approval gate, D-061), plus the audit log and the conversation token cap when
+        configured (D-060). Returns (hooks, audit or None)."""
         from app.agent.builtin_hooks import AuditHook, ConversationTokenCap
         from app.agent.hooks import HookSet, current_hooks
         hooks = self._hooks if self._hooks is not None else current_hooks()
+        if extra is not None:
+            hooks = HookSet((*hooks.observers, *extra.observers), (*hooks.gates, *extra.gates),
+                            gate_timeout=hooks.gate_timeout)
         audit = None
         if config.hooks_audit and conversation.archive is not None:
             audit = AuditHook(conversation.archive)
@@ -309,6 +313,7 @@ class RagAgentService:
         request_id: str | None = None, resume_task_id: str | None = None,
         question_id: str | None = None, on_event=None,
         execution_mode: str | None = None, allow_writes: bool | None = None, use_memory: bool | None = None,
+        hooks=None,
     ) -> AgentRunResult:
         """on_event, if given, receives host-authored progress records ('route',
         then the runtime's 'plan' and 'step'); see AgentRuntime.run (D-045).
@@ -331,6 +336,9 @@ class RagAgentService:
                 raise ValueError(f'{name} must be a nonempty string of at most 256 characters')
         if question_id is not None and resume_task_id is None:
             raise ValueError('question_id requires resume_task_id')
+        from app.agent.hooks import HookSet
+        if hooks is not None and not isinstance(hooks, HookSet):
+            raise TypeError('hooks must be a HookSet')
         stamp = datetime.now(timezone.utc)
         key = self._session_key(user_id, session_id)
         async with self._locks.setdefault(key, asyncio.Lock()):
@@ -444,7 +452,7 @@ class RagAgentService:
                         except Exception as exc:
                             logger.warning('Long-term recall unavailable: %s', type(exc).__name__)
                 cache_key = self._prompt_cache_key(self._archive_label(user_id, session_id))
-                run_hooks, audit = await self._run_hooks(key, conversation)
+                run_hooks, audit = await self._run_hooks(key, conversation, hooks)
                 async with self._models(cache_key, run_hooks) as (planner_model, model):
                     if self._planner_model is None:
                         planner_model = PlanningModel(ContextManagedModel(model, context_manager))

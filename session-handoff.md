@@ -5,7 +5,7 @@
 ## 当前状态（2026-11-06，最新）
 
 - **已完成并提交**（本地 `main`，未推送）：测试与安全（`55790f7`）、执行可靠性（`513608c`）、可观测性（`210436f`）、扩充评测与两项修复（`9df6e93`、`9465d7a`）、偶发测试修复（`48ec8ef`）、模型调用重试（`adf656c`）、基线刷新（`fcd0618`）、交互式命令行与归档默认开启（`3003c28`）、长期记忆接入（`9749ff0`）、阻塞直接提问和恢复直接用回答（`1fd2885`）、基线哈希更新（`2c8513c`）。决策 D-029～D-043。
-- **Currently verified**：init.ps1 PASS，1572 passed、16 skipped（13 项需 `ALETHEIA_DOCKER_TESTS=1`，3 项需符号链接权限）；基线核对四项正常；调参集普通模式真实评测 6/11（修复前，阿里云模型），2026-11-06 换中转站模型并完成 D-052～D-057 后重跑 11/11（bench-tune-rerun-002），留出集首次运行 11/13（bench-holdout-001）；2026-11-07 写了 [hooks 设计稿](docs/hooks_design.md)（hooks-design-001），第 11 节用户答“都按推荐”（D-058）；第 1 步（事件、两种 hook、包装层，hooks-core-001，D-059）已提交 `fe22af0`；第 2 步（审计记录、对话令牌上限，hooks-builtin-001，D-060）已做，未提交；第 3 步未开始，修复后单题重测 `todo_html`、`fix_rate_limiter` 通过，`semver_compare` 查明为评分守卫误伤并已修。
+- **Currently verified**：init.ps1 PASS，1581 passed、16 skipped（13 项需 `ALETHEIA_DOCKER_TESTS=1`，3 项需符号链接权限）；基线核对四项正常；调参集普通模式真实评测 6/11（修复前，阿里云模型），2026-11-06 换中转站模型并完成 D-052～D-057 后重跑 11/11（bench-tune-rerun-002），留出集首次运行 11/13（bench-holdout-001）；2026-11-07 写了 [hooks 设计稿](docs/hooks_design.md)（hooks-design-001），第 11 节用户答“都按推荐”（D-058）；第 1 步（事件、两种 hook、包装层，hooks-core-001，D-059）已提交 `fe22af0`；第 2 步（审计记录、对话令牌上限，hooks-builtin-001，D-060）已提交 `030bbd0`；第 3 步（网页人工确认，hooks-approval-001，D-061）已做，未提交；第 4 步（真实运行验证）未开始，修复后单题重测 `todo_html`、`fix_rate_limiter` 通过，`semver_compare` 查明为评分守卫误伤并已修。
 - **Live verified（e2e-live-001）**：长期记忆在真实 PostgreSQL 16、Milvus 2.6.9 和 DashScope 嵌入上 10 项通过；交互流程 3 轮真实模型：召回记忆回答正确、阻塞后原地回答并完成（共 10 次模型调用）。验证后集合、容器、临时文件已清理，Milvus 已停回。
 - **Still unverified**：修复后调参集没有整体重跑；留出集、团队模式下的新任务没跑过；模型重试没在真实故障下验证。
 - **Still open**：`sales_csv_qa` 只读任务无沙盒时只能手算；长期记忆没有按用户全部删除、数据库与向量库对账、召回质量改进；失败步骤的工具结果未保留；长期记忆和压缩器调用不计量。

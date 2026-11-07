@@ -10,6 +10,21 @@ const TAG = {completed: ['done', '已完成'], blocked: ['ask', '等待你回答
              cancelled: ['', '已停止'], running: ['run', '进行中']};
 const OUTCOME = {succeeded: ['done', 'i-check', '完成'], failed: ['fail', 'i-x', '失败'],
                  timeout: ['fail', 'i-clock', '超时'], blocked: ['ask', 'i-question', '需要你回答']};
+// What a side-effect tool call is about to do, for the approval card (D-061).
+const APPROVAL_ACTIONS = {write_file: '写入文件', run_python: '运行 Python 代码', run_tests: '运行测试'};
+const APPROVAL_RESULTS = {allow: '已允许', allow_all: '已允许（本次运行都允许）', deny: '已拒绝',
+                          timeout: '没有及时回答，已拒绝'};
+
+function approvalText(event) {
+  const args = event.args_summary || {};
+  const action = APPROVAL_ACTIONS[event.tool] || `调用 ${event.tool}`;
+  const details = [];
+  if (typeof args.path === 'string') details.push(args.path);
+  const size = args.content?.chars ?? args.code?.chars;
+  if (typeof size === 'number') details.push(`${size.toLocaleString('zh-CN')} 字符`);
+  return details.length ? `${action}：${details.join('，')}` : action;
+}
+
 const EXAMPLES = [
   '读取 README.md，用三句话概括这个项目是做什么的',
   '解释 app/agent/runtime.py 里一个任务是怎样被规划和执行的',
@@ -615,6 +630,8 @@ class LiveView {
     this.steps = el('ol', 'steps');
     this.steps.hidden = true;
     this.items = new Map();       // step_id -> step item
+    this.approvals = new Map();   // approval_id -> card (D-061)
+    this.runId = null;
     this.order = [];
     this.part.append(this.status, this.route, this.steps);
     turnBox.append(this.part);
@@ -670,11 +687,52 @@ class LiveView {
         if (event.outcome === 'succeeded') this.activateNext();
         break;
       }
+      case 'approval_required':
+        this.askApproval(event);
+        this.say('等待你确认');
+        break;
+      case 'approval_resolved': {
+        const card = this.approvals.get(event.approval_id);
+        if (card) {
+          card.classList.add('answered');
+          card.querySelector('.approval-actions').replaceChildren(
+            el('span', 'approval-result', APPROVAL_RESULTS[event.decision] || event.decision));
+        }
+        this.say('正在执行');
+        break;
+      }
       default:
         return this.finish(event);
     }
     scrollToEnd();
     return false;
+  }
+
+  askApproval(event) {
+    const card = el('div', 'approval');
+    card.append(el('div', 'approval-title', '这一步要执行有副作用的操作，需要你确认'),
+                el('div', 'approval-what', approvalText(event)));
+    const actions = el('div', 'approval-actions');
+    const choices = [['allow', '允许', 'pill pill-sm'], ['deny', '拒绝', 'ghost-btn'],
+                     ['allow_all', '本次运行都允许', 'link-btn']];
+    for (const [decision, label, cls] of choices) {
+      const button = el('button', cls, label);
+      button.type = 'button';
+      button.addEventListener('click', async () => {
+        for (const b of actions.querySelectorAll('button')) b.disabled = true;
+        try {
+          await api(`/api/runs/${encodeURIComponent(this.runId)}/approvals`,
+                    {method: 'POST', body: {approval_id: event.approval_id, decision}});
+        } catch (e) {
+          for (const b of actions.querySelectorAll('button')) b.disabled = false;
+          toast(e.message);
+        }
+      });
+      actions.append(button);
+    }
+    card.append(actions);
+    this.approvals.set(event.approval_id, card);
+    this.part.append(card);
   }
 
   finish(event) {
@@ -687,6 +745,7 @@ class LiveView {
       trace.append(el('summary', '', `执行过程，${done}/${this.order.length} 步完成`));
       if (this.route.textContent) trace.append(this.route);
       trace.append(this.steps);
+      for (const card of this.approvals.values()) trace.append(card);   // what the user decided (D-061)
       trace.open = event.type === 'failed';
     }
     const turn = {status: event.type, reply: event.content || event.question || '', finished_at: new Date().toISOString()};
@@ -759,6 +818,7 @@ async function resumeFollowing(runId) {
 
 async function follow(runId, view) {
   state.run = runId;
+  view.runId = runId;
   let lastId = 0, failures = 0;
   while (state.run === runId) {
     try {

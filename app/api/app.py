@@ -55,6 +55,12 @@ class MessageIn(BaseModel):
     options: RunOptionsIn | None = None
 
 
+class ApprovalIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    approval_id: str
+    decision: str
+
+
 class MemoryIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     content: str
@@ -74,11 +80,13 @@ def _memory_view(record) -> dict:
 
 def create_app(service, *, user_id: str, access_token: str = '', memory=None, write_enabled: bool = False,
                max_concurrent_runs: int = 2, event_retention_seconds: float = 1800.0,
-               shutdown_timeout_seconds: float = 30.0, clock=None) -> FastAPI:
+               shutdown_timeout_seconds: float = 30.0, clock=None,
+               approval_tools: frozenset[str] = frozenset(), approval_wait_seconds: float = 300.0) -> FastAPI:
     """An empty access_token disables authentication; the launcher only allows that on loopback."""
     options = {} if clock is None else {'clock': clock}
     runs = RunManager(service, user_id=user_id, max_concurrent=max_concurrent_runs,
-                      retention_seconds=event_retention_seconds, **options)
+                      retention_seconds=event_retention_seconds, approval_tools=frozenset(approval_tools),
+                      approval_wait_seconds=approval_wait_seconds, **options)
 
     @asynccontextmanager
     async def lifespan(app):
@@ -171,7 +179,8 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
     @app.get('/api/health', dependencies=guarded)
     async def health():
         return {'status': 'ok', 'longterm_memory': memory is not None, 'write_enabled': write_enabled,
-                'active_runs': runs.active_count, 'options': run_options()}
+                'active_runs': runs.active_count, 'options': run_options(),
+                'approval_tools': sorted(approval_tools)}
 
     @app.get('/api/sessions', dependencies=guarded)
     async def sessions(limit: int = 50):
@@ -217,6 +226,11 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
 
         return StreamingResponse(stream(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no'})
+
+    @app.post('/api/runs/{run_id}/approvals', dependencies=guarded)
+    async def approve(run_id: str, body: ApprovalIn):
+        # The user's answer to a waiting side-effect tool call (D-061).
+        return runs.answer_approval(run_id, body.approval_id, body.decision).snapshot()
 
     @app.post('/api/runs/{run_id}/cancel', dependencies=guarded)
     async def cancel(run_id: str):
