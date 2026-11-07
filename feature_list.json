@@ -1112,6 +1112,20 @@
         "Cancelling a waiting run ends the wait; without approval tools nothing is asked."
       ],
       "evidence": "tests/test_web_approvals.py 9 passed; health test updated; init.ps1 PASS 1581 passed, 16 skipped. Page checked in the browser with a fake model: the card shows, and allow, deny and allow-all each reach the expected result. Not run with a real model."
+    },
+    {
+      "id": "hooks-live-001",
+      "name": "Hooks step 4: live check of the tune set and web approval",
+      "description": "Step 4 of docs/hooks_design.md (user said '做第 4 步' on 2026-11-07). Tune set rerun in single mode, 1 run per task, through the relay (AGENT_MODEL_CONTEXT_TOKENS=128000 for the run only); report in the ignored output/bench-tune-single-hooks.json. Web approval walked through with the real model on a temporary workspace and storage (a generated test token, server on port 8766, stopped afterwards).",
+      "status": "done",
+      "dependencies": [
+        "hooks-approval-001"
+      ],
+      "acceptance": [
+        "The tune set does not regress after hooks steps 1-3.",
+        "With the real model the page asks before write_file; the file is written only after Allow; after Deny it is not written."
+      ],
+      "evidence": "Tune 11/11 strictly (same as before hooks); 52 model calls (was 53), 336 s (was 395), 1,091,043 tokens (was 1,111,557); no failed tool calls. Web: 'write upper.txt' stopped at the card (写入文件：upper.txt，19 字符), nothing written before Allow, correct file after; the audit file listed plan, step and wrap-up calls and both tools. 'write lower.txt' denied: no file; the model turned the denial into a blocked question asking whether to allow the write."
     }
   ],
   "cleanup_2026_11_04": {
