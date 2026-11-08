@@ -53,7 +53,7 @@ class Run:
     resume_task_id: str | None
     question_id: str | None
     requested: dict = field(default_factory=dict)   # options as submitted, for idempotency (D-051)
-    options: dict | None = None                     # options in effect: mode, write, memory (D-051)
+    options: dict | None = None                     # options in effect: mode, runner, write, memory (D-065)
     events: list[dict] = field(default_factory=list)
     status: str = 'running'          # running | completed | blocked | failed | cancelled
     finished_at: float | None = None
@@ -172,7 +172,7 @@ class RunManager:
         choices = {}
         if run.resume_task_id is None and run.options is not None:
             choices = {'execution_mode': run.options['mode'], 'allow_writes': run.options['write'],
-                       'use_memory': run.options['memory']}
+                       'use_memory': run.options['memory'], 'single_runner': run.options.get('runner')}
         if self._approval_tools:
             # Side-effect tools wait for the person on the page (D-061).
             from app.agent.hooks import HookSet

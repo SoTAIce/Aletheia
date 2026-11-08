@@ -4,6 +4,8 @@
 
 ## Current Verified State
 
+- **最新验收（2026-11-08）**：loop-web-001 完成，已提交（与第 0 阶段方案同一次提交）；init.ps1 PASS（1622 passed、16 skipped，55.55s），针对性 111 passed、JS 语法通过、独立审查通过。默认 plan 不变，网页可逐任务选择 runner；详情与 clean-state 见 [本轮记录](docs/harness/loop-web-2026-11-08.md)。active_feature=null。
+
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
 - **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1466 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
@@ -18,6 +20,22 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-08 — cleanup-stage0-plan-001：第 0 阶段清理方案
+
+- **Result**：写了 [第 0 阶段清理方案](docs/stage0_cleanup_plan.md)，打算交给 Codex 实现（cleanup-stage0-001）：删除 `aiops/`（6 个文件）、只被它使用的 `app/agent/mcp_client.py` 和两个 `mcp_demo` 客户端；保留测试在用的 `time_server.py`、`web_search_client.py`，以及唯一的建库代码 `vector_index_service.py`（架构梳理把它算作遗留代码是错的）。去掉规划模式重复的工具清单、删除没人用的依赖、加建库命令都不在范围内。
+- **Not done**：未实现；loop-web-001 和本方案已按用户“先提交”一起提交。
+
+### 2026-11-08 — loop-web-001：网页可选单一循环
+
+- **Goal**：按已确认方案实现启动默认与逐消息执行方式，恢复沿用原选择，默认仍 plan，不提交。
+- **Completed**：服务 task_options/能力声明和校验、API 转发/拒绝、启动参数和中文页面选择框；原消息幂等与恢复循环历史保持；新增 D-065、common 启动命令和新基线。
+- **Verification**：初始新测试 14 failed/1 passed；实现后完整针对性 111 passed（3.73s）；init.ps1 1622 passed/16 skipped（55.55s）；node --check 与独立审查通过。沙箱 TEMP 权限问题在原代码重现，有效环境原套件 1600/16 后再验本轮 1622/16。
+- **Evidence**：[loop-web-2026-11-08.md](docs/harness/loop-web-2026-11-08.md)；feature_list loop-web-001；D-065。
+- **Commits**：实现时无；2026-11-08 随后经用户授权（“先提交”）与第 0 阶段方案一起提交，用户原差异未提交、哈希不变。
+- **审查后修复（同日，用户“修这两处”）**：`app.js` 遇到不返回 `runners` 的旧版服务时按只有“按计划”处理，发消息时不带 `runner`（旧版服务的选项校验不接受多余字段）；单一循环的进度文字由“正在规划步骤”改为“正在执行，不单独规划步骤”。`node --check` 通过；init.ps1 PASS，1622 passed、16 skipped；未在浏览器里验证。
+- **Risks**：未做真实模型/浏览器交互，不改变默认值；TEMP 有效环境需要本轮使用的执行权限。
+- **Next**：等待授权的新任务，真实网页验收和默认变更按方案 §7 另行处理。
 
 ### 2026-11-07 — loop-web-plan-001：网页可选单一循环的修改方案
 

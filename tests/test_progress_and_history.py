@@ -30,7 +30,7 @@ async def test_progress_reports_route_plan_and_each_step_without_model_text(tmp_
     assert result.status is TaskStatus.COMPLETED and result.content == 'Paris'
     assert [e['type'] for e in events] == ['route', 'plan', 'step', 'step']
     assert events[0] == {'type': 'route', 'mode': 'single', 'read_only': False,
-                         'options': {'mode': 'single', 'write': True, 'memory': False}}     # D-051
+                         'options': {'mode': 'single', 'runner': 'plan', 'write': True, 'memory': False}}     # D-065
     assert events[1]['revision'] == 1 and events[1]['steps'] == ['Look it up', 'Answer']
     assert [e['step_id'] for e in events[2:]] == events[1]['step_ids']      # the page matches steps to the plan
     assert [(e['step'], e['outcome'], e['tools']) for e in events[2:]] == [(1, 'succeeded', []), (2, 'succeeded', [])]

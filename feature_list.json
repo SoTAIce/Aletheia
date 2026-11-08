@@ -1224,6 +1224,36 @@
         "The plan names every file to change, the tests, the records and what is out of scope."
       ],
       "evidence": "docs/loop_web_plan.md written; checked against app/api/app.py, runs.py, __main__.py, static/app.js and rag_agent_service.py as of ea5783b. Not implemented."
+    },
+    {
+      "id": "loop-web-001",
+      "name": "Per-task web single runner selection",
+      "description": "Implement docs/loop_web_plan.md: expose plan/loop startup and per-message choices, retain blocked task choices, preserve default plan and team routing.",
+      "status": "done",
+      "dependencies": [
+        "loop-web-plan-001"
+      ],
+      "acceptance": [
+        "Service override uses actual loop without planning; blocked resume retains original runner/history.",
+        "API offers/validates runners and forwards choices; custom registries do not offer loop.",
+        "Chinese web selector persists selection, handles team/resume/single-option state, and route options report runner.",
+        "Deterministic focused tests, JS syntax and init.ps1 pass; no real model calls or commits."
+      ],
+      "evidence": "2026-11-08: RED 14 failed/1 passed; custom-registry resume RED then GREEN. Scoped 111 passed (3.73s). Original init.ps1 PASS 1622 passed,16 skipped (55.55s), +22 over baseline 1600/16; JS syntax and independent read-only review pass. Default plan unchanged, original user diffs preserved; no live models/browser/container or commit. docs/harness/loop-web-2026-11-08.md; D-065. Review follow-up the same day (user said '修这两处'): app.js treats a server without runners as plan only and then sends no runner field, which such a server's strict options model would refuse; the live view says the loop runs without planning instead of '正在规划步骤'. node --check passes; init.ps1 PASS 1622 passed, 16 skipped; not checked in a browser."
+    },
+    {
+      "id": "cleanup-stage0-plan-001",
+      "name": "Plan: architecture stage 0, remove unused legacy code",
+      "description": "Design only, no code change (user asked on 2026-11-08 for the next step as a plan to hand to Codex). docs/stage0_cleanup_plan.md: delete app/agent/aiops (6 files), app/agent/mcp_client.py (used only by aiops) and the mcp_demo registry_client and time_client; keep mcp_demo time_server and web_search_client (tests, README) and vector_index_service.py (the only code that indexes documents into the knowledge base, so the architecture review was wrong to call it legacy); leave the duplicated tool list of the plan runner, pyproject dependencies and a missing indexing command for later decisions. Lists the doc corrections, a guard test, records and constraints; implementation is cleanup-stage0-001.",
+      "status": "done",
+      "dependencies": [
+        "arch-review-001",
+        "loop-web-001"
+      ],
+      "acceptance": [
+        "The plan names every file to delete or keep with the reason, the doc corrections, the test, the records and what is out of scope."
+      ],
+      "evidence": "docs/stage0_cleanup_plan.md written after searching app, tests, bench, scripts, pyproject.toml, init.ps1 and docs for every listed module on c15ffd9 plus the uncommitted loop-web-001. Not implemented."
     }
   ],
   "cleanup_2026_11_04": {

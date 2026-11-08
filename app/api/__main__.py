@@ -63,6 +63,7 @@ async def serve(args) -> int:
                 filesystem_root=args.filesystem_root or config.mcp_filesystem_root or None,
                 write_root=write_root, tavily_api_key=config.tavily_api_key, sandbox=args.sandbox),
             include_knowledge=not args.no_knowledge, execution_mode=args.execution_mode,
+            single_runner=args.single_runner,
             team_options=team_options, step_timeout_seconds=step_timeout_for(args.sandbox, None),
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
         ))
@@ -75,7 +76,8 @@ async def serve(args) -> int:
                          approval_wait_seconds=config.web_approval_timeout_seconds)
         server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_config=None,
                                                access_log=False, server_header=False))
-        print(f'Aletheia 网页后端：http://{host}:{port}（写文件：{"开启" if write_root else "关闭"}）', flush=True)
+        print(f'Aletheia 网页后端：http://{host}:{port}（写文件：{"开启" if write_root else "关闭"}，'
+              f'执行方式：{"单一循环" if args.single_runner == "loop" else "按计划"}）', flush=True)
         await server.serve()
     return 0
 
@@ -89,6 +91,7 @@ def build_parser():
     parser.add_argument('--sandbox', action='store_true', help='Allow the Docker sandbox (needs --write-root)')
     parser.add_argument('--no-knowledge', action='store_true', help='Disable RAG when no knowledge store is configured')
     parser.add_argument('--execution-mode', choices=['single', 'team', 'auto'], default='single')
+    parser.add_argument('--single-runner', choices=['plan', 'loop'], default='plan')
     return parser
 
 

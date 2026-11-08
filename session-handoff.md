@@ -1,5 +1,19 @@
 # Current Session Handoff — 2026-11-06（成熟度五个阶段已完成）
 
+## 最新交接：2026-11-08 loop-web-001（完成，已提交）
+
+- **Goal / Changes**：按 docs/loop_web_plan.md 实现网页启动默认与逐消息 runner 选择；服务/API/启动器/中文页面已接入，默认仍 plan。route 事件只在 options 中增加 runner。
+- **Currently verified**：原 init.ps1 通过，1622 passed、16 skipped（55.55s）；针对性 111 passed；node --check 通过，独立只读审查无问题。新测试先 RED 再实现，恢复自定义注册表场景另有 RED→GREEN。
+- **Restore / Scope**：恢复沿用原 task_options 的 runner；loop 保留原消息及工具结果；自定义注册表只提供 plan，新任务 loop 拒绝。原 README、三处中文注释和三项脚本删除保留。
+- **Still broken or unverified**：没有本轮确定性验收失败；没有浏览器/真实模型/真实容器验证，不据此称网页人工确认真实验收通过。沙箱 TEMP 权限失败已在未修改源码上复现；有效环境使用提升权限运行相同检查，未改 ACL 或依赖。
+- **Evidence / State**：[验收记录](docs/harness/loop-web-2026-11-08.md)、D-065；feature_list loop-web-001=done，active_feature=null；[本轮基线](docs/harness/history/baseline-2026-11-08-loop-web.json)。实现时 HEAD 为 c15ffd9；随后经用户授权（“先提交”）与第 0 阶段方案一起提交，未推送，用户原差异仍未提交。
+- **审查后修复**：`app.js` 兼容不返回 `runners` 的旧版服务（按只有“按计划”处理，不发送 `runner`），单一循环的进度文字不再显示“正在规划步骤”；`node --check` 与 init.ps1（1622/16）通过，未在浏览器验证。
+- **下一项方案**：[第 0 阶段清理方案](docs/stage0_cleanup_plan.md)（cleanup-stage0-plan-001），打算交给 Codex 实现 cleanup-stage0-001；loop-web-001 和本方案已一起提交。
+- **Next best action**：等待下一项任务；按计划 §7，网页真实模型的问答/人工确认允许与拒绝/ask_user 恢复需另行授权，之后才讨论默认改 loop。本轮不自动推进。
+- **Commands**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；`node --check app/api/static/app.js`；基线命令见 docs/harness/baseline.md。
+
+下文是此前阶段交接，时间和“未提交/未实现”按当时解释；本轮状态以上段为准。
+
 格式按课程模板：Currently verified / Changes / Still broken or unverified / Next best action / Commands。
 
 ## 当前状态（2026-11-06，最新）

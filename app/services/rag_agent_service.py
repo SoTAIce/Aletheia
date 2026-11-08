@@ -301,6 +301,8 @@ class RagAgentService:
         default mode is always accepted. Team and auto need the team prepared at startup."""
         accepted = {'single', self._execution_mode} | ({'team', 'auto'} if self._team_options is not None else set())
         return {'modes': [m for m in MODES if m in accepted], 'default_mode': self._execution_mode,
+                'runners': ['plan', 'loop'] if self._runner_options['runner_registry'] is None else ['plan'],
+                'default_runner': self._single_runner,
                 'memory_available': self._longterm_memory is not None}
 
     def task_options(self, session_id: str, task_id: str, *, user_id: str | None = None) -> dict | None:
@@ -325,12 +327,13 @@ class RagAgentService:
         request_id: str | None = None, resume_task_id: str | None = None,
         question_id: str | None = None, on_event=None,
         execution_mode: str | None = None, allow_writes: bool | None = None, use_memory: bool | None = None,
+        single_runner: str | None = None,
         hooks=None,
     ) -> AgentRunResult:
         """on_event, if given, receives host-authored progress records ('route',
         then the runtime's 'plan' and 'step'); see AgentRuntime.run (D-045).
 
-        execution_mode, allow_writes and use_memory choose for this request only; None keeps the
+        execution_mode, single_runner, allow_writes and use_memory choose for this request only; None keeps the
         service default (D-051). allow_writes=False hides the write and run tools as for a read-only
         task (D-027); use_memory=False skips long-term recall. A resumed task keeps its own choices."""
         if self._closed:
@@ -339,6 +342,11 @@ class RagAgentService:
         self._validate_identity(user_id)
         if execution_mode is not None and execution_mode not in self.run_options()['modes']:
             raise ValueError('execution mode is not available')
+        if single_runner is not None and single_runner not in ('plan', 'loop'):
+            raise ValueError('single_runner must be plan or loop')
+        if (resume_task_id is None and single_runner == 'loop'
+                and self._runner_options['runner_registry'] is not None):
+            raise ValueError('single_runner loop assembles its own runner registry')
         _check_choice('allow_writes', allow_writes)
         _check_choice('use_memory', use_memory)
         if use_memory and self._longterm_memory is None:
@@ -414,6 +422,7 @@ class RagAgentService:
                 options = None
             if options is None:
                 options = {'mode': execution_mode or self._execution_mode,
+                           'runner': single_runner or self._single_runner,
                            'write': True if allow_writes is None else allow_writes,
                            'memory': (self._longterm_memory is not None) if use_memory is None else use_memory}
             task = memory.task_state
@@ -497,7 +506,7 @@ class RagAgentService:
                         from app.agent.route_selection import task_registry
                         registry = task_registry(registry, choice.read_only)
                         # Team V2 owns the whole task: one fixed plan step, one team (DECISIONS D-019).
-                        loop = route == 'single' and self._single_runner == 'loop'
+                        loop = route == 'single' and options['runner'] == 'loop'
                         if route == 'team':
                             from app.agent.team_v2 import SingleStepPlanner
                             planner = SingleStepPlanner(planner_model, max_steps=1, context_manager=context_manager)

@@ -4,7 +4,7 @@
 
 const TOKEN_KEY = 'aletheia-token';
 const RUN_KEY = 'aletheia-runs';          // session id -> run id still being followed
-const OPTIONS_KEY = 'aletheia-options';   // this tab's choice of mode, writes and memory
+const OPTIONS_KEY = 'aletheia-options';   // this tab's choice of mode, runner, writes and memory
 const SVG_NS = 'http://www.w3.org/2000/svg';   // a namespace name, not a resource that is loaded
 const TAG = {completed: ['done', '已完成'], blocked: ['ask', '等待你回答'], failed: ['fail', '未完成'],
              cancelled: ['', '已停止'], running: ['run', '进行中']};
@@ -334,16 +334,23 @@ const MODE_NAMES = {single: '普通模式', team: '团队模式', auto: '自动�
 function applyCaps(caps) {
   // An older server without per-run options keeps the controls hidden.
   if (!caps || !Array.isArray(caps.modes)) { state.caps = null; $('run-options').hidden = true; return; }
+  // A server from before D-065 offers no runner choice: treat it as plan only and never send one.
+  const runnerSupported = Array.isArray(caps.runners) && caps.runners.length > 0;
+  const runners = runnerSupported ? caps.runners : ['plan'];
+  caps = {...caps, runners, runner_supported: runnerSupported,
+          default_runner: runners.includes(caps.default_runner) ? caps.default_runner : runners[0]};
   const first = !state.caps;
   state.caps = caps;
   if (first) {
     const kept = saved(OPTIONS_KEY, {}) || {};
     state.options = {
       mode: caps.modes.includes(kept.mode) ? kept.mode : caps.default_mode,
+      runner: caps.runners.includes(kept.runner) ? kept.runner : caps.default_runner,
       write: caps.write_available ? (typeof kept.write === 'boolean' ? kept.write : Boolean(caps.write_default)) : false,
       memory: caps.memory_available ? (typeof kept.memory === 'boolean' ? kept.memory : Boolean(caps.memory_default)) : false,
     };
   }
+  if (!caps.runners.includes(state.options.runner)) state.options.runner = caps.default_runner;
   for (const option of $('opt-mode').options) {
     option.disabled = !caps.modes.includes(option.value);
     option.textContent = MODE_NAMES[option.value] + (option.disabled ? '（未开启）' : '');
@@ -356,6 +363,12 @@ function renderOptions() {
   if (!state.caps) return;
   const caps = state.caps, opts = state.options, answering = Boolean(state.waiting);
   $('opt-mode').value = opts.mode;
+  $('opt-runner').value = opts.runner;
+  $('runner-option').hidden = caps.runners.length === 1;
+  $('opt-runner').disabled = answering || opts.mode === 'team';
+  $('runner-option').title = answering ? '回答问题时沿用原任务的设置'
+    : opts.mode === 'team' ? '团队模式使用自己的执行方式'
+    : '按计划：先列步骤再逐步执行；单一循环：模型边做边决定，调用更少';
   for (const [id, key, available, off] of [
     ['opt-write', 'write', caps.write_available, '启动服务时没有指定可写目录，写文件不可用'],
     ['opt-memory', 'memory', caps.memory_available, '服务没有配置长期记忆'],
@@ -659,10 +672,14 @@ class LiveView {
 
   show(event) {
     switch (event.type) {
-      case 'route':
-        this.route.textContent = (event.mode === 'team' ? '团队模式' : '普通模式') + (event.read_only ? '，只读' : '');
-        this.say('正在规划步骤');
+      case 'route': {
+        const loop = event.mode !== 'team' && event.options?.runner === 'loop';
+        this.route.textContent = (event.mode === 'team' ? '团队模式'
+          : '普通模式' + (loop ? '（单一循环）' : '（按计划）'))
+          + (event.read_only ? '，只读' : '');
+        this.say(loop ? '正在执行，不单独规划步骤' : '正在规划步骤');   // the loop makes no planning call
         break;
+      }
       case 'plan': {
         if (event.revision > 1) {
           for (const li of this.order) if (!li.classList.contains('done') && !li.classList.contains('fail')) li.remove();
@@ -778,7 +795,10 @@ function appendTurn(text) {
 async function send(text) {
   const body = {content: text, request_id: newId('')};
   if (state.waiting) body.resume_task_id = state.waiting.task_id;      // a resumed task keeps its options
-  else if (state.caps && state.options) body.options = {...state.options};
+  else if (state.caps && state.options) {
+    body.options = {...state.options};
+    if (!state.caps.runner_supported) delete body.options.runner;   // an older server refuses unknown fields
+  }
   if (!state.session) state.session = newId('web-');
   setBusy(true);
   toast('');
@@ -894,6 +914,7 @@ $('close-memory').addEventListener('click', closePanels);
 $('session-search').addEventListener('input', renderSessions);
 $('new-session').addEventListener('click', newSession);
 $('opt-mode').addEventListener('change', (e) => setOption('mode', e.target.value));
+$('opt-runner').addEventListener('change', (e) => setOption('runner', e.target.value));
 $('opt-write').addEventListener('click', () => setOption('write', !state.options.write));
 $('opt-memory').addEventListener('click', () => setOption('memory', !state.options.memory));
 document.addEventListener('keydown', (event) => {

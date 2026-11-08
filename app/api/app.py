@@ -42,6 +42,7 @@ class RunOptionsIn(BaseModel):
     """Choices for one message; an omitted one takes the server default (D-051)."""
     model_config = ConfigDict(extra='forbid')
     mode: Literal['single', 'team', 'auto'] | None = None
+    runner: Literal['plan', 'loop'] | None = None
     write: StrictBool | None = None
     memory: StrictBool | None = None
 
@@ -160,6 +161,7 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
     def run_options() -> dict:
         offered = service.run_options()
         return {'modes': list(offered['modes']), 'default_mode': offered['default_mode'],
+                'runners': list(offered['runners']), 'default_runner': offered['default_runner'],
                 'write_available': write_enabled, 'write_default': write_enabled,
                 'memory_available': offered['memory_available'], 'memory_default': offered['memory_available']}
 
@@ -168,11 +170,14 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
         offered = run_options()
         if requested.get('mode') is not None and requested['mode'] not in offered['modes']:
             raise ApiError(400, 'mode_unavailable', '服务启动时没有准备团队能力，只能使用普通模式。')
+        if requested.get('runner') is not None and requested['runner'] not in offered['runners']:
+            raise ApiError(400, 'runner_unavailable', '这台服务不能使用单一循环。')
         if requested.get('write') and not offered['write_available']:
             raise ApiError(400, 'write_unavailable', '服务启动时没有指定写入目录，不能写文件。')
         if requested.get('memory') and not offered['memory_available']:
             raise ApiError(400, 'memory_unavailable', '长期记忆没有开启，不能使用。')
         return {'mode': requested.get('mode') or offered['default_mode'],
+                'runner': requested.get('runner') or offered['default_runner'],
                 'write': offered['write_default'] if requested.get('write') is None else requested['write'],
                 'memory': offered['memory_default'] if requested.get('memory') is None else requested['memory']}
 

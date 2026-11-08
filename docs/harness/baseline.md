@@ -1,14 +1,23 @@
 # 已记录基线（Recorded Baseline）
 
-课程 L05/L06 要求一个已提交的 git checkpoint。2026-11-04 经用户授权，harness 管理文件、docs 和最小测试已在本地提交，提交的父提交是 `9138ac1`（Agent Team V1 冻结）。
-用户选择暂不提交的差异（README、三个文件的中文注释、三个脚本的删除；长期记忆源码已于 2026-11-06 提交）记录在 [baseline-2026-11-06.json](history/baseline-2026-11-06.json) 中（2026-11-06 刷新：中文注释和后续提交改变了哈希，旧清单中被删的测试已按 D-030 恢复；旧清单 [baseline-2026-11-04.json](history/baseline-2026-11-04.json) 只作历史保留）：修改文件和未跟踪文件的 SHA-256，以及已删除路径列表。
+当前未提交清单：[baseline-2026-11-08-loop-web.json](history/baseline-2026-11-08-loop-web.json)。loop-web-001 实现时用户要求不提交，随后经用户授权（“先提交”）已提交，清单里的本轮文件此后应与提交内容一致；本次以 HEAD `c15ffd9` 为源码起点，保留原用户差异并登记本轮实现、测试和文档。
 
-核对内容：`base_commit` 是否为 HEAD 的祖先；用户差异是否原样；其余文件是否全部已提交（git status 中没有清单以外的条目）。清单不能防止工作区丢失；剩余批次的提交由用户授权。
+新清单记录修改/未跟踪文件 SHA-256 与已删路径；`self_path` 单独声明清单自身，不对自身做循环哈希。核对时只将这个清单路径排除在文件哈希集合之外，仍检查其存在。
+清单是交接证据，不是备份，也不是提交授权。不得为了清除 Git 状态而 reset、覆盖或提交用户文件。
 
 ## 核对命令（只读）
 
 ```powershell
-.venv/Scripts/python.exe -I -c "import json,hashlib,pathlib,subprocess as sp;m=json.load(open('docs/harness/history/baseline-2026-11-06.json',encoding='utf-8'));anc=sp.run(['git','merge-base','--is-ancestor',m['base_commit'],'HEAD']).returncode==0;d=[p for k in ('modified_tracked','untracked') for p,s in m[k].items() if not pathlib.Path(p).is_file() or hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()!=s];g=[p for p in m['deleted_tracked'] if pathlib.Path(p).exists()];known=set(m['modified_tracked'])|set(m['untracked'])|set(m['deleted_tracked']);x=[l[3:] for l in sp.run(['git','status','--porcelain=v1','-uall'],capture_output=True,text=True).stdout.splitlines() if l[3:] not in known];print('base ancestor', 'OK' if anc else 'NO');print('drift', d or 'none');print('deleted-restored', g or 'none');print('uncommitted-outside-manifest', x or 'none')"
+.venv/Scripts/python.exe -I -c "import json,hashlib,pathlib,subprocess as sp;m=json.load(open('docs/harness/history/baseline-2026-11-08-loop-web.json',encoding='utf-8'));anc=sp.run(['git','merge-base','--is-ancestor',m['base_commit'],'HEAD']).returncode==0;d=[p for k in ('modified_tracked','untracked') for p,s in m[k].items() if not pathlib.Path(p).is_file() or hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()!=s];g=[p for p in m['deleted_tracked'] if pathlib.Path(p).exists()];known=set(m['modified_tracked'])|set(m['untracked'])|set(m['deleted_tracked'])|{m['self_path']};x=[l[3:] for l in sp.run(['git','status','--porcelain=v1','-uall'],capture_output=True,text=True).stdout.splitlines() if l[3:] not in known];print('base ancestor', 'OK' if anc and pathlib.Path(m['self_path']).is_file() else 'NO');print('drift', d or 'none');print('deleted-restored', g or 'none');print('uncommitted-outside-manifest', x or 'none')"
 ```
 
-四项都应为 OK/none。`uncommitted-outside-manifest` 不为空，说明有新改动既没提交也没记录：要么提交，要么在会话结束时记入新清单（见 clean-state 清单）。
+预期四项：base ancestor OK；drift none；deleted-restored none；uncommitted-outside-manifest none。
+之后新任务出现清单外变化很正常，应保留本清单，并记录新任务完成后的状态，不倒改原保护哈希来掩盖变化。
+
+## 历史清单
+
+- [2026-11-06](history/baseline-2026-11-06.json)：长期记忆已提交后的用户选择未提交差异。
+- [2026-11-04](history/baseline-2026-11-04.json)：首次 Harness 提交后的状态。
+- [本轮开始时的用户差异](history/loop-web-start-2026-11-08.json)：验证 README、三个注释文件和三个脚本删除项未被本轮更改。
+
+旧清单仅用于追溯，不应要求包含新功能的工作区与旧哈希完全一致。

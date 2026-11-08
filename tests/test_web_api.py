@@ -200,6 +200,7 @@ async def test_the_token_is_required_everywhere(tmp_path):
         health = (await web.client.get('/api/health')).json()
         assert health == {'status': 'ok', 'longterm_memory': False, 'write_enabled': False, 'active_runs': 0,
                           'options': {'modes': ['single'], 'default_mode': 'single',     # D-051
+                                      'runners': ['plan', 'loop'], 'default_runner': 'plan',
                                       'write_available': False, 'write_default': False,
                                       'memory_available': False, 'memory_default': False},
                           'approval_tools': []}                                          # D-061

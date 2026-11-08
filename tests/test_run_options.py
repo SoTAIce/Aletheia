@@ -78,11 +78,12 @@ def service(tmp_path=None, model=None, **kw):
 # ---- service ------------------------------------------------------------------------------
 
 def test_the_service_offers_team_modes_only_when_the_team_was_prepared():
-    assert service().run_options() == {'modes': ['single'], 'default_mode': 'single', 'memory_available': False}
+    assert service().run_options() == {'modes': ['single'], 'default_mode': 'single', 'memory_available': False,
+                                       'runners': ['plan', 'loop'], 'default_runner': 'plan'}
     assert service(execution_mode='auto').run_options()['modes'] == ['single', 'auto']   # the default stays usable
     prepared = service(team_options=SANDBOX, longterm_memory=FakeLongterm())
     assert prepared.run_options() == {'modes': ['single', 'team', 'auto'], 'default_mode': 'single',
-                                      'memory_available': True}
+                                      'memory_available': True, 'runners': ['plan', 'loop'], 'default_runner': 'plan'}
 
 
 async def test_unavailable_choices_are_refused_before_anything_runs(fake_runtime):
@@ -108,7 +109,7 @@ async def test_a_message_may_pick_the_team_in_a_single_default_service(fake_runt
     assert single.options['runner_registry'] is None and single.options['runner_requirements'] is None
     assert single.options['step_timeout_seconds'] < SANDBOX.timeout_seconds
     assert events[0] == {'type': 'route', 'mode': 'team', 'read_only': False,
-                         'options': {'mode': 'team', 'write': True, 'memory': False}}
+                         'options': {'mode': 'team', 'runner': 'plan', 'write': True, 'memory': False}}
 
 
 async def test_a_message_may_pick_single_in_a_team_default_service(fake_runtime):
@@ -220,13 +221,15 @@ async def test_health_reports_what_each_message_may_choose(tmp_path):
         health = (await web.client.get('/api/health')).json()
     assert health['write_enabled'] is False and health['longterm_memory'] is False   # kept unchanged
     assert health['options'] == {'modes': ['single'], 'default_mode': 'single', 'write_available': False,
-                                 'write_default': False, 'memory_available': False, 'memory_default': False}
+                                 'write_default': False, 'memory_available': False, 'memory_default': False,
+                                 'runners': ['plan', 'loop'], 'default_runner': 'plan'}
     svc = service(tmp_path, execution_mode='auto', team_options=SANDBOX, longterm_memory=FakeLongterm())
     async with api(svc, write_enabled=True) as web:
         health = (await web.client.get('/api/health')).json()
     assert health['options'] == {'modes': ['single', 'team', 'auto'], 'default_mode': 'auto',
                                  'write_available': True, 'write_default': True,
-                                 'memory_available': True, 'memory_default': True}
+                                 'memory_available': True, 'memory_default': True,
+                                 'runners': ['plan', 'loop'], 'default_runner': 'plan'}
 
 
 @pytest.mark.parametrize('options, code', [
@@ -259,16 +262,16 @@ async def test_route_event_and_run_state_carry_the_options_in_effect(tmp_path, f
         state = await web.done('r1')
         route = next(e for e in await web.events('r1') if e['type'] == 'route')
         defaults = await web.done((await web.send('q', 'r2')).json()['run_id'])
-    expected = {'mode': 'team', 'write': True, 'memory': False}
+    expected = {'mode': 'team', 'runner': 'plan', 'write': True, 'memory': False}
     assert state['options'] == expected and route['options'] == expected and route['mode'] == 'team'
-    assert defaults['options'] == {'mode': 'single', 'write': True, 'memory': True}
+    assert defaults['options'] == {'mode': 'single', 'runner': 'plan', 'write': True, 'memory': True}
 
 
 async def test_omitted_options_follow_the_startup_defaults(tmp_path, fake_runtime, read_only_calls):
     async with api(service(tmp_path)) as web:
         state = await web.done((await web.send('q', 'r1', options={})).json()['run_id'])
     # Without a write root the default is no writing: the read-only path, as before (D-027).
-    assert state['options'] == {'mode': 'single', 'write': False, 'memory': False} and read_only_calls == [True]
+    assert state['options'] == {'mode': 'single', 'runner': 'plan', 'write': False, 'memory': False} and read_only_calls == [True]
 
 
 async def test_a_repeated_request_id_with_other_options_conflicts(tmp_path, fake_runtime):
@@ -298,7 +301,7 @@ async def test_a_resume_ignores_new_options_and_keeps_the_tasks_own(tmp_path, re
         assert (await web.client.get('/api/runs/r2')).json()['options'] == blocked['options']
         done = await web.done('r2')
         route = next(e for e in await web.events('r2') if e['type'] == 'route')
-    original = {'mode': 'single', 'write': False, 'memory': False}
+    original = {'mode': 'single', 'runner': 'plan', 'write': False, 'memory': False}
     assert blocked['options'] == original and done['options'] == original and route['options'] == original
     assert done['status'] == 'completed' and read_only_calls == [True, True]
 
@@ -308,6 +311,7 @@ async def test_a_resume_ignores_new_options_and_keeps_the_tasks_own(tmp_path, re
 @pytest.mark.parametrize('argv, write_root, sandbox, writes', [
     (['--execution-mode', 'single'], None, False, False),
     (['--execution-mode', 'auto', '--write-root', 'w'], 'w', False, True),
+    (['--execution-mode', 'single', '--single-runner', 'loop'], None, False, False),
 ])
 async def test_the_web_launcher_always_prepares_the_team_but_keeps_the_default_mode(
         monkeypatch, argv, write_root, sandbox, writes):
@@ -344,6 +348,7 @@ async def test_the_web_launcher_always_prepares_the_team_but_keeps_the_default_m
         monkeypatch.setattr(config, name, value)
     assert await launcher.serve(launcher.build_parser().parse_args(argv)) == 0
     assert seen['execution_mode'] == argv[1]
+    assert seen['single_runner'] == ('loop' if '--single-runner' in argv else 'plan')
     team = seen['team_options']
     assert isinstance(team, DelegationOptions)
     assert ('write_file' in team.allowed_tools) is writes and team.require_passing_run is sandbox

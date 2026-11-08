@@ -10,6 +10,9 @@
 # 启动本地网页（只读，地址 http://127.0.0.1:8000，令牌见 .env 的 WEB_ACCESS_TOKEN）
 .venv\Scripts\python.exe -m app.api --filesystem-root . --no-knowledge
 
+# 普通模式默认使用单一循环；也可在网页逐条消息选择“按计划 / 单一循环”
+.venv\Scripts\python.exe -m app.api --filesystem-root . --no-knowledge --single-runner loop
+
 # 允许写文件（只能写进指定目录）
 .venv\Scripts\python.exe -m app.api --filesystem-root . --write-root .\output --no-knowledge
 

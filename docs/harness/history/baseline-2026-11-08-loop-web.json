@@ -1,0 +1,44 @@
+{
+  "created": "2026-11-08",
+  "base_commit": "c15ffd974788314b632393047cc75643342ae668",
+  "purpose": "Uncommitted loop-web-001 implementation and preserved original user differences; no commit authorized.",
+  "self_path": "docs/harness/history/baseline-2026-11-08-loop-web.json",
+  "user_baseline": "docs/harness/history/loop-web-start-2026-11-08.json",
+  "modified_tracked": {
+    "AGENTS.md": "ec8d1b1fefc91ecad979076015659ef56a96dda91110784191784cce6b607345",
+    "README.md": "2b917b14b8c098babd342f0c442d6e76c2f91eaae829d28574b77d7cb6348e38",
+    "app/agent/planner.py": "a2ce0f91c476ea473f2ae6db98aa7b7ac7416b744abde1419a0f38c1fe8d8dc6",
+    "app/agent/step_executor.py": "86f8ca77ebd86d964f1dbc31b2dcf8cfcbb0596ba85c12d086368fdb304b1f1d",
+    "app/agent/tool_calling_step_runner.py": "ab6d27b6e6171c17ab07afd0c7b1cd98eb9c7e23135fc4dc693e6921ee79c480",
+    "app/api/__main__.py": "598666b8df42059cb50500430688a41224d6cd7abd66f578deb19fa65e0cc75f",
+    "app/api/app.py": "452588161bbbaa58a8fa48c9d3a80c9fa66c7a66f82328c3d436a2645a29bb46",
+    "app/api/runs.py": "ee3bc896156a6f962ce0c43be19ff3e5eeb4c5150b26e0f93470b1dd71977650",
+    "app/api/static/app.js": "e584b87505f94be0dc07d64ce4a853155da77633b41994783c37d8e99178af47",
+    "app/api/static/index.html": "dc27fe4e4d411c4ca199a0ce4565a769d92249deb640d80eccc21b5f1c825080",
+    "app/services/rag_agent_service.py": "6a7e6b2dd109114e4aa513e0ed41d04078cd48c956ac17271a15288248f00822",
+    "common.md": "a38cfcc92f6e47295259bbbf62b1da926aa23717f1b09a468a7c468a7ed76a1c",
+    "docs/DECISIONS.md": "49c5eb85748307d488bf7ea10fe9f2cb71f98590c637f16a070d8f8c59abb9fb",
+    "docs/DOCUMENT_INDEX.md": "67442f3f0ad6a9020b507ace7db8d89392cd894533229f96f7a347ec629588ef",
+    "docs/PROJECT_HANDOVER.md": "9f31ddcf17676eb268af8458e85077e78786ab2740bfedbb14bd219cd89c4c83",
+    "docs/harness/baseline.md": "e234eb588951176ad45887a3b89d7b22d429a4109cb774fe070931264c724540",
+    "docs/loop_web_plan.md": "71c3b1db8da9597c2f9c5a2bc70459cddab98a7b44f41530ecb39d32755494c1",
+    "feature_list.json": "b63ef3d3d6f109276c63440fbdd59483adc3585dff5425ebae6432d67366c448",
+    "progress.md": "d8be5a23cabe0a19fd6f8cd09929d4db57b3f232df0532dfb31cd8b18fc9b6d0",
+    "session-handoff.md": "91897bc47596233dbdac7ef4c49a5bc2dc3859b0ddb27bc3e9ee7bd72e52b01a",
+    "tests/test_progress_and_history.py": "ce7cbe5803fb8aa01bf1345c9da096289fa7c10599435060e043a323e92bd903",
+    "tests/test_run_options.py": "e8dfaf4120fffed96d165d9cf9c93510140f06eef5cb43b3ce85e81b37cf7c8c",
+    "tests/test_web_api.py": "67ae29bad8b84b9dd9a4cdfe98efee50a1debce5afc732c8595655756f71835e"
+  },
+  "untracked": {
+    "docs/harness/history/loop-web-start-2026-11-08.json": "dce48c25c77aaba8447e18a2e9468933b9a069a27bef80e5bb6a75b6c9901d8a",
+    "docs/harness/loop-web-2026-11-08.md": "626ccef4632d6f89a22cb575fbeb1bfeafa89db72dc7b84220c48553816deca6",
+    "tests/test_web_loop_runner.py": "8b215cd67a5167f1a5906813b9e33c2d3462d172a97a63b4d32a52b4597eb5cc",
+    "docs/stage0_cleanup_plan.md": "5ccec3032e014f68552a6e64a745f0d2606c13189f5b347b4b7a98869b617697"
+  },
+  "deleted_tracked": [
+    "scripts/benchmark_conversation_memory.py",
+    "scripts/validate_multi_runner_live.py",
+    "scripts/validate_summary_context.py"
+  ],
+  "check": "docs/harness/baseline.md"
+}
