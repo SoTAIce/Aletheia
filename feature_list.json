@@ -1211,6 +1211,19 @@
         "Without a matching answer or with a new goal revision, the loop starts again."
       ],
       "evidence": "tests/test_agent_loop.py 19 passed (3 new, the service test now checks the continued messages); init.ps1 PASS 1600 passed, 16 skipped. Not run against a live model."
+    },
+    {
+      "id": "loop-web-plan-001",
+      "name": "Plan: let the web page choose the agent loop",
+      "description": "Design only, no code change (user asked on 2026-11-07 for a change plan to hand to Codex). docs/loop_web_plan.md: a per-task 'runner' option (plan or loop) next to mode, write and memory (D-051), kept when a blocked task resumes; RagAgentService.query_result(single_runner=...), run_options() lists runners and default_runner; the API's RunOptionsIn, resolve() and runs.py pass it on; app/api/__main__.py gets --single-runner; the page gets a runner select. Files to change, tests, records and constraints are listed; making loop the default is left for a later decision.",
+      "status": "done",
+      "dependencies": [
+        "loop-resume-001"
+      ],
+      "acceptance": [
+        "The plan names every file to change, the tests, the records and what is out of scope."
+      ],
+      "evidence": "docs/loop_web_plan.md written; checked against app/api/app.py, runs.py, __main__.py, static/app.js and rag_agent_service.py as of ea5783b. Not implemented."
     }
   ],
   "cleanup_2026_11_04": {
