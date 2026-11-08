@@ -10,8 +10,8 @@ import pytest
 from app.agent.agent_loop import (ASK_USER, TODO, AgentLoopRunner, LoopOptions, LoopPlanner, _context_message)
 from app.agent.hooks import HookSet, using_hooks
 from app.agent.step_executor import StepExecutor
-from app.agent.step_models import (ModelTurn, StepOutcome, SystemMessage, ToolCall, ToolDefinition, ToolOutput,
-                                   ToolsShownOnly)
+from app.agent.step_models import (ModelTurn, StepOutcome, SystemMessage, ToolCall, ToolDefinition, ToolMessage,
+                                   ToolOutput, ToolsShownOnly)
 from app.agent.step_runner import StepFormatError, StepRunError, StepToolError, ToolRoundLimitError
 from app.models.taskstate import TaskState, TaskStatus
 from app.models.working_memory import WorkingMemory
@@ -167,6 +167,68 @@ def test_the_bench_counts_todo_calls_per_task():
     assert 'todo_calls' not in plain and plain['calls'] == [{'prompt': 1, 'completion': 1}]
 
 
+def _answered(context, question, answer, *, goal_revision=None):
+    from dataclasses import replace
+    from datetime import datetime, UTC
+    from app.models.taskstate import OpenQuestion
+    now = datetime.now(UTC)
+    asked = OpenQuestion('q1', question, None, context.goal_revision, True, now, answer, now)
+    return replace(context, resolved_questions=(asked,),
+                   goal_revision=context.goal_revision if goal_revision is None else goal_revision)
+
+
+async def test_a_blocked_loop_continues_with_its_messages_after_the_answer():
+    from app.agent.agent_loop import LoopResumeStore
+    store = LoopResumeStore()
+    runner, model, read, context = setup([call('a'), ModelTurn(tool_calls=(
+        ToolCall('q', ASK_USER, {'question': 'Which part?'}), ToolCall('b', 'read', {'part': 'b'})))],
+        options=LoopOptions(max_tool_rounds=3))
+    runner._store = store
+    first = await runner.run(context)
+    assert first.outcome is StepOutcome.BLOCKED and read.invoke.await_count == 1
+
+    second = AgentLoopRunner(model, runner._registry, LoopOptions(max_tool_rounds=3), resume_store=store)
+    model.generate.side_effect = [text('the parser')]
+    output = await second.run(_answered(context, 'Which part?', 'the parser'))
+    assert output.content == 'the parser' and second.resumed and read.invoke.await_count == 1
+    sent = model.generate.await_args_list[-1].args[0]
+    replies = {m.call_id: json.loads(m.content) for m in sent if isinstance(m, ToolMessage)}
+    assert replies['a']['success'] and replies['q'] == {'success': True, 'content': 'the parser',
+                                                        'error': None, 'source_refs': []}
+    assert replies['b']['success'] is False and 'asked first' in replies['b']['error']
+    assert output.tool_calls == ()            # the earlier call was reported by the first attempt
+
+
+async def test_the_budget_counts_the_work_before_the_question():
+    from app.agent.agent_loop import LoopResumeStore
+    store = LoopResumeStore()
+    options = LoopOptions(max_tool_rounds=2)
+    runner, model, read, context = setup([call('a'), call('q', ASK_USER, question='Which?')], options=options)
+    runner._store = store
+    await runner.run(context)
+    second = AgentLoopRunner(model, runner._registry, options, resume_store=store)
+    model.generate.side_effect = [call('c'), text('from a')]
+    output = await second.run(_answered(context, 'Which?', 'x'))
+    assert output.content == 'from a' and read.invoke.await_count == 1   # two rounds were already used
+    assert isinstance(model.generate.await_args_list[-2].args[1], ToolsShownOnly)
+
+
+async def test_the_loop_starts_again_when_it_cannot_continue():
+    from app.agent.agent_loop import LoopResumeStore
+    for answered in (lambda c: c,                                              # no answer yet
+                     lambda c: _answered(c, 'Another question?', 'x'),         # a different question
+                     lambda c: _answered(c, 'Which?', 'x', goal_revision=c.goal_revision + 1)):   # new goal
+        store = LoopResumeStore()
+        runner, model, read, context = setup([call('a'), call('q', ASK_USER, question='Which?')])
+        runner._store = store
+        await runner.run(context)
+        second = AgentLoopRunner(model, runner._registry, resume_store=store)
+        model.generate.side_effect = [text('fresh')]
+        assert (await second.run(answered(context))).content == 'fresh' and not second.resumed
+        assert len(model.generate.await_args_list[-1].args[0]) == 2     # system and context only
+        assert store.take(context) is None                              # taking it cleared it
+
+
 class _Planner:
     async def generate(self, prompt):
         raise AssertionError('the loop has no planning model call')
@@ -187,7 +249,11 @@ async def test_the_service_runs_single_mode_as_one_loop_and_resumes_after_ask_us
         second = await service.query_result('Paris', 's1', resume_task_id=first.task_id)
     assert second.status is TaskStatus.COMPLETED and second.content == 'It is noon in Paris.'
     resumed = model.generate.await_args_list[2].args[0]
-    assert 'Paris' in resumed[1].content          # the answer is in resolved_questions
+    # The loop continued: the earlier time call is still there and the answer is the ask_user result.
+    assert [type(m).__name__ for m in resumed] == ['SystemMessage', 'UserMessage', 'AssistantMessage',
+                                                  'ToolMessage', 'AssistantMessage', 'ToolMessage']
+    assert resumed[-1].call_id == 'q' and json.loads(resumed[-1].content)['content'] == 'Paris'
+    assert model.generate.await_count == 3        # nothing was asked of the model twice
     assert second.execution_count == 2 and second.replan_count == 0
 
 

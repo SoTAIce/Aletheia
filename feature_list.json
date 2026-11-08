@@ -1196,6 +1196,21 @@
         "File tasks write the deliverable and a test, run it in the sandbox and then deliver; answer tasks still pass."
       ],
       "evidence": "Tune set live with --sandbox, loop runner, 1 run per task (AGENT_MODEL_CONTEXT_TOKENS=128000 for the run only, report in the ignored output/bench-tune-loop-sandbox.json): 10/11 strictly; 48 model calls, 1,052,636 tokens, 333 s; no failed tool calls; no container or TEMP folder left. Every file task went read, write the deliverable, write a test file, run_tests once, (sometimes read back), answer; the report keeps no tool output, so whether each run passed is not recorded, but no task ran the tests twice. The one failure is todo_html at 10/11 on enter_key_and_trim, a static text check (an 'Enter' literal or keyCode 13, plus '.trim()'); it passed in the --write run, the file was not kept, so whether the page works is unknown. todo never called."
+    },
+    {
+      "id": "loop-resume-001",
+      "name": "Agent loop: continue after ask_user instead of starting again",
+      "description": "User said '跳过，先修恢复' on 2026-11-07 (the todo_html page check was skipped: the file was not kept and no rerun was wanted). Before, a loop blocked by ask_user lost its messages and started again after the answer, rereading everything. Now register_agent_loop_runner keeps one LoopResumeStore for the task's runtime (the runner registry outlives each rebinding); when the loop asks, it saves its messages, seen call ids, source refs, rounds, tool calls used and todo. On the next run, if the task id and goal revision match and resolved_questions holds an answer to the same question, the loop continues: the answer is the result of its ask_user call, other calls of the asking turn are answered as not executed, and the budget counts the work before the question. Otherwise (no answer, another question, a new goal, or a restarted process) it starts again as before. Memory only; nothing new is stored on disk. DECISIONS D-064.",
+      "status": "done",
+      "dependencies": [
+        "loop-trial-001"
+      ],
+      "acceptance": [
+        "After the answer the loop continues with its earlier messages and does not call earlier tools again.",
+        "The budget includes the rounds and calls used before the question.",
+        "Without a matching answer or with a new goal revision, the loop starts again."
+      ],
+      "evidence": "tests/test_agent_loop.py 19 passed (3 new, the service test now checks the continued messages); init.ps1 PASS 1600 passed, 16 skipped. Not run against a live model."
     }
   ],
   "cleanup_2026_11_04": {

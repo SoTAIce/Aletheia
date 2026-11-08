@@ -6,8 +6,10 @@ budget, side-effect protection, hooks and conversation handling stay as they are
 loop the model calls tools until it replies with plain text, which is the final answer (no
 JSON envelope). Two control tools are handled by the loop itself and never reach the tool
 registry: `todo` records the model's own checklist, `ask_user` blocks the task with one
-question. A blocked loop does not keep its messages: after the answer it starts again with
-the answer in resolved_questions (a stage-1 limitation).
+question. A blocked loop keeps its messages in memory (LoopResumeStore, one per task's
+runtime): after the answer it continues where it stopped, with the answer as the result of
+its ask_user call (D-064). After a restart, or when the goal changed, it starts again with
+the answer in resolved_questions.
 """
 
 import json
@@ -139,11 +141,46 @@ def _todo_items(arguments):
     return checked, None
 
 
+@dataclass(slots=True)
+class _Paused:
+    """A loop stopped at ask_user: what it needs to continue after the answer."""
+    task_id: str
+    goal_revision: int
+    question: str
+    ask_id: str
+    skipped: tuple          # the other calls of the asking turn, which did not run
+    messages: list
+    seen: set
+    refs: list
+    rounds: int
+    used_calls: int
+    todo: list
+
+
+class LoopResumeStore:
+    """Holds at most one paused loop, in memory only; taking it clears it."""
+
+    def __init__(self):
+        self._paused: _Paused | None = None
+
+    def save(self, paused: _Paused) -> None:
+        self._paused = paused
+
+    def take(self, context: StepExecutionContext):
+        """The paused loop and the user's answer, or None when it cannot continue."""
+        paused, self._paused = self._paused, None
+        if paused is None or paused.task_id != context.task_id or paused.goal_revision != context.goal_revision:
+            return None
+        answers = [q.answer for q in context.resolved_questions
+                   if q.content.strip() == paused.question and isinstance(q.answer, str)]
+        return (paused, answers[-1]) if answers else None
+
+
 class AgentLoopRunner:
     """One loop over the whole task: model and tools until a plain-text answer."""
 
     def __init__(self, model, tool_registry: ToolRegistry, options: LoopOptions | None = None,
-                 context_manager=None):
+                 context_manager=None, resume_store: LoopResumeStore | None = None):
         if not callable(getattr(model, 'generate', None)):
             raise TypeError('model must provide generate()')
         if not isinstance(tool_registry, ToolRegistry):
@@ -151,8 +188,10 @@ class AgentLoopRunner:
         self._model, self._registry = model, tool_registry
         self._options = options or LoopOptions()
         self._manager = CompactingManager(context_manager) if context_manager is not None else None
+        self._store = resume_store
         self.format_repair_count = 0
         self.todo: list[dict] = []
+        self.resumed = False
 
     async def _generate(self, messages, tools, refs):
         try:
@@ -179,10 +218,20 @@ class AgentLoopRunner:
         names = {d.name for d in offered}
         messages = [SystemMessage(_system(options)), UserMessage(_context_message(context))]
         calls, results, refs, seen = [], [], [], set()
-        rounds = arg_repairs = unavailable_replies = empty_replies = 0
+        rounds = arg_repairs = unavailable_replies = empty_replies = prior_calls = 0
+        restored = self._store.take(context) if self._store is not None else None
+        if restored is not None:
+            # Continue the stopped loop: the answer is the result of its ask_user call.
+            paused, answer = restored
+            messages, seen, refs = paused.messages, paused.seen, paused.refs
+            rounds, prior_calls, self.todo, self.resumed = paused.rounds, paused.used_calls, paused.todo, True
+            messages.append(ToolMessage(paused.ask_id, json.dumps(
+                {'success': True, 'content': answer, 'error': None, 'source_refs': []}, ensure_ascii=False)))
+            self._refuse(messages, paused.skipped, 'not executed: the user was asked first; call it again if needed')
         wrap_up_sent = False
         while True:
-            spent = rounds >= options.max_tool_rounds or len(calls) >= options.max_tool_calls
+            used = prior_calls + len(calls)
+            spent = rounds >= options.max_tool_rounds or used >= options.max_tool_calls
             request_tools = ToolsShownOnly(tools) if spent else tools
             meter = current_meter()
             logged = len(meter.call_log) if meter is not None else 0
@@ -241,6 +290,11 @@ class AgentLoopRunner:
                 question = asked.arguments.get('question')
                 if isinstance(question, str) and question.strip():
                     question = question.strip()[:MAX_QUESTION_CHARS]
+                    if self._store is not None:
+                        self._store.save(_Paused(
+                            context.task_id, context.goal_revision, question, asked.call_id,
+                            tuple(c for c in turn.tool_calls if c is not asked), messages, seen, list(refs),
+                            rounds + 1, used, [dict(item) for item in self.todo]))
                     return self._output(question, StepOutcome.BLOCKED, question, calls, results, refs)
 
             unavailable = [c.tool_name for c in turn.tool_calls
@@ -268,7 +322,7 @@ class AgentLoopRunner:
                         {'success': items is not None, 'content': 'checklist saved' if items is not None else '',
                          'error': problem, 'source_refs': []}, ensure_ascii=False)))
                     continue
-                if len(calls) >= options.max_tool_calls:
+                if prior_calls + len(calls) >= options.max_tool_calls:
                     messages.append(ToolMessage(call.call_id, json.dumps(
                         {'success': False, 'content': '', 'error': 'not executed: the tool budget is used up',
                          'source_refs': []}, ensure_ascii=False)))
@@ -303,9 +357,12 @@ def loop_requirements(context) -> RunnerRequirements:
 
 
 def register_agent_loop_runner(registry, *, options: LoopOptions | None = None):
-    """Synchronous binding: the loop uses the runtime's model, watched tools and context manager."""
+    """Synchronous binding: the loop uses the runtime's model, watched tools and context manager.
+    The registry lives as long as the task's runtime, so its resume store outlives each rebinding."""
+    store = LoopResumeStore()
+
     def bind(deps):
-        return AgentLoopRunner(deps.model, deps.tool_registry, options, deps.context_manager)
+        return AgentLoopRunner(deps.model, deps.tool_registry, options, deps.context_manager, store)
     registry.register(RunnerDefinition(RUNNER_ID, 'One agent loop over the whole task',
                                        frozenset({RUNNER_ID})), bind)
 
