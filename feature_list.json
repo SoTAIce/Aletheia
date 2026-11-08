@@ -1156,6 +1156,20 @@
         "The tune set and holdout set are compared against the plan runner before any default change."
       ],
       "evidence": "tests/test_agent_loop.py 13 passed; init.ps1 PASS 1594 passed, 16 skipped. Tune set live, 1 run per task (user said '跑调参集', AGENT_MODEL_CONTEXT_TOKENS=128000 for the run only, report in the ignored output/bench-tune-loop.json): 11/11 strictly, same as the plan runner; 44 model calls (plan runner 52), 878,778 tokens (1,091,043, -19%), 308 s (336); no failed tool calls, no replans. The five read-and-answer tasks took 2 calls and about 41k tokens each (plan runner 4 to 5 calls, 87k to 110k); the three fix tasks took 5 to 7 calls and 146k to 149k tokens (plan runner 5 to 6 calls, 110k to 136k). Holdout live, 1 run per task (user said '跑留出集', report in the ignored output/bench-holdout-loop.json): 12/13 strictly (plan runner 11/13 in bench-holdout-single-d057); call_chain_qa now passes, side_effects_qa still fails on mutates_arguments; 57 model calls (67), 1,321,752 tokens (1,282,560, +3%), 362 s (467). Token totals are noisy: some calls through the relay carry about 15k extra prompt tokens and some do not (role_perms_qa: 4 plan calls used 18.6k tokens, 6 loop calls 173.6k)."
+    },
+    {
+      "id": "loop-todo-001",
+      "name": "Agent loop: fewer bookkeeping calls, and per-call usage in the bench",
+      "description": "Offline analysis of the loop-trial-001 reports (user said '离线分析' then '改一下' on 2026-11-07): every request is reported at about 20k prompt tokens in both runners, while the request the agent builds is 2k to 3k tokens (rebuilt locally with a scripted model: loop about 6.3k characters, plan step about 9.2k plus a 4.3k planning prompt); some tasks report 3k to 5k per request, so about 18k per request comes from outside the agent, probably the relay. Total tokens are therefore about calls x 20k. The fix tasks made 5 to 7 model calls for 2 real tool calls; the loop prompt told the model to call todo first for multi-part work and update it, and todo is not counted as a tool call, so the extra calls were most likely todo. Changes: the loop prompt and the todo definition keep todo for work with more than three parts, sent with the next real tool call and never alone, not updated just before the answer, and ask for independent files to be read in one turn; RunMeter.tag_calls_since marks each logged call with the tool names the loop's model asked for (host-checked names, made-up ones logged as 'unavailable'); the bench keeps per-call prompt, completion and requested tools, plus todo_calls and todo_only_calls. DECISIONS D-063.",
+      "status": "done",
+      "dependencies": [
+        "loop-trial-001"
+      ],
+      "acceptance": [
+        "The loop prompt keeps todo for long work and never as a call on its own.",
+        "Each logged call of a loop run says which tools the model asked for; the bench reports per-call tokens and todo counts."
+      ],
+      "evidence": "tests/test_agent_loop.py 16 passed; init.ps1 PASS 1597 passed, 16 skipped. Tune set live, 1 run per task (user said '跑调参集', AGENT_MODEL_CONTEXT_TOKENS=128000 for the run only, report in the ignored output/bench-tune-loop-todo.json): 10/11 strictly; 25 model calls (loop before this change 44, plan runner 52), 498,018 tokens (878,778 and 1,091,043), 168 s (308 and 336); todo was never called; every task took 2 calls (read, answer) or 3 (read, read, answer). The one failure is fix_inventory, stopped by the grader's guard as forbidden_import before any check ran; the report keeps no answer text, so which module was imported is unknown. Rerun of fix_inventory alone, 1 run (user said '单独重跑这题', answer kept in the session scratchpad only): passed 16/16, 3 calls (read, read, answer), 62,130 tokens, 15.5 s, no import in the answer; the first failure was a one-off import by the model. Per-call prompts were 20.2k to 22.0k tokens, except config_merge_qa at 8.5k and 3.1k."
     }
   ],
   "cleanup_2026_11_04": {

@@ -129,6 +129,44 @@ async def test_empty_replies_are_nudged_then_fail():
         await runner.run(context)
 
 
+def test_the_prompt_keeps_todo_for_long_work_and_never_alone():
+    from app.agent.agent_loop import CONTROL_DEFINITIONS, _system
+    system = ' '.join(_system(LoopOptions()).split())
+    assert 'more than three distinct parts' in system and 'never alone' in system
+    assert 'just before the final answer' in system
+    assert 'never alone' in CONTROL_DEFINITIONS[0].description
+
+
+async def test_each_logged_call_records_the_tools_the_model_asked_for():
+    from app.agent.run_meter import RunMeter, metering, record_model_call
+    items = [{'content': 'a', 'status': 'pending'}]
+    turns = [ModelTurn(tool_calls=(ToolCall('t', TODO, {'items': items}), ToolCall('a', 'read', {}))),
+             call('x', 'made_up_tool'), text('done')]
+    runner, model, read, context = setup([])
+
+    async def generate(messages, tools):
+        record_model_call(SimpleNamespace(prompt_tokens=10, completion_tokens=1))
+        return turns.pop(0)
+    model.generate.side_effect = generate
+    with metering(RunMeter()) as meter:
+        await runner.run(context)
+    assert [entry['requested'] for entry in meter.call_log] == [[TODO, 'read'], ['unavailable'], []]
+    assert meter.snapshot()['calls'][0]['requested'] == [TODO, 'read']
+
+
+def test_the_bench_counts_todo_calls_per_task():
+    from bench.run_bench import usage_fields
+    record = {'usage': {'model_calls': 3, 'calls': [
+        {'prompt': 20000, 'cached': None, 'completion': 5, 'requested': ['todo']},
+        {'prompt': 21000, 'cached': None, 'completion': 5, 'requested': ['todo', 'read']},
+        {'prompt': 22000, 'cached': None, 'completion': 9, 'requested': []}]}}
+    fields = usage_fields(record)
+    assert fields['todo_calls'] == 2 and fields['todo_only_calls'] == 1
+    assert fields['calls'][2] == {'prompt': 22000, 'completion': 9, 'requested': []}
+    plain = usage_fields({'usage': {'calls': [{'prompt': 1, 'completion': 1}]}})
+    assert 'todo_calls' not in plain and plain['calls'] == [{'prompt': 1, 'completion': 1}]
+
+
 class _Planner:
     async def generate(self, prompt):
         raise AssertionError('the loop has no planning model call')

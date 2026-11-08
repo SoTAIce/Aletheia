@@ -126,6 +126,14 @@ def usage_fields(record):
             value = usage.get(name)
             if isinstance(value, (int, float)) and not isinstance(value, bool):
                 fields[name] = value
+        calls = [c for c in usage.get('calls') or () if isinstance(c, dict)]
+        if calls:
+            # Per provider call: tokens, and the tools the loop's model asked for in reply (loop-trial-001).
+            fields['calls'] = [{k: c[k] for k in ('prompt', 'completion', 'requested') if k in c} for c in calls]
+            tagged = [c['requested'] for c in calls if isinstance(c.get('requested'), list)]
+            if tagged:
+                fields['todo_calls'] = sum(1 for names in tagged if 'todo' in names)
+                fields['todo_only_calls'] = sum(1 for names in tagged if names and set(names) == {'todo'})
     steps = record.get('steps')
     if isinstance(steps, list):
         tools = [c for s in steps if isinstance(s, dict) for c in s.get('tools') or () if isinstance(c, dict)]

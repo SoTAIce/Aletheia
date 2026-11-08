@@ -82,6 +82,12 @@ class RunMeter:
             self.calls_with_cache_report += 1
             self.cached_prompt_tokens += cached
 
+    def tag_calls_since(self, index: int, requested: list[str]) -> None:
+        """Mark the calls logged from index on with the tool names the model asked for in
+        reply (host-checked names only, loop-trial-001), to see where calls go."""
+        for entry in self.call_log[index:]:
+            entry['requested'] = list(requested)
+
     def elapsed(self) -> float:
         return time.monotonic() - self.started
 

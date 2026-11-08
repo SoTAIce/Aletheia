@@ -17,6 +17,7 @@ from textwrap import dedent
 
 from app.agent.model_view import CompactingManager
 from app.agent.runner_registry import RunnerDefinition
+from app.agent.run_meter import current_meter
 from app.agent.runner_router import RunnerRequirements
 from app.agent.step_models import (
     ModelTurn, StepExecutionContext, StepOutcome, StepRunOutput, SystemMessage, ToolCall, ToolDefinition,
@@ -62,8 +63,9 @@ class LoopOptions:
 
 
 CONTROL_DEFINITIONS = (
-    ToolDefinition(TODO, 'Record or update your own checklist for multi-part work. Send the whole list '
-                         'each time; the host only keeps it. Skip it for simple questions.',
+    ToolDefinition(TODO, 'Record or update your own checklist for long work with more than three distinct '
+                         'parts. Send it in the same turn as your next real tool call, never alone, and send '
+                         'the whole list each time; the host only keeps it. Skip it for short tasks.',
                    {'type': 'object', 'properties': {'items': {'type': 'array', 'maxItems': MAX_TODO_ITEMS, 'items': {
                        'type': 'object', 'properties': {
                            'content': {'type': 'string'},
@@ -89,8 +91,11 @@ def _system(options: LoopOptions) -> str:
         resolved_questions are the user's answers to questions asked earlier in this task: use
         them directly instead of searching for them.
 
-        For work with several parts, call {TODO} first with a short checklist and update it as
-        you go; for a simple question, just answer. If the task cannot continue without
+        Every model request is costly, so do not spend one on bookkeeping. {TODO} is only for
+        long work with more than three distinct parts; reading a few files and then answering,
+        or fixing one file, needs no checklist. When you do use {TODO}, send it in the same
+        turn as your next real tool call, never alone, and do not update it just before the
+        final answer. Read independent files in one turn. If the task cannot continue without
         information only the user has, call {ASK_USER} with one direct question in the
         language of active_goal; never guess such an answer.
 
@@ -179,6 +184,8 @@ class AgentLoopRunner:
         while True:
             spent = rounds >= options.max_tool_rounds or len(calls) >= options.max_tool_calls
             request_tools = ToolsShownOnly(tools) if spent else tools
+            meter = current_meter()
+            logged = len(meter.call_log) if meter is not None else 0
             try:
                 turn = await self._generate(messages, request_tools, refs)
             except StepModelError as exc:
@@ -191,6 +198,11 @@ class AgentLoopRunner:
             if not isinstance(turn, ModelTurn) or not isinstance(turn.tool_calls, tuple) \
                     or (turn.content is not None and not isinstance(turn.content, str)):
                 raise StepRunnerContractError('model.generate() must return a ModelTurn')
+            if meter is not None:
+                # Host-checked names only: a name the model made up is logged as 'unavailable'.
+                meter.tag_calls_since(logged, [c.tool_name if c.tool_name in names or c.tool_name in CONTROL_TOOLS
+                                               else 'unavailable' for c in turn.tool_calls
+                                               if isinstance(c, ToolCall)])
 
             if not turn.tool_calls:
                 text = (turn.content or '').strip()
