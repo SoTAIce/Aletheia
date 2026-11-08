@@ -1169,7 +1169,33 @@
         "The loop prompt keeps todo for long work and never as a call on its own.",
         "Each logged call of a loop run says which tools the model asked for; the bench reports per-call tokens and todo counts."
       ],
-      "evidence": "tests/test_agent_loop.py 16 passed; init.ps1 PASS 1597 passed, 16 skipped. Tune set live, 1 run per task (user said '跑调参集', AGENT_MODEL_CONTEXT_TOKENS=128000 for the run only, report in the ignored output/bench-tune-loop-todo.json): 10/11 strictly; 25 model calls (loop before this change 44, plan runner 52), 498,018 tokens (878,778 and 1,091,043), 168 s (308 and 336); todo was never called; every task took 2 calls (read, answer) or 3 (read, read, answer). The one failure is fix_inventory, stopped by the grader's guard as forbidden_import before any check ran; the report keeps no answer text, so which module was imported is unknown. Rerun of fix_inventory alone, 1 run (user said '单独重跑这题', answer kept in the session scratchpad only): passed 16/16, 3 calls (read, read, answer), 62,130 tokens, 15.5 s, no import in the answer; the first failure was a one-off import by the model. Per-call prompts were 20.2k to 22.0k tokens, except config_merge_qa at 8.5k and 3.1k."
+      "evidence": "tests/test_agent_loop.py 16 passed; init.ps1 PASS 1597 passed, 16 skipped. Tune set live, 1 run per task (user said '跑调参集', AGENT_MODEL_CONTEXT_TOKENS=128000 for the run only, report in the ignored output/bench-tune-loop-todo.json): 10/11 strictly; 25 model calls (loop before this change 44, plan runner 52), 498,018 tokens (878,778 and 1,091,043), 168 s (308 and 336); todo was never called; every task took 2 calls (read, answer) or 3 (read, read, answer). The one failure is fix_inventory, stopped by the grader's guard as forbidden_import before any check ran; the report keeps no answer text, so which module was imported is unknown. Rerun of fix_inventory alone, 1 run (user said '单独重跑这题', answer kept in the session scratchpad only): passed 16/16, 3 calls (read, read, answer), 62,130 tokens, 15.5 s, no import in the answer; the first failure was a one-off import by the model. Holdout live, 1 run per task (user said '跑吧', report in the ignored output/bench-holdout-loop-todo.json): 12/13 strictly, same as the loop before this change (plan runner 11/13); 33 model calls (57 and 67), 595,897 tokens (1,321,752 and 1,282,560), 218 s (362 and 467); todo never called, every task 2 to 4 calls. side_effects_qa still fails on mutates_arguments (4 of 5 checks), as in both earlier runs. Per-call prompts were about 20k except four tasks (call_chain_qa, role_perms_qa, side_effects_qa, and config_merge_qa in the tune set) at 3k to 7k, the same tasks as in the plan runner's run. Per-call prompts were 20.2k to 22.0k tokens, except config_merge_qa at 8.5k and 3.1k."
+    },
+    {
+      "id": "loop-write-check-001",
+      "name": "Agent loop: live check with file writing",
+      "description": "Verification only, no code change (user said '测写文件场景' on 2026-11-07): the tune set with --write in loop mode, to see whether the loop delivers through write_file before it can become the default. Sandbox runs (--sandbox) are not part of this check.",
+      "status": "done",
+      "dependencies": [
+        "loop-todo-001"
+      ],
+      "acceptance": [
+        "File tasks are delivered through write_file and graded from the written file; answer tasks still pass."
+      ],
+      "evidence": "Tune set live with --write, loop runner, 1 run per task (AGENT_MODEL_CONTEXT_TOKENS=128000 for the run only, report in the ignored output/bench-tune-loop-write.json): 11/11 strictly; 7 file tasks all wrote the deliverable, 4 answer tasks passed on the answer; no failed tool calls; 41 model calls, 859,651 tokens, 223 s. Every file task read the file back after write_file before answering (one extra call each, about 20k tokens); fix_rate_limiter wrote twice. todo never called. No plan-runner run with --write exists to compare against."
+    },
+    {
+      "id": "loop-sandbox-check-001",
+      "name": "Agent loop: live check with the sandbox",
+      "description": "Verification only, no code change (user said '测沙盒模式' on 2026-11-07): the tune set with --sandbox in loop mode (write_file plus run_tests and run_python in the Docker sandbox, with the hint to test before delivering).",
+      "status": "done",
+      "dependencies": [
+        "loop-write-check-001"
+      ],
+      "acceptance": [
+        "File tasks write the deliverable and a test, run it in the sandbox and then deliver; answer tasks still pass."
+      ],
+      "evidence": "Tune set live with --sandbox, loop runner, 1 run per task (AGENT_MODEL_CONTEXT_TOKENS=128000 for the run only, report in the ignored output/bench-tune-loop-sandbox.json): 10/11 strictly; 48 model calls, 1,052,636 tokens, 333 s; no failed tool calls; no container or TEMP folder left. Every file task went read, write the deliverable, write a test file, run_tests once, (sometimes read back), answer; the report keeps no tool output, so whether each run passed is not recorded, but no task ran the tests twice. The one failure is todo_html at 10/11 on enter_key_and_trim, a static text check (an 'Enter' literal or keyCode 13, plus '.trim()'); it passed in the --write run, the file was not kept, so whether the page works is unknown. todo never called."
     }
   ],
   "cleanup_2026_11_04": {
