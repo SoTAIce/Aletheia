@@ -1324,6 +1324,38 @@
         "A live tune-set run in plan mode passes no fewer tasks than bench-tune-single-hooks (11/11)."
       ],
       "evidence": "tests/test_step_tool_list.py 5 passed (step filter with state unchanged, planner keeps the list, empty list key kept, wrap-up request, runtime pin with the shared constant); with the cache layout, step runner, loop and planner tests 127 passed. The user's Chinese docstrings in tool_calling_step_runner.py are unchanged: undoing the two intended edits in memory gives the user's recorded SHA-256. Offline, scripted model and local tools, fix_inventory in plan mode: step context message 3,262 -> 1,495 characters (-54%), step request messages without tool definitions 6,269 -> 4,502 (-28%), planner prompt 4,314 unchanged. init.ps1 PASS 94 Python files, 1644 passed, 16 skipped. Tune set live in plan mode, 1 run per task (user said '跑调参集', AGENT_MODEL_CONTEXT_TOKENS=128000 for the run only, report in the ignored output/bench-tune-plan-nodup.json): 11/11 strictly, same as bench-tune-single-hooks; 53 model calls (52), 1,129,929 prompt tokens (1,071,148). The rise is config_merge_qa alone: 4 calls and 18,570 prompt tokens before (no relay overhead that run), 7 calls and 138,645 now. The 8 tasks with the same call count all used fewer prompt tokens (957 to 2,481 each, about 300 to 500 per step request); billing_qa and sales_csv_qa took one call less. Without config_merge_qa: 1,052,578 -> 991,284 prompt tokens (-5.8%). 404 s (336), with the same call counts, so relay latency."
+    },
+    {
+      "id": "kb-index-cli-002-plan",
+      "name": "Plan: safe replace, staged failures and --prune for the build command",
+      "description": "Design only, no code change (user agreed on 2026-11-09 to have Codex improve the build command). docs/kb_index_v2_plan.md: (1) index_single_file deletes a file's old chunks before embedding and writing, so an embedding or write failure loses them; a new VectorStoreManager.replace_source writes first and then deletes the source's chunks that are not among the new ids; (2) failures are reported as a host-written stage (read, connect, embed_config, embed, write) plus the original exception type, through IndexStageError and new subclasses that keep the old types (EmbeddingConfigError, EmbeddingRequestError, EmbeddingResponseError, MilvusConnectError), and the early-stop hint follows the stage; (3) --prune deletes chunks of sources under the directory that are no longer in the file list, read-only listing in a dry run, deletion only after a complete --confirm run. Tests, a live check left for the user, records and constraints. Implementation is kb-index-cli-002.",
+      "status": "done",
+      "dependencies": [
+        "kb-index-cli-001"
+      ],
+      "acceptance": [
+        "The plan names the three problems, the change for each, the tests, the live check left for the user and the constraints."
+      ],
+      "evidence": "docs/kb_index_v2_plan.md written after reading vector_index_service.py, vector_store_manager.py, milvus_client.py, vector_embedding_service.py and app/knowledge/__main__.py on HEAD 7835fa2. The delete-before-write order was found while reading index_single_file; it did not cause the 2026-11-08 failure, which stopped at the Milvus connection. Not implemented."
+    },
+    {
+      "id": "kb-index-cli-002",
+      "name": "建库命令安全替换、阶段提示与过时来源清理",
+      "description": "按 docs/kb_index_v2_plan.md 实现先写后删、保留异常兼容性的阶段诊断，以及只在完整确认运行后删除的 --prune。",
+      "status": "done",
+      "dependencies": [
+        "kb-index-cli-002-plan"
+      ],
+      "acceptance": [
+        "写入失败保留旧块；异常消息不进入命令行；清理遵守目录边界并在提前停止时跳过。",
+        "确定性测试、默认预演、init.ps1 和本轮基线核对通过；真实服务验证待授权。"
+      ],
+      "evidence": "tests/test_knowledge_cli.py 共 58 项通过（新增 48 项）；先失败后实现并覆盖独立审查的三项重要问题。init.ps1 管理状态、94 个 Python 文件语法、命令行加载及全套确定性测试通过：1692 项通过、16 项跳过（55.43 秒）。docs 默认预演初次 68 个文件、874 块，记录补齐后重跑为 68 个文件、876 块，均退出码 0；独立网络审计均为 0 次连接或地址解析，第二次计数对应结束清单刷新前的文档快照。D-070；完整命令与边界见 progress.md、session-handoff.md；基线见 docs/harness/history/baseline-2026-11-09-kb2.json。没有执行真实 --confirm/--prune 或调用真实服务；磁盘根目录前缀限制保留，使用具体文档子目录。 Claude 审查后修两处（用户“修掉两处”）：日志静默从 run() 移到命令行入口 main()，只用 Loguru 公开的 disable/enable，不再读写 logger._core；connect() 把连接阶段和集合阶段分开，维度不一致或只读时集合不存在改抛 MilvusCollectionError（RuntimeError 子类），建库命令报“Milvus 集合不可用”并提示核对 EMBEDDING_DIMENSIONS，不再误报“连接 Milvus 失败”；清理检查失败也按类型说明。tests/test_knowledge_cli.py 63 项通过；init.ps1 PASS。",
+      "verification": {
+        "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1",
+        "scope": "静态、导入、确定性测试；默认文档预演及基线另外核对，真实服务待授权。",
+        "record": "progress.md"
+      }
     }
   ],
   "cleanup_2026_11_04": {

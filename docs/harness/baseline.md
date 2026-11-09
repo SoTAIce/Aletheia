@@ -1,6 +1,8 @@
 # 已记录基线（Recorded Baseline）
 
-当前未提交清单：[baseline-2026-11-08-deps-kb.json](history/baseline-2026-11-08-deps-kb.json)（deps-cleanup-001、kb-index-cli-001，以 HEAD `73d2618` 为起点；随后经用户授权提交，清单里的本轮条目此后应与提交内容一致）。上一份：[baseline-2026-11-08-cleanup-stage0.json](history/baseline-2026-11-08-cleanup-stage0.json)。本轮 cleanup-stage0-001 以 HEAD `2b76f01` 为起点，记录用户原有差异、九个已跟踪文件删除，以及本轮测试和文档修改；实现时未提交、索引未改，随后经用户授权（“修完再提交”）已提交，清单里的本轮条目此后应与提交内容一致。用户四个已修改文件的启动哈希另存于清单，三个用户脚本删除仍保留。
+当前未提交清单：[baseline-2026-11-09-kb2.json](history/baseline-2026-11-09-kb2.json)（kb-index-cli-002，以 HEAD `7835fa2` 为起点，完成后记录用户原差异、原方案及本轮实现、测试、记录；未提交、索引未改）。上一份：[baseline-2026-11-08-deps-kb.json](history/baseline-2026-11-08-deps-kb.json)（deps-cleanup-001、kb-index-cli-001、tool-list-dedup-001，均已提交）。上一份：[baseline-2026-11-08-cleanup-stage0.json](history/baseline-2026-11-08-cleanup-stage0.json)。本轮 cleanup-stage0-001 以 HEAD `2b76f01` 为起点，记录用户原有差异、九个已跟踪文件删除，以及本轮测试和文档修改；实现时未提交、索引未改，随后经用户授权（“修完再提交”）已提交，清单里的本轮条目此后应与提交内容一致。用户四个已修改文件的启动哈希另存于清单，三个用户脚本删除仍保留。
+
+本轮清单的 `startup_snapshot` 保留开工时原清单，`user_protected_sha256` 固定用户四个修改文件的启动哈希；当前文件哈希单独刷新，不覆盖保护证据。原方案原样保留。
 
 新清单记录修改/未跟踪文件 SHA-256 与已删路径；`self_path` 单独声明清单自身，不对自身做循环哈希。核对时只将这个清单路径排除在文件哈希集合之外，仍检查其存在。
 清单是交接证据，不是备份，也不是提交授权。不得为了清除 Git 状态而 reset、覆盖或提交用户文件。
@@ -8,7 +10,7 @@
 ## 核对命令（只读）
 
 ```powershell
-.venv/Scripts/python.exe -I -c "import json,hashlib,pathlib,subprocess as sp;m=json.load(open('docs/harness/history/baseline-2026-11-08-deps-kb.json',encoding='utf-8'));anc=sp.run(['git','merge-base','--is-ancestor',m['base_commit'],'HEAD']).returncode==0;d=[p for k in ('modified_tracked','untracked') for p,s in m[k].items() if not pathlib.Path(p).is_file() or hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()!=s];g=[p for p in m['deleted_tracked'] if pathlib.Path(p).exists()];known=set(m['modified_tracked'])|set(m['untracked'])|set(m['deleted_tracked'])|{m['self_path']};x=[l[3:] for l in sp.run(['git','status','--porcelain=v1','-uall'],capture_output=True,text=True).stdout.splitlines() if l[3:] not in known];print('base ancestor', 'OK' if anc and pathlib.Path(m['self_path']).is_file() else 'NO');print('drift', d or 'none');print('deleted-restored', g or 'none');print('uncommitted-outside-manifest', x or 'none')"
+.venv/Scripts/python.exe -I -c "import json,hashlib,pathlib,subprocess as sp;m=json.load(open('docs/harness/history/baseline-2026-11-09-kb2.json',encoding='utf-8'));anc=sp.run(['git','merge-base','--is-ancestor',m['base_commit'],'HEAD']).returncode==0;d=[p for k in ('modified_tracked','untracked') for p,s in m[k].items() if not pathlib.Path(p).is_file() or hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest()!=s];g=[p for p in m['deleted_tracked'] if pathlib.Path(p).exists()];known=set(m['modified_tracked'])|set(m['untracked'])|set(m['deleted_tracked'])|{m['self_path']};x=[l[3:] for l in sp.run(['git','status','--porcelain=v1','-uall'],capture_output=True,text=True).stdout.splitlines() if l[3:] not in known];print('base ancestor', 'OK' if anc and pathlib.Path(m['self_path']).is_file() else 'NO');print('drift', d or 'none');print('deleted-restored', g or 'none');print('uncommitted-outside-manifest', x or 'none')"
 ```
 
 预期四项：base ancestor OK；drift none；deleted-restored none；uncommitted-outside-manifest none。

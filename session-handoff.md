@@ -1,6 +1,17 @@
 # Current Session Handoff — 2026-11-06（成熟度五个阶段已完成）
 
-## 最新交接：2026-11-08 tool-list-dedup-001（完成，已提交）
+## 最新交接：kb-index-cli-002（完成，已提交）
+
+- **修改**：按 [建库命令改进方案](docs/kb_index_v2_plan.md) 实现先写后删、五类阶段提示与按阶段停止建议、目录边界内的可选 `--prune`；只读列来源禁止创建或重建集合，新编号不完整时保留旧块（D-070）。
+- **当前验证**：新增 48 项确定性测试，连同原有 10 项共 58 项通过（2.59 秒）；init.ps1 通过，94 个 Python 文件、1692 项通过、16 项跳过（55.43 秒）。默认 docs 预演最初 68 个文件、874 块；记录补齐后重跑为 68 个文件、876 块，均退出码 0。同入口网络审计均为 0 次连接或地址解析，第二次计数对应结束清单刷新前的快照。
+- **独立审查**：三项重要问题已补回归并修复：来源改用 metadata 查询迭代器，避免实体统计与 offset 窗口问题；命令全过程屏蔽底层日志并恢复原状态；当前来源比较统一 resolve，避免别名误删。磁盘根目录加斜杠的前缀限制延后，使用具体文档子目录。
+- **兼容与取舍**：异常子类兼容原基类与消息；预检统一包为 read 阶段，直接捕获 ValueError 的单文件调用方需调整。删除失败时新旧块暂时并存，下次重跑清掉，不承诺事务。（原“日志恢复依赖 Loguru 内部激活状态”已在审查后改掉，见下一条。）
+- **命令**：`.venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --basetemp <系统 TEMP 下本轮唯一目录> tests/test_knowledge_cli.py`；`.venv/Scripts/python.exe -B -m app.knowledge docs`；`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；基线按 docs/harness/baseline.md 核对。
+- **未验证**：真实 Milvus、嵌入接口、真实模型和真实 `--confirm`、`--prune`；下一步是真实验证，待用户授权，不自动运行。
+- **保护与状态**：用户 README、三个中文注释文件、三个脚本删除项保留；原方案原样保留；未暂存、还原、提交或推送。本轮清单 [baseline-2026-11-09-kb2.json](docs/harness/history/baseline-2026-11-09-kb2.json)，以 HEAD `7835fa2` 为起点；最终哈希与退出检查见 progress.md。
+- **Claude 审查后修改**（用户“修掉两处”）：日志静默移到命令行入口 `main()`，只用 Loguru 公开的 `disable`、`enable`，不再读写 `logger._core`；`connect()` 把连接阶段和集合阶段分开，维度不一致、只读时集合不存在改抛 `MilvusCollectionError`，命令报“Milvus 集合不可用”，不再误报“连接 Milvus 失败”（D-070 补记）。`tests/test_knowledge_cli.py` 63 项通过，init.ps1 1697 passed、16 skipped，`docs/` 预演 68 个文件、881 块。
+
+## 上一项交接：2026-11-08 tool-list-dedup-001（完成，已提交）
 
 - **Changes**：执行步骤序列化上下文时去掉钉住的工具清单，共用常量 `step_models.TOOL_LIST_SOURCE`；规划器、团队负责人、任务状态不变（D-069）。代码和测试由 Codex 写，它在写记录前额度用完，审查、测量和记录由 Claude 完成。
 - **Currently verified**：init.ps1 PASS，94 个 Python 文件，1644 passed、16 skipped；离线步骤上下文 3,262 → 1,495 字符；`tool_calling_step_runner.py` 退掉两处预期改动后与用户版本哈希一致。

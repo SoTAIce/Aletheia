@@ -73,6 +73,44 @@ class VectorStoreManager:
         result = collection.delete(f'metadata["_source"] == "{escaped_path}"')
         return int(getattr(result, "delete_count", 0))
 
+    def replace_source(self, source: str, documents: list[Document]) -> int:
+        """先写新块再删旧块；写入失败时不触碰旧块（D-070）。"""
+        if not documents:
+            self.delete_by_source(source)
+            return 0
+        new_ids = self.add_document(documents)
+        if len(new_ids) != len(documents) or len(set(new_ids)) != len(new_ids):
+            raise RuntimeError("新块编号不完整，已保留旧块")
+        self._client_manager.connect()
+        collection = self._client_manager.get_collection()
+        escaped_source = self._escape_filter_string(source)
+        ids = ', '.join(f'"{self._escape_filter_string(item)}"' for item in new_ids)
+        collection.delete(f'metadata["_source"] == "{escaped_source}" and id not in [{ids}]')
+        return len(new_ids)
+
+    def list_sources(self, batch_size: int = 1000) -> set[str]:
+        """只读迭代来源；不依赖含已删记录的实体统计或 offset 窗口。"""
+        self._client_manager.connect(read_only=True)
+        collection = self._client_manager.get_collection()
+        collection.load()
+        sources: set[str] = set()
+        iterator = collection.query_iterator(
+            expr='id != ""', output_fields=["metadata"],
+            batch_size=max(1, int(batch_size)),
+        )
+        try:
+            while True:
+                rows = iterator.next()
+                if not rows:
+                    break
+                for row in rows:
+                    source = (row.get("metadata") or {}).get("_source")
+                    if isinstance(source, str) and source:
+                        sources.add(source)
+        finally:
+            iterator.close()
+        return sources
+
     def delete_by_id(self, vector_id: str) -> int:
         self._client_manager.connect()
 

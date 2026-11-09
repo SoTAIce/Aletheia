@@ -8,8 +8,42 @@ from typing import Any
 from loguru import logger
 
 from app.config import config
+from app.core.milvus_client import MilvusCollectionError, MilvusConnectError
+from app.services.vector_embedding_service import (
+    EmbeddingConfigError, EmbeddingRequestError, EmbeddingResponseError,
+)
 from app.services.document_splitter_service import document_splitter_service
 from app.services.vector_store_manager import vector_store_manager
+
+
+class IndexStageError(RuntimeError):
+    """保留原异常链和消息，并标明建库失败阶段（D-070）。"""
+
+    def __init__(self, stage: str, message: str) -> None:
+        super().__init__(message)
+        self.stage = stage
+
+
+def _write_failure_stage(exc: BaseException) -> str:
+    pending = [exc]
+    seen: set[int] = set()
+    chain: list[BaseException] = []
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        chain.append(current)
+        pending.extend(e for e in (current.__cause__, current.__context__) if e is not None)
+    if any(isinstance(e, MilvusConnectError) for e in chain):
+        return "connect"
+    if any(isinstance(e, MilvusCollectionError) for e in chain):
+        return "collection"
+    if any(isinstance(e, EmbeddingConfigError) for e in chain):
+        return "embed_config"
+    if any(isinstance(e, (EmbeddingRequestError, EmbeddingResponseError)) for e in chain):
+        return "embed"
+    return "write"
 
 
 @dataclass
@@ -130,23 +164,14 @@ class VectorIndexService:
 
     def index_single_file(self, file_path: str | Path) -> int:
         path = Path(file_path).resolve()
-        if not path.is_file():
-            raise ValueError(f"file does not exist: {path}")
-        if path.suffix.lower() not in {
-            suffix.lower() for suffix in config.rag_supported_extensions
-        }:
-            raise ValueError(f"unsupported file extension: {path.suffix}")
-
         try:
             normalized_path, documents = self._split(path)
-
-            # Split first so a parser error cannot erase an existing index.
-            self._store_manager.delete_by_source(normalized_path)
-            if documents:
-                self._store_manager.add_document(documents)
-            return len(documents)
         except Exception as exc:
-            raise RuntimeError(f"failed to index {path}: {exc}") from exc
+            raise IndexStageError("read", f"failed to index {path}: {exc}") from exc
+        try:
+            return self._store_manager.replace_source(normalized_path, documents)
+        except Exception as exc:
+            raise IndexStageError(_write_failure_stage(exc), f"failed to index {path}: {exc}") from exc
 
     def close(self) -> None:
         close = getattr(self._store_manager, "close", None)

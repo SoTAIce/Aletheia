@@ -49,12 +49,21 @@ $env:CONVERSATION_STORAGE_DIR = "$env:TEMP\aletheia-run"
 # 预演：列出会处理的文件和各自切成几块，不调用嵌入接口，也不写入 Milvus
 .venv\Scripts\python.exe -B -m app.knowledge docs
 
+# 只读清理预演：连接 Milvus 列出过时来源，不调用嵌入接口、不删除
+.venv\Scripts\python.exe -B -m app.knowledge docs --prune
+
 # 真正写入（需要 Milvus 在运行、.env 里配好 DASHSCOPE_API_KEY；嵌入接口按量计费）
 .venv\Scripts\python.exe -B -m app.knowledge docs --confirm
+
+# 完整建库后清理过时来源（同样会调用嵌入接口并改动 Milvus）
+.venv\Scripts\python.exe -B -m app.knowledge docs --confirm --prune
 ```
 
 - 支持 `.md`、`.txt`、`.py`、`.json`，会跳过 `.git`、`.venv`、`node_modules`、`__pycache__` 等目录。
-- 同一个文件再建一次，会先删掉它原来的块再写入；从目录里删掉的文件，它原来的块不会自动删除。
+- 同一个文件再建一次，会先写新块，成功后再删除不属于新编号的旧块；嵌入或写入失败时保留旧块。删除失败时新旧块暂时并存，下次重跑可清掉；空文件只删除这个来源的旧块。
+- `--prune` 只处理本目录下不在本次文件列表里的来源，不会误删相邻目录（如 `docs2/`）的块；排除目录和不再支持的扩展名所对应的旧来源也会被清理。不加该参数时不列来源；普通预演完全不连接服务。
+- `--prune` 预演是唯一会连接服务的预演方式，只读列出来源；集合不存在时报告失败，不创建或重建集合。加 `--confirm` 后，只有所有文件都已尝试处理且没有提前停止，才逐个删除过时来源；单个文件失败仍计入退出码 1。
+- 建库失败显示中文阶段和原始异常类型，不显示异常消息；前 3 个文件全失败时停止，并按阶段提示检查连接、密钥或接口。
 - 建好以后，启动智能体或网页时不要加 `--no-knowledge`，才会用到知识库。
 
 ## 检查（不调用模型）

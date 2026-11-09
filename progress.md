@@ -4,13 +4,13 @@
 
 ## Current Verified State
 
-- **最新验收（2026-11-08）**：cleanup-stage0-001 完成，经 Claude 审查后改正两处文档，并按用户“修完再提交”提交。删除九个旧文件并新增七项守卫；init.ps1 通过（92 个 Python 文件，1629 passed、16 skipped，50.69s），守卫和两个保留示例的测试单独 15 passed。用户原差异保留，active_feature=null；D-066 与本轮基线见下方记录。
+- **最新验收（2026-11-09）**：kb-index-cli-002 完成，经 Claude 审查修两处后按用户“提交并验证吧”提交。安全替换、阶段诊断、可选清理与对应记录已同步；58 项针对性测试通过，init.ps1 94 个 Python 文件、1692 项通过、16 项跳过（55.43 秒）。用户原差异保留，active_feature=null；D-070 和本轮基线见下方记录。
 
-- **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
+- **仓库根目录**：`D:\tries\agent`（分支 main；本轮 HEAD `7835fa2` 保持不变，工作区含用户原差异与本轮未提交实现）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **标准验收路径**：init.ps1（管理文件、语法和 CLI 加载、确定性 pytest；2026-11-08 为 1629 passed、16 skipped）；基线核对命令见 docs/harness/baseline.md。真实模型和外部服务未验证。
+- **标准验收路径**：init.ps1（管理文件、语法和 CLI 加载、确定性 pytest；2026-11-09 为 1692 项通过、16 项跳过）；基线核对命令见 docs/harness/baseline.md。真实模型和外部服务未验证。
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
-- **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
+- **当前限制**：没有阻塞交接的项；真实服务未验证，磁盘根目录清理前缀问题已记录；用户源码、README 与删除项以及本轮实现均未提交，见结束基线。
 
 ## 已确认基线（历史，未重新测量）
 
@@ -20,6 +20,36 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-09 — kb-index-cli-002 审查后修改
+
+- **Result**：Codex 实现通过审查（先写后删、分步说明、`--prune` 都按方案）。修两处：日志静默移到 `main()` 并只用公开接口；维度不一致等集合问题改抛 `MilvusCollectionError`，命令报“Milvus 集合不可用”而不是“连接 Milvus 失败”（D-070 补记）。
+- **Verification**：`tests/test_knowledge_cli.py` 63 项通过（新增 5 项）；对 `docs/` 预演 68 个文件、881 块、退出码 0，不连接任何服务；init.ps1 PASS。
+- **记下未改的小问题**：嵌入服务只放过 `EmbeddingResponseError`，依赖抛的其他 `ValueError` 会被包成 `EmbeddingRequestError`；失败日志改为只记异常类型，也影响知识检索的查询路径；磁盘根目录当建库目录时 `--prune` 前缀不对。
+- **Not done**：真实 `--confirm --prune` 待用户决定。已按用户“提交并验证吧”提交，未推送。
+
+### 2026-11-09 — kb-index-cli-002：实施与验收
+
+- **目标**：按 docs/kb_index_v2_plan.md 实现安全替换、失败分步说明和可选清理；同一工作区原差异和未提交方案保留，不提交。
+- **启动验证**：基线四项正常；init.ps1 94 个 Python 文件、1644 项通过、16 项跳过（55.24 秒）。
+- **先失败后实现**：新增测试并调整旧提示期望后，36 项失败、8 项通过；首版实现后 44 项通过（2.71 秒）。
+- **边界裁定**：既有 connect 会创建集合或在显式配置下重建集合，不能用于只读预演；新增兼容的只读连接参数，列来源时禁止创建和重建。写入返回编号不完整或重复时保留旧块，不发删除请求。这是落实方案的只读与数据安全约束；代价是异常返回需要人工排查，集合不存在时预演清理报失败。六项边界测试先失败，再补实现。
+- **独立审查与修复**：审查指出三项重要问题，已统一修复：来源查询不再依赖可能含已删记录的实体统计，改用只取 metadata 的 query_iterator 并始终关闭；命令全程屏蔽可能携带实体或异常原文的依赖日志，退出时恢复原状态；当前来源集合按 resolve 后路径比较，避免别名误删。六项回归在修复前全部失败；修复后最初 56 项通过、2 项测试捕获失败，按系统调试技能确认 pymilvus 日志不向根传播，将捕获器挂到依赖日志器后共 58 项通过（2.59 秒）。没有再次派审查。
+- **审查裁定**：审查给出的 target.bin 符号链接示例会被现有扩展名检查拒绝，但指向排除目录内 .md 的别名确有误删风险，已用该有效场景回归。不扩展既有 index_directory 的原文日志、list_documents 分页、并发竞态或跨进程事务；这几项超出新命令与新来源枚举的范围，仍不承诺通用事务或 exactly-once。
+- **延后的小问题**：磁盘根目录（例如 C:/）按方案加斜杠会得到双斜杠，--prune 可能匹配不到来源；本轮按方案保留，使用具体文档子目录，后续再扩展。
+- **默认预演**：执行 `.venv/Scripts/python.exe -B -m app.knowledge docs`，68 个文件、874 块、0 个切块失败，退出码 0。另用同样模块入口加 Python 审计钩子拒绝 socket.connect/socket.getaddrinfo，预演仍成功，0 次网络连接或地址解析。该计数是更新最终记录前的文档快照。记录补齐后再次运行：68 个文件、876 块、0 个切块失败，退出码 0；同入口网络审计仍为 0 次。此第二次计数对应结束清单刷新前的快照。
+- **命令**：针对性测试使用 `.venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --basetemp <系统 TEMP 下本轮唯一目录> tests/test_knowledge_cli.py`；完整验收 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；基线核对使用 docs/harness/baseline.md 中的只读命令。
+- **完整验证**：init.ps1 退出码 0，管理状态、94 个 Python 文件语法和命令行加载通过；全套 1692 项通过、16 项跳过（54.98 秒），比启动时增加 48 项。状态同步后再次运行用户指定的同一 init.ps1：1692 项通过、16 项跳过（55.43 秒），退出码 0。跳过项为未启用的真实容器和符号链接权限测试，不代表真实服务通过。
+- **状态与授权**：kb-index-cli-002=done、active_feature=null；原方案和登记保留，用户四个修改文件与启动哈希相同，三个脚本仍删除；索引、HEAD 未改，未暂存、还原、提交、amend 或推送。没有连接真实 Milvus、嵌入或模型，没有执行真实 --confirm/--prune，没有安装、下载或改依赖、.env、模型默认值及 data/。
+- **退出检查**：标准启动入口和全部确定性测试通过；功能状态、决策、说明与交接已同步，无未记录半成品；本轮测试 TEMP 已清理，仓库无 __pycache__ 或 .pytest_cache（不含虚拟环境），差异空白检查通过。用户修改文件和原方案哈希均未变，三个用户删除项保留；最终基线按下述清单核对。
+- **结束清单**：docs/harness/history/baseline-2026-11-09-kb2.json 包含开工快照、独立用户保护哈希及当前全部未提交文件哈希，自身不做循环哈希；已执行基线核对：base ancestor OK；drift none；deleted-restored none；uncommitted-outside-manifest none。最终记录写完后再次刷新并复核。
+- **风险与下一步**：真实服务行为未验证，待审查后由用户授权真实只读清理预演与可选确认运行；磁盘根目录前缀问题延后。不得自动继续真实验证。
+
+
+### 2026-11-09 — kb-index-cli-002-plan：建库命令改进方案
+
+- **Result**：写了 [建库命令改进方案](docs/kb_index_v2_plan.md)，打算交给 Codex 实现（kb-index-cli-002）。复查时发现 `index_single_file` 先删旧块再嵌入写入，嵌入失败会丢掉这个文件的块，方案改为先写后删；另外失败时说明是哪一步，并加 `--prune` 清掉目录里已删除文件的块。
+- **Not done**：未实现；未提交。
 
 ### 2026-11-08 — tool-list-dedup-001：执行步骤不再重复发送工具清单
 

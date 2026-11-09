@@ -33,6 +33,14 @@ def _patch_pymilvus_milvus_client_orm_alias() -> None:
     setattr(_patch_pymilvus_milvus_client_orm_alias, "_done", True)
 
 
+class MilvusConnectError(RuntimeError):
+    """连不上 Milvus（连接、建客户端、查询集合是否存在时失败），兼容原 RuntimeError。"""
+
+
+class MilvusCollectionError(RuntimeError):
+    """连上了，但集合不能用：维度和配置不一致，或只读模式下集合不存在（D-070）。"""
+
+
 class MilvusClientManager:
     COLLECTION_NAME = "biz"
     ID_MAX_LENGTH = 100
@@ -48,10 +56,12 @@ class MilvusClientManager:
     def vector_dim(self) -> int:
         return config.embedding_dimensions
 
-    def connect(self) -> MilvusClient:
+    def connect(self, *, read_only: bool = False) -> MilvusClient:
         if self._collection is not None and self._client is not None:
             return self._client
 
+        # Reaching the server is one failure kind, an unusable collection another, so the
+        # build command does not tell the user to start a Milvus that is already running.
         try:
             _patch_pymilvus_milvus_client_orm_alias()
             connections.connect(
@@ -63,13 +73,22 @@ class MilvusClientManager:
             self._client = MilvusClient(
                 uri=f"http://{config.milvus_host}:{config.milvus_port}"
             )
+            exists = utility.has_collection(self.collection_name)
+        except Exception as exc:
+            self.close()
+            if isinstance(exc, RuntimeError):
+                raise MilvusConnectError(str(exc)) from exc
+            raise MilvusConnectError(f"Milvus initialization failed: {exc}") from exc
 
-            if not utility.has_collection(self.collection_name):
+        try:
+            if not exists:
+                if read_only:
+                    raise MilvusCollectionError(f"Milvus collection does not exist: {self.collection_name}")
                 self._create_collection()
             else:
                 self._collection = Collection(self.collection_name)
                 existing_dimension = self._get_existing_vector_dimension()
-                if existing_dimension is not None:
+                if existing_dimension is not None and not read_only:
                     self._handle_dimension_mismatch(existing_dimension)
 
             self._load_collection()
@@ -96,7 +115,7 @@ class MilvusClientManager:
             f"configured={self.vector_dim}"
         )
         if not config.milvus_allow_drop_on_dimension_mismatch:
-            raise RuntimeError(
+            raise MilvusCollectionError(
                 message
                 + "; automatic collection deletion is disabled. Reindex explicitly or set "
                 "MILVUS_ALLOW_DROP_ON_DIMENSION_MISMATCH=true."

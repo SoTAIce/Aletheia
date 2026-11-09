@@ -606,3 +606,21 @@
 - 真实评测：调参集规划模式各跑 1 次（用户“跑调参集”）：11/11，和 `bench-tune-single-hooks` 相同；调用次数相同的 8 题提示令牌都少了（每题少 957～2,481，约每次执行步骤请求少 300～500）；总数多出来全在 `config_merge_qa`（上次碰巧没有中转站的额外令牌，这次有，而且多调了 3 次）。剔除这一题后提示令牌少 5.8%。
 - 约束：每题只跑 1 次。实现由 Codex 完成代码和测试，额度用完后由 Claude 审查、测量并写记录。
 - 来源：用户 2026-11-08“规划模式还是会用到的”“派 Codex 实现”
+
+
+## D-070 2026-11-09 知识库建库：安全替换、阶段诊断与过时来源清理
+
+- 问题：原流程先删旧块再调用嵌入和写入，失败会丢掉旧索引；所有失败被包装为 RuntimeError，无法辨别阶段；目录里删除的文件仍会被检索。
+- 决策：VectorStoreManager.replace_source 先 add_document，成功后按来源删除不在新编号集合中的块；路径和编号沿用过滤字符串转义。空文件仅删旧块。返回编号缺失或重复时不删除旧块。index_single_file 与 index_directory 共用该顺序。
+- 取舍：这不是事务。写入失败不会主动删旧块；写入成功而删除失败时，新旧块会暂时并存，下次重跑再清掉。外部写入可能部分完成，不自动重试，不承诺通用 exactly-once。
+- 诊断：新增 EmbeddingConfigError(ValueError)、EmbeddingRequestError(RuntimeError)、EmbeddingResponseError(ValueError)、MilvusConnectError(RuntimeError)，保留原消息；IndexStageError(RuntimeError) 保留原消息格式与异常链，并提供 read、connect、embed_config、embed、write 阶段。已有基类捕获仍适用；单文件预检失败现在统一包装为 read 阶段，直接依赖其 ValueError 的调用方需改捕获 IndexStageError 或检查原因。
+- 命令行：仅显示宿主提供的中文阶段与原始原因类型，不显示异常消息和接口原文（D-033）；提前停止建议区分连接、密钥、嵌入接口和混合故障。嵌入失败日志也改为只记类型；命令执行全程临时屏蔽标准日志及 Loguru，覆盖默认服务导入到关闭连接，防止底层依赖输出实体或异常原文。退出时恢复原日志禁用等级和 Loguru 激活规则、缓存；因 Loguru 无公开状态读取接口，这部分使用当前依赖的内部状态，后续升级需运行对应回归。
+- 清理：--prune 以解析后的根目录加斜杠为来源前缀，只处理不在 supported_files 列表中的来源；相邻目录不匹配。排除目录和不再支持的扩展名对应的旧来源同样纳入。普通预演不连接服务；清理预演通过 query_iterator 分页读取 metadata 并列出候选，不嵌入、不删除；不依赖可能包含已删记录的 num_entities 统计，也不受 offset 查询窗口限制。当前文件集合按 resolve 后的来源比较，避免路径别名写入后又被误清理。
+- 只读边界：既有 connect 可创建集合或按配置重建集合，因此新增默认关闭、向后兼容的 read_only 参数；list_sources 使用只读连接，缺失集合报失败，维度不同时不重建。来源迭代失败时拒绝清理，迭代器始终关闭。读路径和集合结构不变。
+- 删除门槛：确认运行先遍历所有文件；完整遍历后才清理，提前停止不列来源、不删来源并明确说明。单项失败不等于提前停止；完整遍历仍可清理，任一建库或清理失败都返回 1。空目录也可列出或清理旧来源。
+- 验证边界：只做确定性测试和不带 --prune 的 docs 默认预演；本轮没有连接真实 Milvus、调用嵌入接口或真实模型，没有执行真实 --confirm 或 --prune。真实验证待用户授权；不提交、暂存、还原或推送，不改依赖、.env、模型默认值及 data/。
+- 已知限制：方案指定的根路径加斜杠前缀在磁盘根目录（如 C:/）会形成双斜杠，暂不扩展；应选择具体文档子目录。并发建库与清理、已有 index_directory 原文日志及 list_documents 分页属于本轮之外，不据此扩展事务保证。
+- 来源：用户 2026-11-09 明确要求按 docs/kb_index_v2_plan.md 实现 kb-index-cli-002。测试命令和结果见 progress.md、session-handoff.md；本轮清单见 harness/history/baseline-2026-11-09-kb2.json。
+- 审查后修改（Claude，同日，用户“修掉两处”）：
+  - 日志静默只包住命令行入口 `main()`，只用 Loguru 公开的 `disable` 和 `enable`，退出时恢复标准日志开关并把 Loguru 恢复为全部启用；`run()` 不再改动全局日志状态。原做法读写 `logger._core` 私有状态，Loguru 升级时可能失效。
+  - `MilvusClientManager.connect` 分成两段：连接、建客户端、查询集合是否存在失败时抛 `MilvusConnectError`；连上之后集合不能用（向量维度和配置不一致、只读模式下集合不存在）抛新的 `MilvusCollectionError`，两者都是 `RuntimeError` 子类，消息不变。建库命令据此新增阶段 `collection`，提示“Milvus 集合不可用”并建议核对 `EMBEDDING_DIMENSIONS`，不再把维度不一致误报成“请先启动 Milvus”。

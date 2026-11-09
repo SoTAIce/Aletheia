@@ -9,6 +9,18 @@ from openai import OpenAI
 from app.config import config
 
 
+class EmbeddingConfigError(ValueError):
+    """嵌入密钥未配置，兼容原 ValueError。"""
+
+
+class EmbeddingRequestError(RuntimeError):
+    """嵌入接口请求失败，兼容原 RuntimeError。"""
+
+
+class EmbeddingResponseError(ValueError):
+    """嵌入结果条数或维度不符，兼容原 ValueError。"""
+
+
 class DashScopeEmbeddings(Embeddings):
     """OpenAI-compatible DashScope embeddings with strict output validation."""
 
@@ -48,7 +60,7 @@ class DashScopeEmbeddings(Embeddings):
         if self._client is None:
             normalized_key = self.api_key.lower()
             if not normalized_key or normalized_key in self._PLACEHOLDER_KEYS:
-                raise ValueError("DASHSCOPE_API_KEY is not configured")
+                raise EmbeddingConfigError("DASHSCOPE_API_KEY is not configured")
             self._client = OpenAI(
                 api_key=self.api_key,
                 base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -72,12 +84,12 @@ class DashScopeEmbeddings(Embeddings):
     def _extract_embeddings(self, response: Any, expected_count: int) -> list[list[float]]:
         embeddings = [list(item.embedding) for item in response.data]
         if len(embeddings) != expected_count:
-            raise ValueError(
+            raise EmbeddingResponseError(
                 f"embedding response count mismatch: expected {expected_count}, got {len(embeddings)}"
             )
         for index, embedding in enumerate(embeddings):
             if len(embedding) != self.dimensions:
-                raise ValueError(
+                raise EmbeddingResponseError(
                     f"embedding dimension mismatch at index {index}: "
                     f"expected {self.dimensions}, got {len(embedding)}"
                 )
@@ -99,11 +111,11 @@ class DashScopeEmbeddings(Embeddings):
                     encoding_format="float",
                 )
                 all_embeddings.extend(self._extract_embeddings(response, len(batch)))
-        except ValueError:
+        except EmbeddingResponseError:
             raise
         except Exception as exc:
-            logger.exception("Batch embedding request failed")
-            raise RuntimeError(f"batch embedding request failed: {exc}") from exc
+            logger.error("批量嵌入请求失败（{}）", type(exc).__name__)
+            raise EmbeddingRequestError(f"batch embedding request failed: {exc}") from exc
 
         return all_embeddings
 
@@ -120,11 +132,11 @@ class DashScopeEmbeddings(Embeddings):
                 encoding_format="float",
             )
             return self._extract_embeddings(response, 1)[0]
-        except ValueError:
+        except EmbeddingResponseError:
             raise
         except Exception as exc:
-            logger.exception("Query embedding request failed")
-            raise RuntimeError(f"query embedding request failed: {exc}") from exc
+            logger.error("单条嵌入请求失败（{}）", type(exc).__name__)
+            raise EmbeddingRequestError(f"query embedding request failed: {exc}") from exc
 
 
 vector_embedding_service = DashScopeEmbeddings(
