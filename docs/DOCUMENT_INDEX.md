@@ -14,8 +14,8 @@
 | [DECISIONS.md](DECISIONS.md) | 设计决策、理由、被否方案（来源指向原报告） |
 | [Hooks 设计稿](hooks_design.md) | 2026-11-07：固定事件点、只读的观察型和只能拒绝的拦截型 hook、包在工具对象和底层模型上以覆盖团队模式、四个内置 hook（进度、审计、对话费用上限、网页人工确认）；D-058～D-061 已实现并真实验证 |
 | [架构梳理](architecture_review.md) | 2026-11-07：现有分层和一次请求的路径、核心抽象的设计意图与实际用法、按根因归类的八个问题、应保留的设计、以智能体循环为唯一控制流的目标结构和五阶段迁移；第 1 阶段已作为试验实现（D-062），其余未做 |
-| [第 0 阶段清理方案](stage0_cleanup_plan.md) | 2026-11-08：删除没人用的 `aiops/`、`app/agent/mcp_client.py` 和两个 `mcp_demo` 客户端；保留测试在用的两个 `mcp_demo` 文件和唯一的建库代码 `vector_index_service.py`；文档改正、防回退测试、记录和约束；未实现，打算交给 Codex |
-| [网页可选单一循环方案](loop_web_plan.md) | 2026-11-07：让网页在启动时和每条消息上选择执行方式（按计划或单一循环），恢复时沿用原选择；逐个文件的修改、测试、记录和约束；未实现，打算交给 Codex |
+| [第 0 阶段清理方案](stage0_cleanup_plan.md) | 2026-11-08：删除没人用的 `aiops/`、`app/agent/mcp_client.py` 和两个 `mcp_demo` 客户端；保留测试在用的两个 `mcp_demo` 文件和唯一的建库代码 `vector_index_service.py`；文档改正、防回退测试、记录和约束；已按 cleanup-stage0-001 实现，验收见 progress.md 与 D-066 |
+| [网页可选单一循环方案](loop_web_plan.md) | 2026-11-07：让网页在启动时和每条消息上选择执行方式（按计划或单一循环），恢复时沿用原选择；逐个文件的修改、测试、记录和约束；已由 Codex 按 loop-web-001 实现并提交（D-065，`2b76f01`） |
 | [网页后端与前端设计稿](web_backend_design.md) | 2026-11-06：薄后端包装现有服务、服务器推送进度、阻塞恢复和取消、本机令牌身份、静态页面；D-044 已确认，实施中 |
 | [clean-state 清单](harness/clean-state-checklist.md)、[evaluator-rubric](harness/evaluator-rubric.md)、[质量文档](harness/quality-document.md) | 会话退出检查、评审打分、领域/层质量与可观测性 |
 | [合规审查 2026-11-04](harness/conformance-audit-2026-11-04.md) | 对照 Learn Harness Engineering 的逐项结论与剩余缺口 |

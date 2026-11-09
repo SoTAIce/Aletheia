@@ -1,0 +1,52 @@
+{
+  "created": "2026-11-08",
+  "base_commit": "2b76f01eb9a0299eefabc120d95c539f86e87e4d",
+  "purpose": "cleanup-stage0-001 未提交交接证据：保留用户原差异，记录九项本轮删除和本轮测试、文档变更；索引未改，不代表提交授权。",
+  "self_path": "docs/harness/history/baseline-2026-11-08-cleanup-stage0.json",
+  "protected_user_modified": {
+    "README.md": "2b917b14b8c098babd342f0c442d6e76c2f91eaae829d28574b77d7cb6348e38",
+    "app/agent/planner.py": "a2ce0f91c476ea473f2ae6db98aa7b7ac7416b744abde1419a0f38c1fe8d8dc6",
+    "app/agent/step_executor.py": "86f8ca77ebd86d964f1dbc31b2dcf8cfcbb0596ba85c12d086368fdb304b1f1d",
+    "app/agent/tool_calling_step_runner.py": "ab6d27b6e6171c17ab07afd0c7b1cd98eb9c7e23135fc4dc693e6921ee79c480"
+  },
+  "protected_user_deleted": [
+    "scripts/benchmark_conversation_memory.py",
+    "scripts/validate_multi_runner_live.py",
+    "scripts/validate_summary_context.py"
+  ],
+  "modified_tracked": {
+    "AGENTS.md": "5d9cba09679848354a58f7254f82c4d38086519d0ab63bc37829990b59092fa9",
+    "README.md": "2b917b14b8c098babd342f0c442d6e76c2f91eaae829d28574b77d7cb6348e38",
+    "app/agent/planner.py": "a2ce0f91c476ea473f2ae6db98aa7b7ac7416b744abde1419a0f38c1fe8d8dc6",
+    "app/agent/step_executor.py": "86f8ca77ebd86d964f1dbc31b2dcf8cfcbb0596ba85c12d086368fdb304b1f1d",
+    "app/agent/tool_calling_step_runner.py": "ab6d27b6e6171c17ab07afd0c7b1cd98eb9c7e23135fc4dc693e6921ee79c480",
+    "docs/DECISIONS.md": "77c0bac476982d5d52e196b72985c8136dc16c70ed6103b120c9d1ba12d45cd0",
+    "docs/DOCUMENT_INDEX.md": "7956e9fe5cbe47e6b4756dc0367b8f7aaf3dd67c423cb518e60fb66dbf4ee4eb",
+    "docs/PROJECT_HANDOVER.md": "fe8c11b974a2dec7d186336e8da6e0e5ed3f0cae10eb5d3076331a1a20ef29bf",
+    "docs/agent_runtime.md": "a621a4face045ab936646df86f0a45430347c45848c02a3c8a8350b4cb86c920",
+    "docs/architecture_review.md": "f03d2a3071573480fc430986fd9c356369c855906b4750b56702f4209fd7ee9f",
+    "docs/executor_v1.md": "8b80721ef646b44eb7a6052658999bd5d836c84d85db642f3e78fd9c558f258b",
+    "docs/harness/baseline.md": "c4db664dcb3555d99515d4a7449f12ff764277097433eb26bfeb734c9b05f9cc",
+    "feature_list.json": "be16baef0d9b7aeb78a27e580bcba81c1573c728ea50966304192fbafbf62b17",
+    "progress.md": "38b253406749435f60b29e953d570868d61b8d1f674e069eb3ed8932b881aa44",
+    "session-handoff.md": "7789ab1dcd3e1625d7d5688d77825af32d7a8f32a5cda576a3dd81004ff848f9"
+  },
+  "untracked": {
+    "tests/test_stage0_cleanup.py": "c6c871653717500633ec6f0f7048f771ae19db8de297cf6154d0d9ae8f0d5590"
+  },
+  "deleted_tracked": [
+    "app/agent/aiops/__init__.py",
+    "app/agent/aiops/executor.py",
+    "app/agent/aiops/planner.py",
+    "app/agent/aiops/replanner.py",
+    "app/agent/aiops/state.py",
+    "app/agent/aiops/utils.py",
+    "app/agent/mcp_client.py",
+    "app/agent/mcp_demo/registry_client.py",
+    "app/agent/mcp_demo/time_client.py",
+    "scripts/benchmark_conversation_memory.py",
+    "scripts/validate_multi_runner_live.py",
+    "scripts/validate_summary_context.py"
+  ],
+  "check": "docs/harness/baseline.md"
+}

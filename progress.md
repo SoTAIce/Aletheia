@@ -4,11 +4,11 @@
 
 ## Current Verified State
 
-- **最新验收（2026-11-08）**：loop-web-001 完成，已提交（与第 0 阶段方案同一次提交）；init.ps1 PASS（1622 passed、16 skipped，55.55s），针对性 111 passed、JS 语法通过、独立审查通过。默认 plan 不变，网页可逐任务选择 runner；详情与 clean-state 见 [本轮记录](docs/harness/loop-web-2026-11-08.md)。active_feature=null。
+- **最新验收（2026-11-08）**：cleanup-stage0-001 完成，经 Claude 审查后改正两处文档，并按用户“修完再提交”提交。删除九个旧文件并新增七项守卫；init.ps1 通过（92 个 Python 文件，1629 passed、16 skipped，50.69s），守卫和两个保留示例的测试单独 15 passed。用户原差异保留，active_feature=null；D-066 与本轮基线见下方记录。
 
 - **Repository root**：`D:\tries\agent`（分支 main；HEAD 是 harness 提交，父提交 `9138ac1` 为 Team V1 冻结点；工作区有用户选择暂不提交的改动）
 - **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **Standard verification path**：init.ps1（static/import + pytest `tests/`，2026-11-06 为 1466 passed、16 skipped；历史测试已恢复进 `tests/`，见 D-030）；基线核对命令见 docs/harness/baseline.md。原 1093 个测试仍未恢复
+- **标准验收路径**：init.ps1（管理文件、语法和 CLI 加载、确定性 pytest；2026-11-08 为 1629 passed、16 skipped）；基线核对命令见 docs/harness/baseline.md。真实模型和外部服务未验证。
 - **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
 - **Current blocker**：没有阻塞交接的项。限制：测试覆盖很窄；用户的源码/README/删除项按用户选择暂不提交（记录在基线清单中）；外部备份在本会话无法访问
 
@@ -20,6 +20,19 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-08 — cleanup-stage0-001：第 0 阶段清理遗留代码
+
+- **目标与完成**：按 docs/stage0_cleanup_plan.md 删除九个旧文件；修改四篇指定文档的过时表述，纠正知识库建库代码的定位；保留在用源码、工具导出、压缩器和命名空间包。新增 D-066，更新功能状态、交接、测试数和文档索引。
+- **启动检查**：原工作区 init.ps1 通过（101 个 Python 文件，1622 passed、16 skipped，50.56s）。旧清单的 AGENTS.md、DECISIONS.md、PROJECT_HANDOVER.md、progress.md、session-handoff.md 五项哈希漂移，清单外变化为无；旧清单原样保留，本轮另建清单。
+- **验证**：新增 tests/test_stage0_cleanup.py 的七项 find_spec 守卫，删除前 4 项失败、3 项通过；git rm 权限失败后重测仍为 4 项失败、11 项通过；实际删除后，守卫与 tests/tools/test_mcp_integration.py、tests/tools/test_web_search_integration.py 合计 15 passed（2.74s），没有跳过。init.ps1 通过：92 个 Python 文件，1629 passed、16 skipped（50.69s）。示例使用本地测试子进程，HTTP 和模型响应是模拟，不是外部真实服务验收。
+- **命令**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；`.venv/Scripts/python.exe -B -m pytest -q -p no:cacheprovider --basetemp <系统 TEMP 下新建目录> tests/test_stage0_cleanup.py tests/tools/test_mcp_integration.py tests/tools/test_web_search_integration.py`；基线核对按 docs/harness/baseline.md。
+- **执行差异**：git rm 因 .git/index.lock 写权限被拒绝（退出码 128），改为逐一删除同样九个文件并移除空 aiops 目录；没有改索引、暂存、还原、提交或推送。
+- **证据与边界**：用户四个已修改文件的 SHA-256 与启动时一致，三个脚本仍为删除状态；依赖、锁文件、.env、模型默认值及 data/ 未修改。新清单为 docs/harness/history/baseline-2026-11-08-cleanup-stage0.json；deleted_tracked 包括九项本轮删除及三项用户删除。
+- **独立复核**：按执行计划技能完成一次只读独立审查，未发现严重、重要或次要问题；审查确认删除范围、保留模块、守卫、文档和清单哈希一致。用户差异、历史记录及明确排除的后续项按范围约束处理；没有待修复或延后的小问题。
+- **退出检查**：标准入口和全部确定性测试通过；状态与记录已同步；无未记录半成品；本轮 TEMP 目录已删除，仓库无 __pycache__ 或 .pytest_cache（不含虚拟环境）；Git 仅有用户原差异和本轮预期变化。本轮基线已核对：base ancestor OK、drift none、deleted-restored none、uncommitted-outside-manifest none。
+- **审查与提交（Claude，同日）**：独立复跑守卫、两个保留示例和工具边界测试共 19 passed，init.ps1 92 个文件、1629 passed、16 skipped，基线四项正常。改正两处：文档索引里网页方案一行仍写“未实现”；`docs/agent_runtime.md` 英文段落里夹了半句中文，改回英文。随后按用户“修完再提交”提交，未推送。
+- **风险与下一步**：未验证真实模型、外部服务或真实容器。由用户另行决定是否移除 langgraph 系列及 langchain-mcp-adapters 依赖、是否增加知识库建库命令；去掉规划模式重复工具清单仍需真实评测，本轮不做。
 
 ### 2026-11-08 — cleanup-stage0-plan-001：第 0 阶段清理方案
 

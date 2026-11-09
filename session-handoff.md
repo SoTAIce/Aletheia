@@ -1,5 +1,17 @@
 # Current Session Handoff — 2026-11-06（成熟度五个阶段已完成）
 
+## 最新交接：2026-11-08 cleanup-stage0-001（完成，已提交）
+
+- **目标与修改**：从 HEAD `2b76f01` 加用户原差异开始，按 docs/stage0_cleanup_plan.md 删除九个遗留文件，新增七项模块守卫；指定文档、功能表、D-066、进度、测试数和基线已同步。
+- **已验证**：init.ps1 通过（92 个 Python 文件，1629 passed、16 skipped，50.69s）；新增守卫删除前 4 项失败、3 项通过，删除后连同两个保留示例测试共 15 passed（2.74s），没有跳过。只使用确定性测试、本地测试子进程与模拟 HTTP/模型，没有调用外部真实服务或真实模型。
+- **保留与范围**：time_server.py 和 web_search_client.py 有测试及运行入口；vector_index_service.py 是唯一知识库建库代码，原样保留。mcp_demo 不新增 __init__.py；在用源码、依赖、锁文件、配置、模型默认值及 data/ 不变。用户 README、三处中文注释的文件哈希与启动一致，三个脚本的删除保留，未暂存或还原用户文件。
+- **执行差异**：git rm 因 .git/index.lock 写权限被拒绝，改用文件系统删除已授权的同样九个文件，空 aiops/ 已移除，索引不变；没有提交或推送。详见 D-066。
+- **证据与状态**：feature_list.json 的 cleanup-stage0-001=done、active_feature=null；progress.md 有命令、先失败后通过及退出检查。本轮清单为 [baseline-2026-11-08-cleanup-stage0.json](docs/harness/history/baseline-2026-11-08-cleanup-stage0.json)，含九项本轮删除和三项用户删除；旧清单保持历史原样。
+- **审查与提交**：Claude 独立复核无阻断问题，改正文档索引里网页方案的过时状态和 `docs/agent_runtime.md` 里的中英混杂句；按用户“修完再提交”提交，未推送，用户原差异仍未提交。
+- **尚未验证**：真实模型、外部真实服务和真实容器；确定性通过不代表网页真实验收或质量提升。规划模式重复工具清单未改，需要另行授权真实评测。
+- **下一步（待用户决定）**：是否从 pyproject.toml 移除源码已不用的 langgraph、langgraph-checkpoint、langgraph-prebuilt、langgraph-sdk、langchain-mcp-adapters；是否给知识库增加建库命令。本轮不自动推进这些工作。
+- **命令**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；单独测试命令见 progress.md；基线核对命令见 docs/harness/baseline.md，已核对四项为 base ancestor OK、drift none、deleted-restored none、uncommitted-outside-manifest none。
+
 ## 最新交接：2026-11-08 loop-web-001（完成，已提交）
 
 - **Goal / Changes**：按 docs/loop_web_plan.md 实现网页启动默认与逐消息 runner 选择；服务/API/启动器/中文页面已接入，默认仍 plan。route 事件只在 options 中增加 runner。

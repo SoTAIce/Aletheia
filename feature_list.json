@@ -1254,6 +1254,22 @@
         "The plan names every file to delete or keep with the reason, the doc corrections, the test, the records and what is out of scope."
       ],
       "evidence": "docs/stage0_cleanup_plan.md written after searching app, tests, bench, scripts, pyproject.toml, init.ps1 and docs for every listed module on c15ffd9 plus the uncommitted loop-web-001. Not implemented."
+    },
+    {
+      "id": "cleanup-stage0-001",
+      "name": "第 0 阶段：清理遗留代码",
+      "description": "按 docs/stage0_cleanup_plan.md 删除九个无调用方的旧模块，保留测试示例、知识库建库代码和现有工具；只修正文档并新增防回退测试，不改变运行行为或依赖。",
+      "status": "done",
+      "dependencies": [
+        "cleanup-stage0-plan-001"
+      ],
+      "acceptance": [
+        "删除前全仓搜索未发现计划之外的引用；仅删除计划中的九个文件。",
+        "四个旧模块无法被发现；三个保留模块仍可被发现。",
+        "init.ps1 语法检查为 92 个 Python 文件，确定性测试通过；两个保留示例的测试单独验收。",
+        "用户原差异原样保留；更新 D-066、进度、交接、测试数与本轮基线，不提交。"
+      ],
+      "evidence": "2026-11-08：删除前全仓搜索无方案之外的调用方；删除 app/agent/aiops/ 下 __init__.py、executor.py、planner.py、replanner.py、state.py、utils.py，以及 app/agent/mcp_client.py、mcp_demo/registry_client.py、time_client.py，共九个文件。保留 time_server.py（集成测试）、web_search_client.py（测试和 README 入口）、vector_index_service.py（唯一知识库建库实现）；保留在用工具和压缩器。tests/test_stage0_cleanup.py 新增七项 find_spec 守卫，删除前 4 项失败、3 项通过；删除后与两个保留示例的测试合计 15 passed（2.74s）。init.ps1 通过：92 个 Python 文件，1629 passed、16 skipped（50.69s）；本地测试子进程、模拟 HTTP 和模型，不是外部真实服务验收。D-066、progress.md、session-handoff.md 及 docs/harness/history/baseline-2026-11-08-cleanup-stage0.json 记录范围、权限差异和用户原差异。Claude 复核：19 passed（守卫、两个保留示例、工具边界），init.ps1 1629 passed、16 skipped，基线四项正常；改正文档索引的过时状态和 agent_runtime.md 的中英混杂句后，按用户“修完再提交”提交。"
     }
   ],
   "cleanup_2026_11_04": {
@@ -1264,15 +1280,15 @@
     "baseline": "1093 passed, 2 skipped before test removal"
   },
   "schema_version": 2,
-  "updated_at": "2026-11-04",
+  "updated_at": "2026-11-08",
   "active_feature": null,
   "verification_context": {
     "tests_present": true,
-    "last_full_regression": "Historical before cleanup: 1093 passed, 2 skipped; NOT a fresh result. Current suite: tests/test_harness_smoke.py only.",
+    "last_full_regression": "2026-11-08 本轮 init.ps1：1629 passed、16 skipped；历史 1093/2 不作为本轮证据。",
     "current_gate": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1",
-    "current_scope": "static/import + pytest tests/ (WorkingMemory, 2 tests) + documentation/state/baseline verification; no API/DB/MCP validation",
-    "record": "docs/harness/conformance-audit-2026-11-04.md",
-    "current_result": "PASS static/import + pytest 2 passed; baseline verified (docs/harness/baseline.md)."
+    "current_scope": "管理文件与 JSON、92 个 Python 文件语法、CLI 加载、确定性 pytest；未验证外部真实模型、服务或真实容器。",
+    "record": "progress.md；session-handoff.md；D-066",
+    "current_result": "通过：1629 passed、16 skipped；新增七项守卫，两个保留示例的测试单独通过；基线命令见 docs/harness/baseline.md。"
   },
   "backlog": [
     {

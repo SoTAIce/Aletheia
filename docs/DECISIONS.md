@@ -572,3 +572,12 @@
 - 被否方案：把 loop 直接设为默认（用户未授权）；回答时更换 runner（会丢失原上下文或重复工作）；仅在页面隐藏 loop 而允许直接服务调用绕过配置约束。
 - 约束：本轮只做确定性测试和静态检查，未用浏览器与真实模型验证人工确认/恢复；不修改模型默认值、依赖或 .env，不提交。
 - 来源：用户 2026-11-08“先读 AGENTS.md，再按 docs/loop_web_plan.md 实现 loop-web-001，完成后跑 init.ps1，不要提交”。结果见 [验收记录](harness/loop-web-2026-11-08.md)。
+
+## D-066 2026-11-08 第 0 阶段：清理遗留代码
+
+- 决策：按 cleanup-stage0-001 删除 `app/agent/aiops/` 的六个文件、只被它使用的 `app/agent/mcp_client.py`，以及 `mcp_demo/registry_client.py`、`time_client.py`，共九个文件。删除前全仓搜索未发现方案之外的代码或测试调用方；在用的 MCP 客户端仍是 `app/tools/mcp_client.py`。
+- 保留：`vector_index_service.py` 是知识库唯一的文档切分、建库写入实现；没有调用方是因为缺少建库命令，不是遗留代码。`time_server.py` 用于 MCP 集成测试，`web_search_client.py` 被测试导入且 README 有运行命令；保留命名空间包，不增加 `mcp_demo/__init__.py`。`DEFAULT_LOCAL_AGENT_TOOLS` 和本地 Ollama 压缩器仍有调用方，原样保留。
+- 范围：本轮不去掉规划模式重复的工具清单，因为会改变发给模型的内容，需要另行授权真实评测；不修改在用源码、依赖、锁文件、配置或模型默认值。删除后源码不再使用 `langgraph`、`langgraph-checkpoint`、`langgraph-prebuilt`、`langgraph-sdk`、`langchain-mcp-adapters`，是否从依赖声明移除由用户决定。是否增加知识库建库命令也另行决定。
+- 执行差异：方案要求 `git rm`，但本环境 `.git` 只读，命令因无法创建 `.git/index.lock` 被拒绝（退出码 128）。因此使用文件系统逐一删除同样九个文件并移除空的 `aiops/` 目录；索引未改，用户文件未暂存或还原。
+- 验证：新增 `tests/test_stage0_cleanup.py`，用 `find_spec` 检查四个已删模块不可发现、三个保留模块仍存在；先得到 4 项失败、3 项通过，删除后连同两个保留示例的测试共 15 项通过。完整验收与基线结果见本轮 progress.md、session-handoff.md。
+- 来源：用户 2026-11-08 明确要求按 `docs/stage0_cleanup_plan.md` 实现；不提交、不推送、不调用真实模型或外部真实服务。

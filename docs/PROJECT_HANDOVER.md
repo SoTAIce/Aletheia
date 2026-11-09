@@ -8,7 +8,7 @@
 2. 团队模式只剩 V2（2026-11-05 删除 V1，决策 D-025）：负责人委派给全新上下文的执行者，宿主判定完成。在 parse_duration、fix_inventory 上严格交付好于普通模式，但样本少，见第 7 节。
 3. ConversationMemory、WorkingMemory、长期记忆和 ContextManager 各有职责；不要再建一套重复 Memory 框架。
 4. 历史原文可恢复；运行中任务只能在同一服务实例暂停恢复，不能跨进程恢复执行。
-5. 用户刚清理了 tests、验证脚本与临时产物。1093 passed/2 skipped 是清理前的历史回归；当前可直接运行的是 init.ps1（静态/入口 + `tests/` 下的确定性 pytest）；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-08 为 1622 passed、16 skipped；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，开启后 1231 passed）。
+5. 用户刚清理了 tests、验证脚本与临时产物。1093 passed/2 skipped 是清理前的历史回归；当前可直接运行的是 init.ps1（静态/入口 + `tests/` 下的确定性 pytest）；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-08 为 1629 passed、16 skipped；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，开启后 1231 passed）。
 6. 当前工作区有用户未提交源码与删除项，不能把它当成干净的冻结提交，也不能擅自 reset、commit 或 push。
 
 ## 2. 仓库状态与启动
@@ -99,7 +99,7 @@ Filesystem：`app/tools/filesystem/file_access.py`、`server.py`；WebSearch：`
 
 RAG：`knowledge_registry_tool.py` → `rag_search_service.py` → query rewrite、向量/BM25/hybrid、RRF、rerank、context builder；证据进入 Resources。
 基础设施在 `vector_embedding_service.py`、`vector_index_service.py`、`vector_store_manager.py`、`app/core/milvus_client.py`。已有 Milvus 全局 alias 兼容逻辑，不能随意断开共享连接。
-不要为了长期记忆或 Team 建第二套工具注册/模型框架。`app/agent/aiops`、`mcp_demo` 是旧实现/示例/兼容与实验入口，不是当前主链替代品。
+不要为了长期记忆或 Team 建第二套工具注册/模型框架。`app/agent/aiops` 已于 2026-11-08 删除（cleanup-stage0-001）；`mcp_demo` 只剩测试用的 `time_server.py` 和 `web_search_client.py`。
 
 ## 5. Memory + Context 的职责划分
 

@@ -3,7 +3,7 @@
 本阶段将 Executor 定义为新版 `app.agent.planner.Planner` 的响应接收方。
 Planner 继续只返回不可变的 `PlanProposal`；Executor 校验并安装该提案，
 返回不可变的 `PlanAcceptance`。不在 Planner 响应里嵌入有副作用的执行器实例。
-旧版 `app.agent.aiops` 工作流独立保留。
+旧版 `app.agent.aiops` 工作流已于 2026-11-08 删除（cleanup-stage0-001）。
 
 ## 接入方式
 

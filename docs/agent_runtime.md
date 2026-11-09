@@ -162,8 +162,9 @@ the step successfully.
   cross-process recovery or transactional rollback of external tool side effects
   is implemented. Timeout/cancellation may occur after a side effect has happened.
 - The default service uses stdio Filesystem/WebSearch MCP and local RAG/time
-  tools. Historical HTTP CLS/monitor configuration and the unused `aiops`
-  experiment modules are not wired into this runtime. Legacy tool exports remain
+  tools. Historical HTTP CLS/monitor configuration is not wired into this
+  runtime; the unused `aiops` experiment modules were removed on 2026-11-08
+  (cleanup-stage0-001). Legacy tool exports remain
   available for compatibility; they are not used by the service's execution path.
 - `query_stream()` retains an event interface but emits final content/status,
   not per-token output. Injected service models now follow `ToolCallingModel`,

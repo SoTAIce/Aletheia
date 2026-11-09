@@ -122,13 +122,15 @@
 
 ### 问题 8：遗留代码
 
-这次核对到没有任何地方引用的模块：
+第 0 阶段已于 2026-11-08 删除无调用方的遗留代码（cleanup-stage0-001）：
 
-- `app/agent/aiops/`（5 个文件）；
-- `app/agent/mcp_demo/registry_client.py`、`time_client.py`；
-- `app/services/vector_index_service.py`。
+- `app/agent/aiops/`（含 `__init__.py` 共 6 个文件）；
+- 只被 `aiops` 使用的 `app/agent/mcp_client.py`；
+- `app/agent/mcp_demo/registry_client.py`、`time_client.py`。
 
-另外 `app/core/dependencies.py` 里写死了本地 Ollama 压缩器，只有命令行和一个测试在用；`app/agent/mcp_client.py` 和 `app/tools/mcp_client.py` 名字重复，需要确认职责。
+`app/services/vector_index_service.py` 是知识库唯一的建库代码，没有调用方是因为项目尚无建库命令，不是遗留代码，予以保留。`mcp_demo/time_server.py` 和 `web_search_client.py` 仍用于测试，后者还有 README 运行入口，予以保留。
+
+另外 `app/core/dependencies.py` 里写死了本地 Ollama 压缩器，只有命令行和一个测试在用，本轮保留。在用的 MCP 客户端是 `app/tools/mcp_client.py`；`app/agent/mcp_client.py` 只被 `aiops` 使用，已一起删除。
 
 ---
 
@@ -209,6 +211,8 @@
 | 2 | 普通模式默认走循环；加 `todo` 和 `ask_user` 工具；结束改为纯文本；旧工具结果折叠移到循环里 | 同上，再加阻塞恢复的测试 |
 | 3 | 团队模式改为 `delegate` 工具，验收门槛改为拦截型 hook；删除执行器注册表、路由和 `team_v2.py` 的大部分 | 团队评测不低于现在 |
 | 4 | 精简任务状态，拆分服务层，加模型档案；删除规划—执行骨架 | 测试和两套评测不回退 |
+
+第 0 阶段的遗留代码已清理（cleanup-stage0-001）；“去掉重复的工具清单”会改变规划模式发给模型的内容，需要真实评测，本轮没有做。
 
 阶段 1 是关键的试验点：它复用现有骨架，改动小，可以用评测直接回答“单一循环是不是更好”，答案不好就停在这里。
 
