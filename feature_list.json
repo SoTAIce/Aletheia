@@ -1297,6 +1297,33 @@
         "Excluded directories and unsupported files are skipped; failures carry no provider text; early stop and exit codes hold."
       ],
       "evidence": "tests/test_knowledge_cli.py 10 passed (real splitter, fake vector store); a real dry run on docs/: 64 files, 836 chunks, exit 0, no service contacted; a missing directory exits 2. init.ps1 PASS 94 Python files, 1639 passed, 16 skipped. --confirm not run against a live Milvus or embedding service."
+    },
+    {
+      "id": "tool-list-dedup-plan-001",
+      "name": "Plan: stop sending the tool list twice in plan-mode steps",
+      "description": "Design only, no code change (user said on 2026-11-08 that the plan runner is still used, so its duplicated tool list should not wait for the loop default). docs/step_tool_list_plan.md: the runtime pins [{name, description}] as 'available_tools'; the planner sends no native tool definitions, so it keeps the list; ToolCallingStepRunner sends native definitions on every request (ToolsShownOnly on wrap-up too) and also serializes the pin, so only the step context drops it, at serialization time; the team lead keeps it, because its system prompt names grantable tools without descriptions. A shared TOOL_LIST_SOURCE constant, tests, an offline size comparison, a live tune-set run left for user authorization, records and the constraint to keep the user's uncommitted Chinese docstrings in tool_calling_step_runner.py. Implementation is tool-list-dedup-001.",
+      "status": "done",
+      "dependencies": [
+        "cleanup-stage0-001"
+      ],
+      "acceptance": [
+        "The plan names where the list is pinned and read, which readers keep it and why, the change, the tests, the live check left for authorization and the constraints."
+      ],
+      "evidence": "docs/step_tool_list_plan.md written after reading runtime.py (pin), planner.py (_build_prompt), tool_calling_step_runner.py (context serialization), team_v2.py (_lead, _lead_system) and agent_loop.py on HEAD 9902cb0, and searching tests for available_tools and pinned_contexts. Not implemented."
+    },
+    {
+      "id": "tool-list-dedup-001",
+      "name": "Plan-mode steps stop sending the pinned tool list",
+      "description": "Implements docs/step_tool_list_plan.md (user said '派 Codex 实现' on 2026-11-08). Codex wrote the code and tests, then hit its usage limit before the records; Claude reviewed, measured and wrote the records. step_models.TOOL_LIST_SOURCE ('available_tools') is used by the runtime pin, by agent_loop and by ToolCallingStepRunner, which now drops that source from pinned_contexts when it serializes a step context (an empty list stays). StepExecutionContext, task state, the planner prompt and the team lead are unchanged, so the planner, which sends no native tool definitions, still sees the list. DECISIONS D-069.",
+      "status": "done",
+      "dependencies": [
+        "tool-list-dedup-plan-001"
+      ],
+      "acceptance": [
+        "Step requests carry native tool definitions but not the pinned list; the planner prompt still carries it; the cache layout tests hold.",
+        "A live tune-set run in plan mode passes no fewer tasks than bench-tune-single-hooks (11/11)."
+      ],
+      "evidence": "tests/test_step_tool_list.py 5 passed (step filter with state unchanged, planner keeps the list, empty list key kept, wrap-up request, runtime pin with the shared constant); with the cache layout, step runner, loop and planner tests 127 passed. The user's Chinese docstrings in tool_calling_step_runner.py are unchanged: undoing the two intended edits in memory gives the user's recorded SHA-256. Offline, scripted model and local tools, fix_inventory in plan mode: step context message 3,262 -> 1,495 characters (-54%), step request messages without tool definitions 6,269 -> 4,502 (-28%), planner prompt 4,314 unchanged. init.ps1 PASS 94 Python files, 1644 passed, 16 skipped. Tune set live in plan mode, 1 run per task (user said '跑调参集', AGENT_MODEL_CONTEXT_TOKENS=128000 for the run only, report in the ignored output/bench-tune-plan-nodup.json): 11/11 strictly, same as bench-tune-single-hooks; 53 model calls (52), 1,129,929 prompt tokens (1,071,148). The rise is config_merge_qa alone: 4 calls and 18,570 prompt tokens before (no relay overhead that run), 7 calls and 138,645 now. The 8 tasks with the same call count all used fewer prompt tokens (957 to 2,481 each, about 300 to 500 per step request); billing_qa and sales_csv_qa took one call less. Without config_merge_qa: 1,052,578 -> 991,284 prompt tokens (-5.8%). 404 s (336), with the same call counts, so relay latency."
     }
   ],
   "cleanup_2026_11_04": {

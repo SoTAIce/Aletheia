@@ -7,7 +7,7 @@ from textwrap import dedent
 
 from app.agent.step_models import (
     StepExecutionContext, StepRunOutput, SystemMessage, ToolCall, ToolMessage, UserMessage,
-    ModelTurn, ToolResult, StepOutcome, ToolsShownOnly,
+    ModelTurn, ToolResult, StepOutcome, ToolsShownOnly, TOOL_LIST_SOURCE,
 )
 from app.agent.step_runner import StepRunError, StepRunnerContractError, ToolRoundLimitError
 from app.agent.step_runner import StepFormatError, StepToolError, StepModelError, StepTimeoutError
@@ -147,6 +147,8 @@ class ToolCallingStepRunner:
             ''')
         # Include all fields, retaining task identity and revision metadata.
         fields = asdict(context)
+        fields['pinned_contexts'] = [p for p in fields['pinned_contexts']
+                                     if p['source'] != TOOL_LIST_SOURCE]
         ordered = {name: fields.pop(name) for name in CONTEXT_FIELD_ORDER if name in fields}
         ordered.update(fields)
         user = json.dumps(ordered, ensure_ascii=False, indent=2, default=encode_datetime)

@@ -1,5 +1,14 @@
 # Current Session Handoff — 2026-11-06（成熟度五个阶段已完成）
 
+## 最新交接：2026-11-08 tool-list-dedup-001（完成，已提交）
+
+- **Changes**：执行步骤序列化上下文时去掉钉住的工具清单，共用常量 `step_models.TOOL_LIST_SOURCE`；规划器、团队负责人、任务状态不变（D-069）。代码和测试由 Codex 写，它在写记录前额度用完，审查、测量和记录由 Claude 完成。
+- **Currently verified**：init.ps1 PASS，94 个 Python 文件，1644 passed、16 skipped；离线步骤上下文 3,262 → 1,495 字符；`tool_calling_step_runner.py` 退掉两处预期改动后与用户版本哈希一致。
+- **Live verified**：调参集规划模式各 1 次：11/11，和改动前相同；调用次数相同的题提示令牌都少了，剔除受中转站额外令牌影响的 `config_merge_qa` 后少 5.8%；报告 `output/bench-tune-plan-nodup.json`。feature 状态 done。
+- **提交注意**：`tool_calling_step_runner.py` 混有用户未提交的中文注释，提交时只能提交本轮的导入和两行过滤，不能整文件暂存。
+- **提交**：2026-11-09 经用户授权提交，`tool_calling_step_runner.py` 只提交了导入和两行过滤，用户的中文注释仍未提交；未推送。
+- **Next best action**：建库命令改进（kb-index-cli-002，交给 Codex）；之后是网页上用真实模型验证单一循环，再决定默认改成循环。
+
 ## 最新交接：2026-11-08 deps-cleanup-001、kb-index-cli-001（完成，已提交）
 
 - **Changes**：`pyproject.toml` 去掉 `langchain-mcp-adapters`；`langgraph` 的 4 个固定版本保留，因为 `langchain` 1.x 间接需要它们（D-067）。新增建库命令 `python -m app.knowledge 目录`，默认只预演，`--confirm` 才写入 Milvus（D-068）。

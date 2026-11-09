@@ -12,7 +12,7 @@ from loguru import logger
 from app.agent.executor import Executor
 from app.agent.planner import Planner
 from app.agent.step_executor import StepExecutor
-from app.agent.step_models import StepExecutionReceipt
+from app.agent.step_models import StepExecutionReceipt, TOOL_LIST_SOURCE
 from app.agent.side_effects import SideEffectWatch
 from app.agent.run_meter import RunMeter, cache_text as _cache_text, call_text as _call_text, current_meter, metering
 from app.agent.step_runner import (StepBlockedError, StepRunError, StepFormatError, StepModelError, StepRoutingError,
@@ -279,7 +279,7 @@ class AgentRuntime:
             task.pin_content(json.dumps(
                 [{"name": tool.name, "description": tool.description}
                  for tool in self._registry.list_definitions()], ensure_ascii=False
-            ), "available_tools")
+            ), TOOL_LIST_SOURCE)
             task.start_planning()
 
         while task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):

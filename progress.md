@@ -21,6 +21,19 @@
 
 ## Session Record
 
+### 2026-11-08 — tool-list-dedup-001：执行步骤不再重复发送工具清单
+
+- **Result**：派 Codex 实现；它写完代码和测试后报用量上限，记录没写。Claude 审查：`step_models.TOOL_LIST_SOURCE` 共用常量；执行步骤序列化上下文时去掉这份清单；规划器、团队负责人和任务状态不变（D-069）。
+- **用户差异**：`tool_calling_step_runner.py` 里 Codex 只改了导入和两行过滤；在内存里退掉这两处后，文件哈希和用户原来的版本一致，中文注释未动。
+- **Verification**：`tests/test_step_tool_list.py` 5 项；连同缓存布局、执行器、循环、规划器测试共 127 passed；init.ps1 PASS，94 个 Python 文件，1644 passed、16 skipped。离线重建 `fix_inventory` 规划模式请求：步骤上下文 3,262 → 1,495 字符（少 54%），规划器提示 4,314 字符不变。
+- **Live**：调参集规划模式各 1 次（用户“跑调参集”）：**11/11**，和改动前相同。调用次数相同的 8 题提示令牌都少了（每题少 957～2,481）；`billing_qa`、`sales_csv_qa` 各少一次调用；总数多出来的全在 `config_merge_qa`（上次碰巧没有中转站额外令牌，这次有，还多调了 3 次）。剔除它后提示令牌 1,052,578 → 991,284（少 5.8%）。报告在被忽略的 `output/bench-tune-plan-nodup.json`。状态改为 done。
+- **提交**：2026-11-09 经用户授权提交；`tool_calling_step_runner.py` 只提交本轮两处改动，用户中文注释留在工作区；未推送。
+
+### 2026-11-08 — tool-list-dedup-plan-001：执行步骤去掉重复工具清单的方案
+
+- **Result**：用户指出规划模式以后仍会用到，这一项不该等默认改成循环再做。写了 [方案](docs/step_tool_list_plan.md)，打算交给 Codex 实现（tool-list-dedup-001）。核对结果：规划器调用模型时不带原生工具定义，必须保留清单；执行步骤每次都带原生定义，清单是重复的，只在序列化步骤上下文时去掉；团队负责人只在系统提示里看到可分配的工具名，看不到说明，这次不动。
+- **Not done**：未实现；改完需要用户授权跑一次调参集规划模式评测；未提交。随后已实现，见下一条。
+
 ### 2026-11-08 — deps-cleanup-001、kb-index-cli-001：去掉没用的依赖，加建库命令
 
 - **依赖**：只从 `pyproject.toml` 去掉 `langchain-mcp-adapters`。`langgraph` 那 4 个包虽然 `app/` 不再导入，但 `langchain` 1.2.10 要求 `langgraph`，删掉固定版本只会让版本浮动，所以保留并加注释（D-067）。没有卸载任何包。

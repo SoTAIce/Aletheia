@@ -13,6 +13,9 @@ from app.models.taskstate import (
     PlanStep
 )
 
+# 运行时钉住的工具清单来源名，规划器要用；带原生工具定义的请求不需要它。
+TOOL_LIST_SOURCE = 'available_tools'
+
 @dataclass(frozen = True, slots = True)
 class StepExecutionContext:
     task_id: str

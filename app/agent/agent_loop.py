@@ -23,7 +23,7 @@ from app.agent.run_meter import current_meter
 from app.agent.runner_router import RunnerRequirements
 from app.agent.step_models import (
     ModelTurn, StepExecutionContext, StepOutcome, StepRunOutput, SystemMessage, ToolCall, ToolDefinition,
-    ToolMessage, ToolsShownOnly, UserMessage,
+    ToolMessage, ToolsShownOnly, UserMessage, TOOL_LIST_SOURCE,
 )
 from app.agent.step_runner import (StepFormatError, StepModelError, StepRunError, StepRunnerContractError,
                                    StepTimeoutError, StepToolError, ToolRoundLimitError)
@@ -122,7 +122,7 @@ def _encode(value):
 def _context_message(context: StepExecutionContext) -> str:
     fields = asdict(context)
     data = {name: fields[name] for name in CONTEXT_FIELDS if name in fields}
-    data['pinned_contexts'] = [p for p in data.get('pinned_contexts', ()) if p.get('source') != 'available_tools']
+    data['pinned_contexts'] = [p for p in data.get('pinned_contexts', ()) if p.get('source') != TOOL_LIST_SOURCE]
     data = {k: v for k, v in data.items() if v not in (None, [], (), '')}
     return json.dumps(data, ensure_ascii=False, indent=2, default=_encode)
 

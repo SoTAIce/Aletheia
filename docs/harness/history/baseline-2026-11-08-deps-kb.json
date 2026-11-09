@@ -5,26 +5,32 @@
   "self_path": "docs/harness/history/baseline-2026-11-08-deps-kb.json",
   "check": "docs/harness/baseline.md",
   "modified_tracked": {
-    "AGENTS.md": "2d4c31ff34dc20ebbf249f49b5c4762f6a7f96491de5220b1344274ddb5f1868",
+    "AGENTS.md": "937cd6d8a3df5bc69d0d1dbc3f86b78a34c35a9deb3a093bdf338ac4792466b0",
     "README.md": "2b917b14b8c098babd342f0c442d6e76c2f91eaae829d28574b77d7cb6348e38",
     "app/agent/planner.py": "a2ce0f91c476ea473f2ae6db98aa7b7ac7416b744abde1419a0f38c1fe8d8dc6",
     "app/agent/step_executor.py": "86f8ca77ebd86d964f1dbc31b2dcf8cfcbb0596ba85c12d086368fdb304b1f1d",
-    "app/agent/tool_calling_step_runner.py": "ab6d27b6e6171c17ab07afd0c7b1cd98eb9c7e23135fc4dc693e6921ee79c480",
+    "app/agent/tool_calling_step_runner.py": "f61016aabfffe6bd1ddfc92084b009ce944e9dbac5f30b4f3963d4619f36cb25",
     "app/services/vector_index_service.py": "350a6f7f8ee8a22c270df11626d0bbcd4cc13f2754d5f7c8ba8b834c4baee50a",
     "common.md": "dfc59a8e6e862f8dfd9f6611c32718e4f71ff3dbf86b7b259df789df8b96d224",
-    "docs/DECISIONS.md": "eb305c79e9226ee9df59af14a03d17603488998f9c53940834573be4f3aef531",
-    "docs/PROJECT_HANDOVER.md": "3a290664c24ac1b865d8d1bcd83cf1c05c0ccba78d0b3bc926e536c53ff496b9",
-    "docs/architecture_review.md": "edf4381437c196bf2c27d8f079bbfd98668856a357056a23dc7e7e7162ce5051",
+    "docs/DECISIONS.md": "233f8d53d843c7c293d01b633a33d31d90ba7722b811af2f225611b4751c459f",
+    "docs/PROJECT_HANDOVER.md": "4a4a25315d7c29cc81d6e748828b282d13b90c8c2a5c20d69b4ab7728a987bbe",
+    "docs/architecture_review.md": "b82693859fd5606e092b7e94241ccdbe0f836a61aaf83241f3687f985fb08817",
     "docs/harness/baseline.md": "384d804359e7478ede8d0d44a16ae40d5a6301e0952e94cc9990639de040fc57",
-    "feature_list.json": "5cd6276d83f400879c190332387124221bedf5bf296a9b3bd9a61043a167f508",
-    "progress.md": "e4993a5f4d1cc85d5382a5b2ccd23bd1a6f707428adee212752276e1f3f6da4a",
+    "feature_list.json": "4e05c2dfb0ba2d3ed46adfb72b7c96c560566befc5dbef06896aadbc6ae0c180",
+    "progress.md": "888321c4b9865503f2e145a3fd03c50eecba4eac1a4679d8c7b873df3231d095",
     "pyproject.toml": "eb0b5462321ab4b08ae342d4b66dcc71d656d5d674d899a6a7c6810260ab0c0c",
-    "session-handoff.md": "d17beb7f3d28e38b7e3d40ee45ee2c411a278bdf6da272e0ad5036243af4d261"
+    "session-handoff.md": "849154bb368cff1b65c88881fcb49a5a377e8fc431013dfabe76885ded48c4c5",
+    "docs/DOCUMENT_INDEX.md": "22fbd56fd54c348723e7eb1bef8b30d51a10eb18411f5fea04ffcf1645e51303",
+    "app/agent/agent_loop.py": "7de38e267a5315a82c73efad55c1702daac820f173cabd7dd6259e83a1210442",
+    "app/agent/runtime.py": "2f161aa27e145663541decc610a973527f5723762403811f791bfaa9ed646ed8",
+    "app/agent/step_models.py": "480ad1a35653c4037e61303e71b15696c3308bcecdfc50ae49c87ee6ac2b5655"
   },
   "untracked": {
     "app/knowledge/__init__.py": "e4dc2cb0139aef38b0199f39e33f8de3094720f0be023fe26276e4bc1700b41a",
     "app/knowledge/__main__.py": "d69b68cfb2e64f469327f5b4409480447fa1442ba9caca542b39459e70d37d71",
-    "tests/test_knowledge_cli.py": "c82aefb46172a2ce354d75bc5f6b2ed62fa2b0762e48d4a9b936980bd192c798"
+    "tests/test_knowledge_cli.py": "c82aefb46172a2ce354d75bc5f6b2ed62fa2b0762e48d4a9b936980bd192c798",
+    "docs/step_tool_list_plan.md": "fd0d22c884dbeaba5a34c74b83d3e2b967779fe756ded10cbae868abc4e139e7",
+    "tests/test_step_tool_list.py": "cba5440b7c38262551045ee5fa9a059fda5324b77b9258a40a81baa35763345c"
   },
   "deleted_tracked": [
     "scripts/benchmark_conversation_memory.py",
