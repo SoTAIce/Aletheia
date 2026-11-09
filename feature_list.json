@@ -1239,7 +1239,22 @@
         "Chinese web selector persists selection, handles team/resume/single-option state, and route options report runner.",
         "Deterministic focused tests, JS syntax and init.ps1 pass; no real model calls or commits."
       ],
-      "evidence": "2026-11-08: RED 14 failed/1 passed; custom-registry resume RED then GREEN. Scoped 111 passed (3.73s). Original init.ps1 PASS 1622 passed,16 skipped (55.55s), +22 over baseline 1600/16; JS syntax and independent read-only review pass. Default plan unchanged, original user diffs preserved; no live models/browser/container or commit. docs/harness/loop-web-2026-11-08.md; D-065. Review follow-up the same day (user said '修这两处'): app.js treats a server without runners as plan only and then sends no runner field, which such a server's strict options model would refuse; the live view says the loop runs without planning instead of '正在规划步骤'. node --check passes; init.ps1 PASS 1622 passed, 16 skipped; not checked in a browser."
+      "evidence": "2026-11-08: RED 14 failed/1 passed; custom-registry resume RED then GREEN. Scoped 111 passed (3.73s). Original init.ps1 PASS 1622 passed,16 skipped (55.55s), +22 over baseline 1600/16; JS syntax and independent read-only review pass. Default plan unchanged, original user diffs preserved; no live models/browser/container or commit. docs/harness/loop-web-2026-11-08.md; D-065. Review follow-up the same day (user said '修这两处'): app.js treats a server without runners as plan only and then sends no runner field, which such a server's strict options model would refuse; the live view says the loop runs without planning instead of '正在规划步骤'. node --check passes; init.ps1 PASS 1622 passed, 16 skipped; not checked in a browser. 2026-11-09 live (user-run, user-reported): the user started the web server with --single-runner loop --write-root .\\output and tried it in the browser against the docs/loop_web_plan.md §7 checklist (plain question, write approval allow/deny, ask_user resume); feedback was that it works and feels smooth. Claude did not observe logs, pages or output files, and per-item coverage was not stated, so the individual items are not separately confirmed."
+    },
+    {
+      "id": "loop-default-001",
+      "name": "Make the single agent loop the default runner of the entry points",
+      "description": "docs/loop_web_plan.md section 7 follow-up (user 2026-11-09 '改成单一循环'): --single-runner defaults to loop in app.agent, app.api and bench.run_bench; the bench always passes --single-runner for single and auto runs; RagAgentService keeps plan as its constructor default (D-072).",
+      "status": "done",
+      "dependencies": [
+        "loop-web-001"
+      ],
+      "acceptance": [
+        "CLI, web and bench default to loop; --single-runner plan still selects planning.",
+        "The bench report's runner is what actually ran, whatever the CLI default.",
+        "Service-level plan tests keep their meaning; init.ps1 passes."
+      ],
+      "evidence": "2026-11-09 live before the change (user '先再跑评测', '再跑并保留答案'): loop tune 11/11 (output/bench-tune-loop-1109.json, 25 calls, 490,917 tokens; plan 11/11, 53 calls, 1,149,625), holdout 10/13 then 11/13 (bench-holdout-loop-1109.json, bench-holdout-loop-1109b.json; plan 11/13). Changing the service constructor default was tried and broke 60+ plan-semantics service tests, so it was kept as plan. Changed: app/agent/__main__.py, app/api/__main__.py, bench/run_bench.py, comment in rag_agent_service.py; tests in test_agent_loop.py, test_run_options.py, test_web_loop_runner.py (+1 test). Targeted 67 passed; init.ps1 PASS 1721 passed, 16 skipped. No live run after the change; not committed."
     },
     {
       "id": "cleanup-stage0-plan-001",
@@ -1382,7 +1397,7 @@
         "超长块再切保留元数据与顺序；非法排除参数无副作用并返回 2。",
         "确定性测试、两次无服务预演、健康检查及基线核对通过。"
       ],
-      "evidence": "新增 23 项确定性测试；tests/test_document_splitter_limits.py 与 tests/test_knowledge_cli.py 共 86 项通过（3.93 秒），实现前 22 项失败、64 项通过。init.ps1：94 个 Python 文件、1720 项通过、16 项跳过（53.63 秒），退出码 0。两次普通预演均成功；同入口离线审计每块不超过 8000 字节，服务或网络尝试均 0 次；最新计数、结束复核和边界见 progress.md、session-handoff.md，D-071、common.md 和本轮基线清单已同步。仅确定性与离线验证，真实服务待授权；未提交。 最新收尾快照：默认 70 个文件、984 块；排除历史目录后 61 个文件、844 块（排除 9 个），均退出码 0。最大块 3750/2027 字节、服务或网络尝试 0 次。 收尾记录后再次运行 init.ps1：1720 项通过、16 项跳过（53.40 秒），退出码 0；导入前安装网络审计的两次模块入口预演也通过，计数不变。",
+      "evidence": "新增 23 项确定性测试；tests/test_document_splitter_limits.py 与 tests/test_knowledge_cli.py 共 86 项通过（3.93 秒），实现前 22 项失败、64 项通过。init.ps1：94 个 Python 文件、1720 项通过、16 项跳过（53.63 秒），退出码 0。两次普通预演均成功；同入口离线审计每块不超过 8000 字节，服务或网络尝试均 0 次；最新计数、结束复核和边界见 progress.md、session-handoff.md，D-071、common.md 和本轮基线清单已同步。仅确定性与离线验证，真实服务待授权；未提交。 最新收尾快照：默认 70 个文件、984 块；排除历史目录后 61 个文件、844 块（排除 9 个），均退出码 0。最大块 3750/2027 字节、服务或网络尝试 0 次。 收尾记录后再次运行 init.ps1：1720 项通过、16 项跳过（53.40 秒），退出码 0；导入前安装网络审计的两次模块入口预演也通过，计数不变。 真实建库（用户“提交并真实建库”，已提交为 64b2a49 之后）：`python -m app.knowledge docs --exclude harness/history --confirm --prune` 退出码 0；排除 9 个文件；61 个文件全部成功，写入 844 块，失败 0；清理 harness/history/ 下已建入的 7 个来源共 28 块。建库前 67 个来源 859 块，建库后 61 个来源 844 块，与现在按排除后的文件列表重新切块的结果逐条相同，没有重复或残留的旧块，没有 docs/ 以外的来源，新建入 kb_index_v3_plan.md。",
       "verification": {
         "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1",
         "scope": "静态、导入、确定性测试；两次离线文档预演和基线另外核对，未运行真实服务。",

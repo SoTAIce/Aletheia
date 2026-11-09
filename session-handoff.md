@@ -1,6 +1,36 @@
-# Current Session Handoff — 2026-11-06（成熟度五个阶段已完成）
+# Current Session Handoff — 2026-11-09
 
-## 最新交接：kb-index-cli-003（实现完成并审查，已提交）
+## 新会话从这里开始（2026-11-09 默认改用单一循环）
+
+**当前状态**
+- HEAD `64b2a49`（main，未推送）。loop-default-001 已完成但**未提交**：命令行、网页和评测的普通模式默认改为单一循环（D-072），`RagAgentService` 构造默认仍是 `plan`；要用按计划模式加 `--single-runner plan`。`feature_list.json` 的 active_feature=null。
+- init.ps1 通过：94 个 Python 文件，1721 项通过、16 项跳过。基线清单 [baseline-2026-11-09-kb3.json](docs/harness/history/baseline-2026-11-09-kb3.json)，核对命令见 docs/harness/baseline.md（本轮未刷新清单）。
+- 改默认前的真实评测（单一循环）：调参集 11/11；留出集 10/13、11/13（`output/bench-*-1109*.json`，答案在 `output/answers-holdout-loop-1109b/`，不进版本库）。网页上用户自己试用，反馈流畅（未逐项确认）。详见 progress.md、D-072。
+- 知识库已真实建好：Milvus 集合 `biz` 里 61 个来源、844 块。Milvus **不会自启**；重启电脑后先开 Docker Desktop，再运行 `docker compose -f deploy/milvus/compose.yaml up -d`，见 common.md。
+
+**未提交的改动**
+- 本轮代码和测试：`app/agent/__main__.py`、`app/api/__main__.py`、`bench/run_bench.py`、`app/services/rag_agent_service.py`（一行注释）、`tests/test_agent_loop.py`、`tests/test_run_options.py`、`tests/test_web_loop_runner.py`。
+- 本项目的记录：`feature_list.json`、`progress.md`、`session-handoff.md`、`common.md`、`AGENTS.md`、`docs/DECISIONS.md`、`docs/PROJECT_HANDOVER.md`、`docs/DOCUMENT_INDEX.md`、`docs/harness/baseline.md`、`docs/harness/history/baseline-2026-11-09-kb3.json`。用户说提交时一起提交（`docs/harness/baseline.md` 的改动来自前几轮，提交前先看一眼）。
+- **用户自己的差异，永远不进提交**：`README.md`；`app/agent/planner.py`、`app/agent/step_executor.py`、`app/agent/tool_calling_step_runner.py` 里的中文注释；删除的 `scripts/benchmark_conversation_memory.py`、`scripts/validate_multi_runner_live.py`、`scripts/validate_summary_context.py`。改这三个代码文件时只能暂存自己的那几处（`git hash-object -w` 加 `git update-index --cacheinfo`），不能整文件暂存。
+
+**工作方式**
+- 只用中文回复，不中英夹杂（路径、命令、代码名除外）。
+- Codex 有额度时：Claude 写方案（`docs/*.md`）并登记，用 Agent 工具 `codex:codex-rescue` 派它实现（`--model gpt-6.1-sol --effort medium`），完成后由 Claude 审查。Codex 额度用完或失败时告诉用户，由 Claude 自己做。小改动、记录和只读检查由 Claude 直接做。
+- 不推送、不 amend；真实模型、评测和嵌入接口每次都要用户明确授权。
+
+**下一步任务（按优先级，都要用户决定后才做）**
+1. **提交 loop-default-001**：只提交本轮代码、测试和记录，不碰用户差异。
+2. **循环模式里 `side_effects_qa` 未通过的原因**：只做离线分析，不必重跑（两种方式都不过）。
+3. **中转站换上游的疑点**：`fix_split_amount` 两次失败的首次请求提示令牌只有约 1,500～1,900（正常约 20,190）。可考虑在评测报告里记下服务商返回的模型名，以便以后确认；要先定方案。
+4. 小问题，不急：`--prune` 在目录为磁盘根时的前缀判断；嵌入服务里 `ValueError` 的范围可以再收窄；`--exclude` 补 `/absolute` 和单反斜杠绝对路径的专门测试；系统 TEMP 里 Codex 留下的空目录拒绝删除（不改访问权限）。
+
+## 最新交接：kb-index-cli-003（已提交 `64b2a49`，真实建库完成）
+
+- **Live verified**：`--exclude harness/history --confirm --prune`：61 个文件全部成功、844 块，失败 0；清掉 `harness/history/` 下 7 个来源共 28 块；知识库与按排除后的文件列表重新切块的结果逐条相同。
+- **以后建库**：用 `.venv\Scripts\python.exe -B -m app.knowledge docs --exclude harness/history --confirm --prune`。
+- **Next best action**：网页上用真实模型验证单一循环，再决定默认改成循环。
+
+## kb-index-cli-003 实现与审查记录
 
 - **修改与验收**：按 docs/kb_index_v3_plan.md 统一限制 8000 UTF-8 字节，超长块再切保留元数据和顺序；增加可重复 --exclude、路径段过滤、参数错误返回 2 和排除计数。帮助和 common.md 明确说明 --prune 会清理排除文件的已有来源；D-071 记录 JSON 片段与路径边界。
 - **当前验证**：新增 23 项确定性测试；针对性 86 项通过（3.93 秒）。init.ps1 管理状态、94 个 Python 文件语法、CLI 加载、1720 项通过、16 项跳过（53.63 秒），退出码 0；结束复核再次通过：1720 项通过、16 项跳过（53.40 秒）；两次最新预演为 70 个文件/984 块、61 个文件/844 块（排除 9 个），均退出码 0；对应结束清单最终哈希刷新前快照。原问题 JSON 已切为 104 块，离线审计无超限且服务或网络调用尝试为 0。

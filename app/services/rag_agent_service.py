@@ -166,6 +166,7 @@ class RagAgentService:
         self._execution_mode = execution_mode
         # How single mode runs (loop-trial-001): 'plan' plans then executes steps; 'loop' is one
         # agent loop entered through a fixed one-step plan (docs/architecture_review.md stage 1).
+        # The library default stays 'plan'; the CLI, web and bench entry points default to 'loop' (D-072).
         if single_runner not in ('plan', 'loop'):
             raise ValueError('single_runner must be plan or loop')
         if single_runner == 'loop' and runner_registry is not None:

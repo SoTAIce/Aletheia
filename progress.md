@@ -4,10 +4,10 @@
 
 ## Current Verified State
 
-- **最新验收（2026-11-09）**：kb-index-cli-003 已实现；新增 23 项确定性测试，针对性 86 项通过；init.ps1 94 个 Python 文件、1720 项通过、16 项跳过（53.63 秒），退出码 0。两次无服务预演及审计通过；本轮代码审查无严重或重要问题。
-- **仓库状态**：D:\tries\agent，HEAD 44d435c；工作区保留用户差异、kb-index-cli-002 真实验证记录、方案登记及本轮实现；索引未改，没有提交或推送，active_feature=null。
+- **最新验收（2026-11-09）**：kb-index-cli-003 已提交为 `64b2a49`，真实建库完成（61 个文件、844 块，失败 0，与切块结果逐条一致）；init.ps1 94 个 Python 文件、1720 项通过、16 项跳过。
+- **仓库状态**：D:	riesgent，HEAD 64b2a49，未推送；工作区保留用户差异和本轮记录（含 common.md 新增的 Milvus 启动一节），未提交，active_feature=null。
 - **标准验收路径**：powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1；基线核对见 docs/harness/baseline.md。该检查不验证真实模型、外部服务或容器。
-- **当前限制与下一步**：真实建库及排除来源清理未验证，待审查后由用户授权；不得自动调用真实 Milvus、嵌入、模型或运行实际 --confirm/--prune。既有根目录清理前缀问题不在本轮范围。
+- **当前限制与下一步**：命令行、网页和评测的普通模式默认已改为单一循环（loop-default-001，D-072，未提交）；init.ps1 1721 项通过、16 项跳过；完整任务列表见 session-handoff.md 顶部。Milvus 不自启，启动命令见 common.md。
 
 ## 已确认基线（历史，未重新测量）
 
@@ -18,13 +18,46 @@
 
 ## Session Record
 
+### 2026-11-09 — loop-default-001：默认改用单一循环（用户“改成单一循环”“改完写好文档”）
+
+- **改动**：`app/agent/__main__.py`、`app/api/__main__.py`、`bench/run_bench.py` 的 `--single-runner` 默认改为 `loop`；评测在 `single`、`auto` 模式下总是显式传 `--single-runner`，`team` 不传；`run_one` 默认 `loop`。`RagAgentService` 构造默认仍为 `plan`，只加一行注释（D-072 说明原因：改它会让 60 多项专测规划语义的服务测试改走循环）。
+- **测试**：改 `tests/test_agent_loop.py`（评测传参覆盖 single 默认、single plan、auto、team）、`tests/test_run_options.py`、`tests/test_web_loop_runner.py`（新增入口默认与服务默认的守卫）。三个文件 67 项通过；init.ps1 PASS，94 个 Python 文件，1721 项通过、16 项跳过（58.14 秒）。
+- **文档**：D-072；`common.md` 网页和评测命令改成新默认，补 `--keep-answers` 必须带目录的用法；`docs/PROJECT_HANDOVER.md` 架构图和模块表加入单一循环；`docs/DOCUMENT_INDEX.md`；AGENTS.md 与总交接测试数。
+- **未验证**：改默认后没有再跑真实模型；网页选择框默认跟随 `default_runner`，没在浏览器里看。用户的 `README.md`、三个中文注释文件和三个删除项没动；未提交。
+
+### 2026-11-09 — 改默认前的单一循环复测（用户“先再跑评测”）
+
+- **Live**：`bench.run_bench --confirm-live --modes single --single-runner loop --runs 1`，调参集 `output/bench-tune-loop-1109.json`，留出集 `output/bench-holdout-loop-1109.json`，两次都退出码 0。
+- **调参集 11/11**：25 次调用、490,917 令牌；规划模式上次（`bench-tune-plan-nodup.json`）11/11、53 次、1,149,625 令牌。
+- **留出集 10/13**：37 次调用、579,136 令牌；之前循环 12/13 两次，规划模式（`bench-holdout-single-d057.json`）11/13。失败三题：
+  - `failing_tests_qa`：状态 failed、没有报错信息，用时 487.3 秒，7 次调用里 5 次没有令牌数，像是模型服务那边超时或断开，上次循环通过（5/5）。
+  - `fix_split_amount`：完成但答案加载失败（`_load`、`_error_type`），检查 0/0；只有 2 次调用、第一次提示仅 1,494 令牌，上次循环 25/25。没开 `--keep-answers`，看不到原答案。
+  - `side_effects_qa`：`mutates_arguments` 未过，和之前每次循环、规划模式都一样。
+- **判断**：每题只跑 1 次，波动大；前两题失败的原因没查清，留出集按规矩不能拿来调提示词。没有改代码，没有提交。
+- **重跑留出集（用户“再跑并保留答案”）**：`output/bench-holdout-loop-1109b.json`，答案在 `output/answers-holdout-loop-1109b/`（不进版本库，用完可删）。**11/13**，32 次调用、606,471 令牌。`failing_tests_qa` 这次通过；`side_effects_qa` 仍是 `mutates_arguments`。（第一次启动漏了 `--keep-answers` 的目录参数，参数检查即退出码 2，没有调用模型。）
+- **`fix_split_amount` 的原因**：保存的最终答案不是代码，而是模型把发给它的任务上下文 JSON（`task_id`、`active_goal`、`pinned_contexts`，连时间戳都一样）原样抄了一遍，所以加载失败。两次失败的第一次调用提示令牌只有 1,494 和 1,901；通过的各次（含同轮的 `fix_word_wrap`、`fix_topo_sort`）第一次都约 20,190，而系统提示和工具定义每题相同。推测这两次请求被中转站转到了另一个上游（按缓存后的令牌计数、模型更弱），未核实，报告里没有上游模型名。不是宿主拼错答案：结果来自 `result_json`，是模型自己的回复。
+- **三次循环留出集**：12/13、10/13、11/13，规划模式 11/13；两题新失败分别疑似服务超时和上游异常，`side_effects_qa` 两种方式都一直不过。
+
+### 2026-11-09 — 网页单一循环真实试用（用户操作）
+
+- **Live（用户报告）**：Claude 给出验收清单（普通问答；写文件人工确认的允许与拒绝；`ask_user` 阻塞后接着做，见 docs/loop_web_plan.md §7）和启动命令 `python -m app.api --filesystem-root . --write-root .\output --no-knowledge --single-runner loop`；用户自己启动并在浏览器里试用，反馈“还可以，使用很流畅”。
+- **未核实**：Claude 没有看到服务日志、页面或产出文件；三项是否逐项覆盖、允许与拒绝是否都试过，用户没有逐项说明。不据此声称每一项都已通过。
+- **其他**：开工时 init.ps1 通过，1720 项通过、16 项跳过；没有改代码，没有提交。
+
+### 2026-11-09 — 收尾整理（Claude）
+
+- common.md 新增“知识库数据库（Milvus）”：启动、查看、停止命令，以及何时需要它（Milvus 没有设置自启）。
+- session-handoff.md 顶部新增“新会话从这里开始”：当前状态、未提交改动、用户差异、工作方式和按优先级排列的下一步。
+- init.ps1 通过，1720 项通过、16 项跳过；未提交。
+
 ### 2026-11-09 — kb-index-cli-003 审查（Claude）
 
 - **Codex 状态**：任务在收尾阶段停下（状态 failed，10 分 39 秒），实现、测试和记录已写完，最后一次 init.ps1 已通过。
 - **审查**：切块器统一再切超长块（按 UTF-8 字节，默认 8000），再切后仍超长抛 `ValueError`；`supported_files(exclude=...)` 按路径段前缀排除，拒绝盘符、单端绝对路径和 `..`；`--exclude` 可重复，非法时退出码 2，会输出排除了几个文件。都在方案范围内，没有发现需要修改的问题。
 - **复跑**：建库相关 86 项测试通过；`docs/` 预演 70 个文件、984 块、退出码 0（那个基线清单 JSON 现在能切块）；`--exclude harness/history` 排除 9 个文件，剩 61 个文件、844 块；`--exclude ../x` 退出码 2；init.ps1 PASS，1720 passed、16 skipped；基线核对四项正常；用户差异未变；项目里没有缓存。
 - **遗留**：系统 TEMP 里 Codex 建的空目录 `aletheia-pytest-1fd95718b5fb49ebb1c7ec6608a50c02`，权限拒绝删除，没有改它的访问权限；另一个空目录 `.tmpFjKb9r` 来源不明，没有动。
-- **提交**：按用户“提交并真实建库”提交，未推送；随后真实建库，结果见下一条。
+- **提交**：按用户“提交并真实建库”提交为 `64b2a49`，未推送。
+- **Live**：真实建库（用户“提交并真实建库”，已提交为 64b2a49 之后）：`python -m app.knowledge docs --exclude harness/history --confirm --prune` 退出码 0；排除 9 个文件；61 个文件全部成功，写入 844 块，失败 0；清理 harness/history/ 下已建入的 7 个来源共 28 块。建库前 67 个来源 859 块，建库后 61 个来源 844 块，与现在按排除后的文件列表重新切块的结果逐条相同，没有重复或残留的旧块，没有 docs/ 以外的来源，新建入 kb_index_v3_plan.md。
 
 ### 2026-11-09 — kb-index-cli-003：实施与验收
 

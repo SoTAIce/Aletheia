@@ -264,7 +264,7 @@ def test_the_service_checks_the_runner_choice():
         RagAgentService(model=AsyncMock(), mcp_servers=(), single_runner='loop', loop_options={'max_tool_rounds': 3})
 
 
-def test_the_bench_passes_the_runner_to_single_runs_only(monkeypatch):
+def test_the_bench_passes_the_runner_to_single_and_auto_runs(monkeypatch):
     from bench import run_bench
     task = next(t for t in run_bench.load_tasks(['all']) if t['id'] == 'billing_qa')
     seen = []
@@ -275,11 +275,17 @@ def test_the_bench_passes_the_runner_to_single_runs_only(monkeypatch):
     monkeypatch.setattr(run_bench, 'launch_agent', launch)
     row = run_bench.run_one(task, 'single', 1, 5, single_runner='loop')
     assert seen[-1][seen[-1].index('--single-runner') + 1] == 'loop' and row['runner'] == 'loop'
-    run_bench.run_one(task, 'auto', 1, 5, single_runner='loop')
+    row = run_bench.run_one(task, 'single', 1, 5)
+    assert seen[-1][seen[-1].index('--single-runner') + 1] == 'loop' and row['runner'] == 'loop'
+    row = run_bench.run_one(task, 'single', 1, 5, single_runner='plan')
+    assert seen[-1][seen[-1].index('--single-runner') + 1] == 'plan' and row['runner'] == 'plan'
+    run_bench.run_one(task, 'auto', 1, 5, single_runner='plan')
+    assert seen[-1][seen[-1].index('--single-runner') + 1] == 'plan'
+    run_bench.run_one(task, 'team', 1, 5)
     assert '--single-runner' not in seen[-1]
 
 
 def test_the_cli_accepts_the_runner_flag():
     from app.agent.__main__ import parse_args
-    assert parse_args(['goal', '--single-runner', 'loop']).single_runner == 'loop'
-    assert parse_args(['goal']).single_runner == 'plan'
+    assert parse_args(['goal', '--single-runner', 'plan']).single_runner == 'plan'
+    assert parse_args(['goal']).single_runner == 'loop'

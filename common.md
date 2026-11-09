@@ -10,8 +10,8 @@
 # 启动本地网页（只读，地址 http://127.0.0.1:8000，令牌见 .env 的 WEB_ACCESS_TOKEN）
 .venv\Scripts\python.exe -m app.api --filesystem-root . --no-knowledge
 
-# 启动时把普通模式的默认改成单一循环（不加时默认按计划）；网页上也可逐条消息选择“按计划 / 单一循环”
-.venv\Scripts\python.exe -m app.api --filesystem-root . --no-knowledge --single-runner loop
+# 普通模式默认用单一循环（D-072）；启动时改回按计划用下面这条，网页上也可逐条消息选择“按计划 / 单一循环”
+.venv\Scripts\python.exe -m app.api --filesystem-root . --no-knowledge --single-runner plan
 
 # 允许写文件（只能写进指定目录）
 .venv\Scripts\python.exe -m app.api --filesystem-root . --write-root .\output --no-knowledge
@@ -42,6 +42,25 @@ $env:CONVERSATION_STORAGE_DIR = "$env:TEMP\aletheia-run"
 ```
 
 关掉终端后这两个变量就失效了。要长期生效，就在 `.env` 里加上 `AGENT_MODEL_CONTEXT_TOKENS=128000`（按所用模型填写）。
+
+## 知识库数据库（Milvus）
+
+知识库存在本机 Docker 里的 Milvus 上，它**不会自己启动**：电脑重启或 Docker Desktop 重开以后，要先打开 Docker Desktop，再运行启动命令。
+
+```powershell
+# 启动（第一次运行会创建容器；之后再运行只是把停掉的容器拉起来，数据保留在 deploy\milvusolumes\）
+docker compose -f deploy/milvus/compose.yaml up -d
+
+# 查看是否在运行（三个容器都是 Up 才算好）
+docker compose -f deploy/milvus/compose.yaml ps
+
+# 停止（数据保留）
+docker compose -f deploy/milvus/compose.yaml stop
+```
+
+- 只有用到知识库时才需要它在运行：建库写入、`--prune`，以及启动智能体或网页时**不加** `--no-knowledge`。
+- 加了 `--no-knowledge` 启动，或只做普通建库预演，不需要启动 Milvus。
+- 没启动就用知识库时，智能体照常启动，只是查知识库那一步会失败；建库会报“连接 Milvus 失败”。
 
 ## 知识库建库
 
@@ -109,14 +128,17 @@ $env:PYTHONDONTWRITEBYTECODE = '1'
 # 只打印计划，不调用模型
 .venv\Scripts\python.exe -m bench.run_bench --tasks all --modes single
 
-# 调参集 11 题，普通模式各 1 次（真实调用）
-.venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks all --modes single --runs 1 --max-runs 11 --out output\bench-tune-single.json
+# 调参集 11 题，普通模式各 1 次（默认单一循环，D-072；真实调用）
+.venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks all --modes single --runs 1 --max-runs 11 --out output\bench-tune-loop.json
 
 # 留出集 13 题，普通模式各 1 次（真实调用；改动定稿后才跑，不要根据它的失败去改提示词）
-.venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks all --split holdout --modes single --runs 1 --max-runs 13 --out output\bench-holdout-single.json
+.venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks all --split holdout --modes single --runs 1 --max-runs 13 --out output\bench-holdout-loop.json
 
-# 调参集 11 题，普通模式改用单一循环（架构第 1 阶段试验，D-062；真实调用）
-.venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks all --modes single --single-runner loop --runs 1 --max-runs 11 --out output\bench-tune-loop.json
+# 调参集 11 题，普通模式改用按计划（规划—执行；真实调用）
+.venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks all --modes single --single-runner plan --runs 1 --max-runs 11 --out output\bench-tune-plan.json
+
+# 保留每题答案以便检查失败原因：--keep-answers 后面必须跟目录
+.venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks all --split holdout --modes single --runs 1 --max-runs 13 --keep-answers output\answers-holdout --out output\bench-holdout-loop.json
 
 # 单独跑某几题，普通模式和团队模式各 1 次（真实调用）
 .venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks billing_qa todo_html --modes single team --runs 1 --out output\bench-some.json

@@ -5,7 +5,7 @@
 
 ## 当前入口
 
-新增实现：[网页单一循环验收（loop-web-001）](harness/loop-web-2026-11-08.md)，对应 [实施方案](loop_web_plan.md) 与 [D-065](DECISIONS.md)。可在启动和每条新消息选择 runner，默认 plan 保持不变。
+新增实现：[网页单一循环验收（loop-web-001）](harness/loop-web-2026-11-08.md)，对应 [实施方案](loop_web_plan.md) 与 [D-065](DECISIONS.md)。可在启动和每条新消息选择 runner；2026-11-09 起命令行、网页和评测默认改为 loop（[D-072](DECISIONS.md)），服务类构造默认仍为 plan。
 
 | 文件 | 用途 |
 | --- | --- |

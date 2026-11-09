@@ -8,7 +8,7 @@
 2. 团队模式只剩 V2（2026-11-05 删除 V1，决策 D-025）：负责人委派给全新上下文的执行者，宿主判定完成。在 parse_duration、fix_inventory 上严格交付好于普通模式，但样本少，见第 7 节。
 3. ConversationMemory、WorkingMemory、长期记忆和 ContextManager 各有职责；不要再建一套重复 Memory 框架。
 4. 历史原文可恢复；运行中任务只能在同一服务实例暂停恢复，不能跨进程恢复执行。
-5. 用户刚清理了 tests、验证脚本与临时产物。1093 passed/2 skipped 是清理前的历史回归；当前可直接运行的是 init.ps1（静态/入口 + `tests/` 下的确定性 pytest）；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-09 为 1720 项通过、16 项跳过；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，历史开启记录为 1231 项通过，本轮未运行）。
+5. 用户刚清理了 tests、验证脚本与临时产物。1093 passed/2 skipped 是清理前的历史回归；当前可直接运行的是 init.ps1（静态/入口 + `tests/` 下的确定性 pytest）；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-09 为 1721 项通过、16 项跳过；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，历史开启记录为 1231 项通过，本轮未运行）。
 6. 当前工作区有用户未提交源码与删除项，不能把它当成干净的冻结提交，也不能擅自 reset、commit 或 push。
 
 ## 2. 仓库状态与启动
@@ -67,7 +67,8 @@ CLI / 调用方
   -> AgentRuntime 取下一步 / Replan / 完成或阻塞
   -> StepExecutor 开始、校验、提交 Step
   -> RoutingStepRunner -> RunnerRegistry + RoutingPolicy
-       -> ToolCallingStepRunner：单 Agent 工具循环
+       -> AgentLoopRunner：单一循环，经 LoopPlanner 固定一步进入（命令行、网页、评测的普通模式默认，D-072）
+       -> ToolCallingStepRunner：按计划逐步执行的单 Agent 工具循环（`--single-runner plan`）
        -> DelegatingTeamRunner（V2）：负责人委派给全新上下文的执行者，宿主判定完成
   -> StepRunOutput -> 公共提交路径 -> Task Completion / Turn outcome
 ```
@@ -80,7 +81,8 @@ CLI / 调用方
 | 调度 | `app/agent/runtime.py` | 自动推进剩余步骤，处理成功/失败/阻塞、有限执行/Replan；不承担具体工具循环 |
 | 单步提交 | `app/agent/step_executor.py`、`step_models.py`、`step_runner.py` | 执行边界、失效结果拒绝、统一输出和异常类别 |
 | 路由 | `app/agent/runner_registry.py`、`runner_router.py`、`routing_step_runner.py` | 注册/工厂注入、独立可信能力要求、确定性动态选择；不是 LLM 分类器 |
-| 单 Agent | `app/agent/tool_calling_step_runner.py` | 原有有界模型/工具循环和局部 JSON 修复 |
+| 单一循环 | `app/agent/agent_loop.py` | 普通模式默认执行方式（D-062～D-064、D-072）：整任务一个循环，纯文本即最终答案，`todo`/`ask_user` 控制工具，不重新规划，阻塞恢复只在内存里 |
+| 单 Agent | `app/agent/tool_calling_step_runner.py` | 按计划模式的有界模型/工具循环和局部 JSON 修复 |
 | 适配模型 | `app/agent/openai_compatible_tool_calling_model.py`、`tool_calling_model.py`、`json_output.py` | provider 适配、类型化错误、严格响应解析 |
 
 WorkingMemory 的 goal_revision、plan_revision、state_version 与 Resources.context_version 有不同语义。Planner 旧快照、旧执行 token、旧 rebind 结果不能覆盖新状态。不要绕过 Executor/WorkingMemory 直接安装或提交。
@@ -180,6 +182,8 @@ BLOCKED 只结束这次交互。保持同一个服务实例，使用 `resume_tas
 较早 I/O 报告的 7 个 math 失败属于当时基线，后续任务已修；不能据旧文档称当前仍有这 7 个失败。较早“摘要正文未接入”“只有一个 Runner”“PoC 不接生产”均是阶段事实，被后续阶段接续。
 
 ## 9. 当前风险和建议下一步（不是自动授权）
+
+> 2026-11-09：当前主线和最新的下一步任务以 [session-handoff.md](../session-handoff.md) 顶部的“新会话从这里开始”为准；下面几条是更早的建议，保留作背景。
 
 1. **先保护可验证性**：TEMP 外部备份不是长期存储；在后续业务改动前确认可恢复必要测试和实验协议，勿仅靠语法检查。
 2. **优先 Team 交付可靠性**：以冻结的真实任务为基线，定位 Reviewer 反馈修复/内层 JSON，保留严格宿主契约、预算和不重放约束；修复另成任务，不扩团队组件。

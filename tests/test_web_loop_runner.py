@@ -234,7 +234,16 @@ async def test_request_id_conflicts_when_only_runner_choice_changes():
     assert model.generate.await_count == 1
 
 
-def test_web_parser_keeps_plan_default_and_accepts_loop():
+def test_web_parser_defaults_to_loop_and_accepts_plan():
     from app.api.__main__ import build_parser
-    assert build_parser().parse_args([]).single_runner == 'plan'
-    assert build_parser().parse_args(['--single-runner', 'loop']).single_runner == 'loop'
+    assert build_parser().parse_args([]).single_runner == 'loop'
+    assert build_parser().parse_args(['--single-runner', 'plan']).single_runner == 'plan'
+
+
+def test_entry_points_default_to_loop_but_the_service_class_keeps_plan():
+    import inspect
+    from app.agent.__main__ import parse_args
+    from bench.run_bench import run_one
+    assert parse_args(['goal']).single_runner == 'loop'
+    assert inspect.signature(run_one).parameters['single_runner'].default == 'loop'
+    assert inspect.signature(RagAgentService).parameters['single_runner'].default == 'plan'

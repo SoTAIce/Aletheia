@@ -156,7 +156,7 @@ SANDBOX_HINT = ('写完后先写测试，再用 run_tests 或 run_python 在沙�
 
 
 def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=False, team_timeout=None,
-            team_acceptance=False, single_runner='plan'):
+            team_acceptance=False, single_runner='loop'):
     write = write or sandbox
     # Answer tasks are graded on the final answer even when write and sandbox tools are offered;
     # offering them is what lets auto routing consider the team (D-026).
@@ -183,8 +183,10 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             cmd += ['--write-root', str(root)]
         if sandbox:
             cmd.append('--sandbox')
-        if mode == 'single' and single_runner != 'plan':
-            cmd += ['--single-runner', single_runner]     # loop-trial-001
+        if mode in ('single', 'auto'):
+            # Always explicit, so the report's runner is what ran whatever the CLI default is (D-072);
+            # auto uses it when it routes to single mode.
+            cmd += ['--single-runner', single_runner]
         teamish = mode in ('team', 'auto')   # auto may route to the team (D-026)
         if team_timeout is not None and teamish:
             cmd += ['--team-timeout', str(team_timeout)]
@@ -365,8 +367,9 @@ def main(argv=None):
     parser.add_argument('--team-timeout', type=float, help='team time budget per run in seconds')
     parser.add_argument('--team-acceptance', action='store_true',
                         help='team V2 + sandbox: opt in to independent acceptance tests (D-022)')
-    parser.add_argument('--single-runner', choices=['plan', 'loop'], default='plan',
-                        help='how single mode runs: plan then steps, or one agent loop (loop-trial-001)')
+    parser.add_argument('--single-runner', choices=['plan', 'loop'], default='loop',
+                        help='how single (and auto-routed single) mode runs: one agent loop (default, D-072), '
+                             'or plan then steps')
     parser.add_argument('--write', action='store_true',
                         help='let the agent write the deliverable file into its TEMP root and grade that file')
     args = parser.parse_args(argv)

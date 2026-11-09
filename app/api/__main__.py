@@ -91,7 +91,7 @@ def build_parser():
     parser.add_argument('--sandbox', action='store_true', help='Allow the Docker sandbox (needs --write-root)')
     parser.add_argument('--no-knowledge', action='store_true', help='Disable RAG when no knowledge store is configured')
     parser.add_argument('--execution-mode', choices=['single', 'team', 'auto'], default='single')
-    parser.add_argument('--single-runner', choices=['plan', 'loop'], default='plan')
+    parser.add_argument('--single-runner', choices=['plan', 'loop'], default='loop')
     return parser
 
 

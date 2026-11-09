@@ -311,7 +311,7 @@ async def test_a_resume_ignores_new_options_and_keeps_the_tasks_own(tmp_path, re
 @pytest.mark.parametrize('argv, write_root, sandbox, writes', [
     (['--execution-mode', 'single'], None, False, False),
     (['--execution-mode', 'auto', '--write-root', 'w'], 'w', False, True),
-    (['--execution-mode', 'single', '--single-runner', 'loop'], None, False, False),
+    (['--execution-mode', 'single', '--single-runner', 'plan'], None, False, False),
 ])
 async def test_the_web_launcher_always_prepares_the_team_but_keeps_the_default_mode(
         monkeypatch, argv, write_root, sandbox, writes):
@@ -348,7 +348,7 @@ async def test_the_web_launcher_always_prepares_the_team_but_keeps_the_default_m
         monkeypatch.setattr(config, name, value)
     assert await launcher.serve(launcher.build_parser().parse_args(argv)) == 0
     assert seen['execution_mode'] == argv[1]
-    assert seen['single_runner'] == ('loop' if '--single-runner' in argv else 'plan')
+    assert seen['single_runner'] == ('plan' if '--single-runner' in argv else 'loop')
     team = seen['team_options']
     assert isinstance(team, DelegationOptions)
     assert ('write_file' in team.allowed_tools) is writes and team.require_passing_run is sandbox
