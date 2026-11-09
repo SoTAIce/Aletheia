@@ -51,6 +51,13 @@ class IndexingResult:
         }
 
 
+# Directories that are never knowledge: version control, environments, caches (D-068).
+EXCLUDED_DIRS = frozenset({
+    ".git", ".hg", ".svn", ".venv", "venv", "env", "node_modules", "__pycache__",
+    ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".idea", ".vscode",
+})
+
+
 class VectorIndexService:
     def __init__(
         self,
@@ -70,12 +77,7 @@ class VectorIndexService:
                 raise ValueError(f"directory does not exist or is not a directory: {directory}")
 
             result.directory_path = str(directory)
-            supported = {suffix.lower() for suffix in config.rag_supported_extensions}
-            files = sorted(
-                path
-                for path in directory.rglob("*")
-                if path.is_file() and path.suffix.lower() in supported
-            )
+            files = self.supported_files(directory)
             result.total_files = len(files)
 
             for path in files:
@@ -97,6 +99,35 @@ class VectorIndexService:
             result.end_time = datetime.now()
         return result
 
+    @staticmethod
+    def supported_files(directory: str | Path) -> list[Path]:
+        """Files with a supported extension under directory, sorted, outside EXCLUDED_DIRS."""
+        root = Path(directory).resolve()
+        supported = {suffix.lower() for suffix in config.rag_supported_extensions}
+        return sorted(
+            path
+            for path in root.rglob("*")
+            if path.is_file()
+            and path.suffix.lower() in supported
+            and not any(part in EXCLUDED_DIRS for part in path.relative_to(root).parts[:-1])
+        )
+
+    def _split(self, file_path: str | Path) -> tuple[str, list]:
+        path = Path(file_path).resolve()
+        if not path.is_file():
+            raise ValueError(f"file does not exist: {path}")
+        if path.suffix.lower() not in {
+            suffix.lower() for suffix in config.rag_supported_extensions
+        }:
+            raise ValueError(f"unsupported file extension: {path.suffix}")
+        normalized_path = path.as_posix()
+        content = path.read_text(encoding="utf-8-sig")
+        return normalized_path, self._splitter.split_document(content, normalized_path)
+
+    def count_chunks(self, file_path: str | Path) -> int:
+        """Split only, for a dry run: no embedding call and no vector store access (D-068)."""
+        return len(self._split(file_path)[1])
+
     def index_single_file(self, file_path: str | Path) -> int:
         path = Path(file_path).resolve()
         if not path.is_file():
@@ -107,9 +138,7 @@ class VectorIndexService:
             raise ValueError(f"unsupported file extension: {path.suffix}")
 
         try:
-            content = path.read_text(encoding="utf-8-sig")
-            normalized_path = path.as_posix()
-            documents = self._splitter.split_document(content, normalized_path)
+            normalized_path, documents = self._split(path)
 
             # Split first so a parser error cannot erase an existing index.
             self._store_manager.delete_by_source(normalized_path)
@@ -118,5 +147,11 @@ class VectorIndexService:
             return len(documents)
         except Exception as exc:
             raise RuntimeError(f"failed to index {path}: {exc}") from exc
+
+    def close(self) -> None:
+        close = getattr(self._store_manager, "close", None)
+        if callable(close):
+            close()
+
 
 vector_index_service = VectorIndexService()

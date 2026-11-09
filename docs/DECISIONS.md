@@ -581,3 +581,19 @@
 - 执行差异：方案要求 `git rm`，但本环境 `.git` 只读，命令因无法创建 `.git/index.lock` 被拒绝（退出码 128）。因此使用文件系统逐一删除同样九个文件并移除空的 `aiops/` 目录；索引未改，用户文件未暂存或还原。
 - 验证：新增 `tests/test_stage0_cleanup.py`，用 `find_spec` 检查四个已删模块不可发现、三个保留模块仍存在；先得到 4 项失败、3 项通过，删除后连同两个保留示例的测试共 15 项通过。完整验收与基线结果见本轮 progress.md、session-handoff.md。
 - 来源：用户 2026-11-08 明确要求按 `docs/stage0_cleanup_plan.md` 实现；不提交、不推送、不调用真实模型或外部真实服务。
+
+## D-067 2026-11-08 依赖：去掉 langchain-mcp-adapters，保留 langgraph 的固定版本
+
+- 决策：从 `pyproject.toml` 去掉 `langchain-mcp-adapters`。第 0 阶段删除 `app/agent/mcp_client.py` 以后没有代码导入它，也没有别的已安装包依赖它。`langgraph`、`langgraph-checkpoint`、`langgraph-prebuilt`、`langgraph-sdk` 保留，并加注释说明原因。
+- 理由：`app/` 虽然不再直接导入 `langgraph`，但 `knowledge_tool.py` 在用的 `langchain` 1.2.10 要求 `langgraph>=1.0.8,<1.1.0`（`langchain-qwq` 也依赖 `langchain`），`langgraph` 又依赖另外三个包。删掉这几行，安装时它们照样会被装上，只是版本不再固定，反而更难复现。
+- 被否方案：按 D-066 的字面意思删掉全部 5 个包（D-066 只核对了源码引用，没有核对间接依赖）。
+- 约束：没有卸载 `.venv` 里的包（`langchain-mcp-adapters` 还装在里面，不影响运行）；项目没有锁文件。
+- 来源：用户 2026-11-08“可以去掉没用的几个包”
+
+## D-068 2026-11-08 知识库建库命令
+
+- 决策：新增 `python -m app.knowledge 目录`。默认只预演：列出支持的文件（`.md`、`.txt`、`.py`、`.json`），跳过 `.git`、`.venv`、`node_modules`、`__pycache__` 等目录，只切块并报告块数，不调用嵌入接口，也不连 Milvus。加 `--confirm` 才逐个文件经 `VectorIndexService.index_single_file` 写入：先切块，再删掉这个文件原来的块，然后嵌入并写入，最后关闭连接。失败只报告文件和异常类型（D-033）。前 3 个文件都失败时停止，因为多半是 Milvus 没开或没配嵌入密钥。退出码：0 全部完成，1 有失败或提前停止，2 目录不存在。`VectorIndexService` 新增 `supported_files`、`count_chunks`、`close`；`index_directory` 也改用 `supported_files`，所以同样会跳过这些目录。
+- 理由：知识库原来只有建库代码，没有入口；写入会花钱，也会改动向量库里的业务数据，所以默认预演，写入要明确确认，和评测的 `--confirm-live` 是同一个思路。
+- 被否方案：默认直接写入（误跑一次就会花钱并替换已有的块）；把 `index_directory` 直接暴露成命令（它会把异常原文写进日志，而且遍历时不跳过 `.venv`）。
+- 约束：从目录里删掉的文件，它原来的块不会自动删除；没有用真实的 Milvus 和嵌入接口跑过 `--confirm`。
+- 来源：用户 2026-11-08“然后建库”

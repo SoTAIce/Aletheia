@@ -1270,6 +1270,33 @@
         "用户原差异原样保留；更新 D-066、进度、交接、测试数与本轮基线，不提交。"
       ],
       "evidence": "2026-11-08：删除前全仓搜索无方案之外的调用方；删除 app/agent/aiops/ 下 __init__.py、executor.py、planner.py、replanner.py、state.py、utils.py，以及 app/agent/mcp_client.py、mcp_demo/registry_client.py、time_client.py，共九个文件。保留 time_server.py（集成测试）、web_search_client.py（测试和 README 入口）、vector_index_service.py（唯一知识库建库实现）；保留在用工具和压缩器。tests/test_stage0_cleanup.py 新增七项 find_spec 守卫，删除前 4 项失败、3 项通过；删除后与两个保留示例的测试合计 15 passed（2.74s）。init.ps1 通过：92 个 Python 文件，1629 passed、16 skipped（50.69s）；本地测试子进程、模拟 HTTP 和模型，不是外部真实服务验收。D-066、progress.md、session-handoff.md 及 docs/harness/history/baseline-2026-11-08-cleanup-stage0.json 记录范围、权限差异和用户原差异。Claude 复核：19 passed（守卫、两个保留示例、工具边界），init.ps1 1629 passed、16 skipped，基线四项正常；改正文档索引的过时状态和 agent_runtime.md 的中英混杂句后，按用户“修完再提交”提交。"
+    },
+    {
+      "id": "deps-cleanup-001",
+      "name": "Remove the dependency no code uses after stage 0",
+      "description": "User said '可以去掉没用的几个包' on 2026-11-08. langchain-mcp-adapters is removed from pyproject.toml: nothing imports it after cleanup-stage0-001 and no installed package requires it. The four langgraph packages stay pinned with a comment: app/ does not import them, but langchain 1.2.10 (used by knowledge_tool.py and required by langchain-qwq) requires langgraph<1.1,>=1.0.8, which requires the other three, so removing the pins would not remove them and would only let their versions float. Nothing is uninstalled from .venv; there is no lock file. DECISIONS D-067.",
+      "status": "done",
+      "dependencies": [
+        "cleanup-stage0-001"
+      ],
+      "acceptance": [
+        "pyproject.toml no longer lists a package that neither the code nor another dependency needs; required transitive pins stay."
+      ],
+      "evidence": "Requirements read from the installed distributions with importlib.metadata: langchain 1.2.10 requires langgraph<1.1.0,>=1.0.8; langgraph 1.0.8 requires langgraph-checkpoint, langgraph-prebuilt and langgraph-sdk; nothing requires langchain-mcp-adapters. pyproject.toml parses with tomllib (25 dependencies). init.ps1 PASS 1639 passed, 16 skipped. No install or uninstall was run."
+    },
+    {
+      "id": "kb-index-cli-001",
+      "name": "Knowledge base build command",
+      "description": "User said '然后建库' on 2026-11-08. python -m app.knowledge DIRECTORY lists the supported files (.md, .txt, .py, .json) under a directory, skipping version control, environment and cache directories (EXCLUDED_DIRS), and by default only splits them and prints the chunk counts, with no embedding call and no Milvus access. With --confirm each file goes through VectorIndexService.index_single_file (split, delete the file's old chunks, embed and write) and the store is closed at the end; failures are reported by file and exception type only; after 3 failures with no success the run stops. Exit 0 when every file is done, 1 when some failed or the run stopped, 2 for a missing directory. VectorIndexService gains supported_files (also used by index_directory, which now skips the same directories), count_chunks and close. Chunks of files removed from the directory are not deleted. DECISIONS D-068.",
+      "status": "done",
+      "dependencies": [
+        "cleanup-stage0-001"
+      ],
+      "acceptance": [
+        "The default run touches no external service; --confirm writes through the existing service.",
+        "Excluded directories and unsupported files are skipped; failures carry no provider text; early stop and exit codes hold."
+      ],
+      "evidence": "tests/test_knowledge_cli.py 10 passed (real splitter, fake vector store); a real dry run on docs/: 64 files, 836 chunks, exit 0, no service contacted; a missing directory exits 2. init.ps1 PASS 94 Python files, 1639 passed, 16 skipped. --confirm not run against a live Milvus or embedding service."
     }
   ],
   "cleanup_2026_11_04": {

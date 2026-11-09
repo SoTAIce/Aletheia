@@ -10,7 +10,7 @@
 # 启动本地网页（只读，地址 http://127.0.0.1:8000，令牌见 .env 的 WEB_ACCESS_TOKEN）
 .venv\Scripts\python.exe -m app.api --filesystem-root . --no-knowledge
 
-# 普通模式默认使用单一循环；也可在网页逐条消息选择“按计划 / 单一循环”
+# 启动时把普通模式的默认改成单一循环（不加时默认按计划）；网页上也可逐条消息选择“按计划 / 单一循环”
 .venv\Scripts\python.exe -m app.api --filesystem-root . --no-knowledge --single-runner loop
 
 # 允许写文件（只能写进指定目录）
@@ -42,6 +42,20 @@ $env:CONVERSATION_STORAGE_DIR = "$env:TEMP\aletheia-run"
 ```
 
 关掉终端后这两个变量就失效了。要长期生效，就在 `.env` 里加上 `AGENT_MODEL_CONTEXT_TOKENS=128000`（按所用模型填写）。
+
+## 知识库建库
+
+```powershell
+# 预演：列出会处理的文件和各自切成几块，不调用嵌入接口，也不写入 Milvus
+.venv\Scripts\python.exe -B -m app.knowledge docs
+
+# 真正写入（需要 Milvus 在运行、.env 里配好 DASHSCOPE_API_KEY；嵌入接口按量计费）
+.venv\Scripts\python.exe -B -m app.knowledge docs --confirm
+```
+
+- 支持 `.md`、`.txt`、`.py`、`.json`，会跳过 `.git`、`.venv`、`node_modules`、`__pycache__` 等目录。
+- 同一个文件再建一次，会先删掉它原来的块再写入；从目录里删掉的文件，它原来的块不会自动删除。
+- 建好以后，启动智能体或网页时不要加 `--no-knowledge`，才会用到知识库。
 
 ## 检查（不调用模型）
 

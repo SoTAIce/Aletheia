@@ -128,7 +128,7 @@
 - 只被 `aiops` 使用的 `app/agent/mcp_client.py`；
 - `app/agent/mcp_demo/registry_client.py`、`time_client.py`。
 
-`app/services/vector_index_service.py` 是知识库唯一的建库代码，没有调用方是因为项目尚无建库命令，不是遗留代码，予以保留。`mcp_demo/time_server.py` 和 `web_search_client.py` 仍用于测试，后者还有 README 运行入口，予以保留。
+`app/services/vector_index_service.py` 是知识库唯一的建库代码，没有调用方是因为项目尚无建库命令，不是遗留代码，予以保留；随后已加建库命令 `python -m app.knowledge`（kb-index-cli-001，D-068）。`mcp_demo/time_server.py` 和 `web_search_client.py` 仍用于测试，后者还有 README 运行入口，予以保留。
 
 另外 `app/core/dependencies.py` 里写死了本地 Ollama 压缩器，只有命令行和一个测试在用，本轮保留。在用的 MCP 客户端是 `app/tools/mcp_client.py`；`app/agent/mcp_client.py` 只被 `aiops` 使用，已一起删除。
 

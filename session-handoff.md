@@ -1,6 +1,14 @@
 # Current Session Handoff — 2026-11-06（成熟度五个阶段已完成）
 
-## 最新交接：2026-11-08 cleanup-stage0-001（完成，已提交）
+## 最新交接：2026-11-08 deps-cleanup-001、kb-index-cli-001（完成，已提交）
+
+- **Changes**：`pyproject.toml` 去掉 `langchain-mcp-adapters`；`langgraph` 的 4 个固定版本保留，因为 `langchain` 1.x 间接需要它们（D-067）。新增建库命令 `python -m app.knowledge 目录`，默认只预演，`--confirm` 才写入 Milvus（D-068）。
+- **Currently verified**：init.ps1 PASS，94 个 Python 文件，1639 passed、16 skipped；`tests/test_knowledge_cli.py` 10 项通过；对 `docs/` 实际预演 64 个文件、836 块，没有连接任何服务。
+- **Still unverified**：`--confirm` 没有对真实 Milvus 和嵌入接口跑过；没有卸载 `.venv` 里的 `langchain-mcp-adapters`。
+- **Next best action**：要真正建库，需要先启动 Milvus，并在 `.env` 里配好 `DASHSCOPE_API_KEY`。
+- **Evidence / State**：D-067、D-068；feature_list deps-cleanup-001、kb-index-cli-001 已完成，active_feature=null；本轮清单 [baseline-2026-11-08-deps-kb.json](docs/harness/history/baseline-2026-11-08-deps-kb.json)。以 HEAD `73d2618` 为起点，经用户授权提交，未推送；用户原差异仍未提交。
+
+## 上一项交接：2026-11-08 cleanup-stage0-001（完成，已提交）
 
 - **目标与修改**：从 HEAD `2b76f01` 加用户原差异开始，按 docs/stage0_cleanup_plan.md 删除九个遗留文件，新增七项模块守卫；指定文档、功能表、D-066、进度、测试数和基线已同步。
 - **已验证**：init.ps1 通过（92 个 Python 文件，1629 passed、16 skipped，50.69s）；新增守卫删除前 4 项失败、3 项通过，删除后连同两个保留示例测试共 15 passed（2.74s），没有跳过。只使用确定性测试、本地测试子进程与模拟 HTTP/模型，没有调用外部真实服务或真实模型。

@@ -12,9 +12,10 @@ dependencies = [
     "langchain==1.2.10",
     "langchain-core==1.2.11",
     "langchain-milvus==0.3.3",
-    "langchain-mcp-adapters==0.2.1",
     "langchain-qwq==0.3.4",
     "langchain-text-splitters==1.1.0",
+    # langgraph and its three parts are not imported by app/, but langchain 1.x requires
+    # them (langchain-qwq -> langchain -> langgraph); pinned here to keep installs repeatable.
     "langgraph==1.0.8",
     "langgraph-checkpoint==4.0.0",
     "langgraph-prebuilt==1.0.7",

@@ -1,0 +1,34 @@
+{
+  "created": "2026-11-08",
+  "base_commit": "73d26183f8c1da0ef82ddf7114fab8ccd975be9a",
+  "purpose": "Uncommitted deps-cleanup-001 and kb-index-cli-001 plus the preserved user differences.",
+  "self_path": "docs/harness/history/baseline-2026-11-08-deps-kb.json",
+  "check": "docs/harness/baseline.md",
+  "modified_tracked": {
+    "AGENTS.md": "2d4c31ff34dc20ebbf249f49b5c4762f6a7f96491de5220b1344274ddb5f1868",
+    "README.md": "2b917b14b8c098babd342f0c442d6e76c2f91eaae829d28574b77d7cb6348e38",
+    "app/agent/planner.py": "a2ce0f91c476ea473f2ae6db98aa7b7ac7416b744abde1419a0f38c1fe8d8dc6",
+    "app/agent/step_executor.py": "86f8ca77ebd86d964f1dbc31b2dcf8cfcbb0596ba85c12d086368fdb304b1f1d",
+    "app/agent/tool_calling_step_runner.py": "ab6d27b6e6171c17ab07afd0c7b1cd98eb9c7e23135fc4dc693e6921ee79c480",
+    "app/services/vector_index_service.py": "350a6f7f8ee8a22c270df11626d0bbcd4cc13f2754d5f7c8ba8b834c4baee50a",
+    "common.md": "dfc59a8e6e862f8dfd9f6611c32718e4f71ff3dbf86b7b259df789df8b96d224",
+    "docs/DECISIONS.md": "eb305c79e9226ee9df59af14a03d17603488998f9c53940834573be4f3aef531",
+    "docs/PROJECT_HANDOVER.md": "3a290664c24ac1b865d8d1bcd83cf1c05c0ccba78d0b3bc926e536c53ff496b9",
+    "docs/architecture_review.md": "edf4381437c196bf2c27d8f079bbfd98668856a357056a23dc7e7e7162ce5051",
+    "docs/harness/baseline.md": "384d804359e7478ede8d0d44a16ae40d5a6301e0952e94cc9990639de040fc57",
+    "feature_list.json": "5cd6276d83f400879c190332387124221bedf5bf296a9b3bd9a61043a167f508",
+    "progress.md": "e4993a5f4d1cc85d5382a5b2ccd23bd1a6f707428adee212752276e1f3f6da4a",
+    "pyproject.toml": "eb0b5462321ab4b08ae342d4b66dcc71d656d5d674d899a6a7c6810260ab0c0c",
+    "session-handoff.md": "d17beb7f3d28e38b7e3d40ee45ee2c411a278bdf6da272e0ad5036243af4d261"
+  },
+  "untracked": {
+    "app/knowledge/__init__.py": "e4dc2cb0139aef38b0199f39e33f8de3094720f0be023fe26276e4bc1700b41a",
+    "app/knowledge/__main__.py": "d69b68cfb2e64f469327f5b4409480447fa1442ba9caca542b39459e70d37d71",
+    "tests/test_knowledge_cli.py": "c82aefb46172a2ce354d75bc5f6b2ed62fa2b0762e48d4a9b936980bd192c798"
+  },
+  "deleted_tracked": [
+    "scripts/benchmark_conversation_memory.py",
+    "scripts/validate_multi_runner_live.py",
+    "scripts/validate_summary_context.py"
+  ]
+}

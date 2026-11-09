@@ -21,6 +21,13 @@
 
 ## Session Record
 
+### 2026-11-08 — deps-cleanup-001、kb-index-cli-001：去掉没用的依赖，加建库命令
+
+- **依赖**：只从 `pyproject.toml` 去掉 `langchain-mcp-adapters`。`langgraph` 那 4 个包虽然 `app/` 不再导入，但 `langchain` 1.2.10 要求 `langgraph`，删掉固定版本只会让版本浮动，所以保留并加注释（D-067）。没有卸载任何包。
+- **建库命令**：`python -m app.knowledge 目录`，默认预演（只切块计数，不连任何服务），`--confirm` 才写入；跳过 `.git`、`.venv` 等目录；失败只报文件和异常类型；前 3 个都失败时停止（D-068）。`common.md` 加了用法。
+- **Verification**：`tests/test_knowledge_cli.py` 10 项通过；对 `docs/` 实际预演：64 个文件、836 块、退出码 0；init.ps1 PASS，94 个 Python 文件，1639 passed、16 skipped。
+- **Not done**：`--confirm` 没有对真实 Milvus 和嵌入接口跑过；目录里删掉的文件，其旧块不会自动删除。随后经用户授权提交，未推送。
+
 ### 2026-11-08 — cleanup-stage0-001：第 0 阶段清理遗留代码
 
 - **目标与完成**：按 docs/stage0_cleanup_plan.md 删除九个旧文件；修改四篇指定文档的过时表述，纠正知识库建库代码的定位；保留在用源码、工具导出、压缩器和命名空间包。新增 D-066，更新功能状态、交接、测试数和文档索引。
