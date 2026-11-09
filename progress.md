@@ -4,13 +4,10 @@
 
 ## Current Verified State
 
-- **最新验收（2026-11-09）**：kb-index-cli-002 完成，经 Claude 审查修两处后按用户“提交并验证吧”提交。安全替换、阶段诊断、可选清理与对应记录已同步；58 项针对性测试通过，init.ps1 94 个 Python 文件、1692 项通过、16 项跳过（55.43 秒）。用户原差异保留，active_feature=null；D-070 和本轮基线见下方记录。
-
-- **仓库根目录**：`D:\tries\agent`（分支 main；本轮 HEAD `7835fa2` 保持不变，工作区含用户原差异与本轮未提交实现）
-- **Standard startup path**：`powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1`；运行 Agent 用 `.venv/Scripts/python.exe -m app.agent <goal> --filesystem-root . --no-knowledge`（需真实模型）
-- **标准验收路径**：init.ps1（管理文件、语法和 CLI 加载、确定性 pytest；2026-11-09 为 1692 项通过、16 项跳过）；基线核对命令见 docs/harness/baseline.md。真实模型和外部服务未验证。
-- **Highest priority unfinished feature**：backlog `team-delivery-reliability`（authorized=false）；部分完成项 `longterm-integration-001`
-- **当前限制**：没有阻塞交接的项；真实服务未验证，磁盘根目录清理前缀问题已记录；用户源码、README 与删除项以及本轮实现均未提交，见结束基线。
+- **最新验收（2026-11-09）**：kb-index-cli-003 已实现；新增 23 项确定性测试，针对性 86 项通过；init.ps1 94 个 Python 文件、1720 项通过、16 项跳过（53.63 秒），退出码 0。两次无服务预演及审计通过；本轮代码审查无严重或重要问题。
+- **仓库状态**：D:\tries\agent，HEAD 44d435c；工作区保留用户差异、kb-index-cli-002 真实验证记录、方案登记及本轮实现；索引未改，没有提交或推送，active_feature=null。
+- **标准验收路径**：powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1；基线核对见 docs/harness/baseline.md。该检查不验证真实模型、外部服务或容器。
+- **当前限制与下一步**：真实建库及排除来源清理未验证，待审查后由用户授权；不得自动调用真实 Milvus、嵌入、模型或运行实际 --confirm/--prune。既有根目录清理前缀问题不在本轮范围。
 
 ## 已确认基线（历史，未重新测量）
 
@@ -21,12 +18,43 @@
 
 ## Session Record
 
+### 2026-11-09 — kb-index-cli-003 审查（Claude）
+
+- **Codex 状态**：任务在收尾阶段停下（状态 failed，10 分 39 秒），实现、测试和记录已写完，最后一次 init.ps1 已通过。
+- **审查**：切块器统一再切超长块（按 UTF-8 字节，默认 8000），再切后仍超长抛 `ValueError`；`supported_files(exclude=...)` 按路径段前缀排除，拒绝盘符、单端绝对路径和 `..`；`--exclude` 可重复，非法时退出码 2，会输出排除了几个文件。都在方案范围内，没有发现需要修改的问题。
+- **复跑**：建库相关 86 项测试通过；`docs/` 预演 70 个文件、984 块、退出码 0（那个基线清单 JSON 现在能切块）；`--exclude harness/history` 排除 9 个文件，剩 61 个文件、844 块；`--exclude ../x` 退出码 2；init.ps1 PASS，1720 passed、16 skipped；基线核对四项正常；用户差异未变；项目里没有缓存。
+- **遗留**：系统 TEMP 里 Codex 建的空目录 `aletheia-pytest-1fd95718b5fb49ebb1c7ec6608a50c02`，权限拒绝删除，没有改它的访问权限；另一个空目录 `.tmpFjKb9r` 来源不明，没有动。
+- **提交**：按用户“提交并真实建库”提交，未推送；随后真实建库，结果见下一条。
+
+### 2026-11-09 — kb-index-cli-003：实施与验收
+
+- **目标与裁定**：按 docs/kb_index_v3_plan.md 在指定工作区实现两项改动；用户明确要求保留本工作区与既有记录，因此不另建工作树，不提交。沿用 progress.md 作为执行台账；路径首尾斜杠与绝对路径的边界见 D-071，错误解释可能导致目录内同名相对来源被排除并在显式清理时删除。
+- **实现**：统一检查 UTF-8 字节数，超长块用已有文本切块器再切，复制元数据、保持顺序；仍超限在 read 阶段失败。支持可重复 --exclude、路径段前缀过滤、参数错误返回 2、实际排除计数及清理提示；其余索引与清理逻辑不变。
+- **启动验证**：启动基线四项正常；init.ps1 退出码 0，94 个 Python 文件，1697 项通过、16 项跳过（54.64 秒）。
+- **先失败后实现**：新测试与已有测试一起先得到 22 项失败、64 项通过；实现后 86 项通过（3.93 秒），其中新增 23 项，普通 Markdown 不变测试在实现前已通过。测试文件为 tests/test_document_splitter_limits.py、tests/test_knowledge_cli.py；使用 -B、-p no:cacheprovider 和系统 TEMP 下的 --basetemp。
+- **独立只读审查**：未发现严重或重要问题；审查未独立重跑测试。延后一个轻微建议：非法值矩阵已有盘符与 UNC，尚未单列 /absolute 及单反斜杠绝对路径回归；当前实现逻辑会拒绝，未扩展本轮修复。
+- **预演异常与恢复**：第一次并行导入 PyTorch 时，两次普通预演都因 WinError 1455（页面文件不足）退出 1；同入口审计成功。没有修改依赖、页面文件或系统配置，改为顺序重跑后两次普通预演均退出 0。此为资源限制，后续重型本地检查保持顺序。
+- **命令**：.venv/Scripts/python.exe -B -X utf8 -m pytest -q -p no:cacheprovider --basetemp <系统 TEMP 下本轮唯一目录> tests/test_document_splitter_limits.py tests/test_knowledge_cli.py；.venv/Scripts/python.exe -B -X utf8 -m app.knowledge docs；同命令加 --exclude harness/history；powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1；基线使用 docs/harness/baseline.md 的核对命令。
+- **最终预演快照**：收尾文档与清单首次刷新后，默认 docs 预演 70 个文件、984 块，原问题 JSON 104 块；加 --exclude harness/history 后排除 9 个文件，处理 61 个文件、844 块。两者均 0 个切块失败、退出码 0。用相同模块入口额外审计，最大块分别 3750、2027 UTF-8 字节，0 个超限；拦截 Milvus 连接、嵌入调用及 socket 连接/地址解析，均 0 次。该计数对应本条记录写入及最终哈希刷新前的快照，清单文本后续更新可能改变自身块数。
+- **完整结果**：init.ps1 退出码 0，管理状态、94 个 Python 文件语法、CLI 加载及全套 1720 项通过、16 项跳过（53.63 秒）；比启动增加 23 项。收尾记录后再次执行同一 init.ps1，退出码 0，1720 项通过、16 项跳过（53.40 秒）；模块导入前即安装网络审计后重跑两次，计数仍为 984/844 块，服务或网络尝试均 0 次。
+- **退出清单**：标准启动与全部确定性测试通过；功能表、决策、进度、交接与使用说明已同步，无未记录半成品；未新增调试或缓存产物，本轮测试临时目录已清理并复核，仓库无 __pycache__ 或 .pytest_cache（不含既有虚拟环境）。用户四个修改文件、原方案、文档索引登记及 kb2 清单保持启动哈希，三个删除项保留，索引为空；本轮清单保留开工快照及独立用户保护哈希，结束时刷新并运行基线核对。下个会话可直接按入口继续，真实验证仍待授权。
+- **最终基线与保护复核**：按 docs/harness/baseline.md 原命令核对，退出码 0，输出为 base ancestor OK；drift none；deleted-restored none；uncommitted-outside-manifest none。用户四个修改文件、原方案、文档索引及 kb2 清单的启动哈希均未变，三个用户删除项仍不存在；HEAD 44d435c、索引为空，缓存扫描为空。本条补齐后再次刷新本轮清单并复核同一命令。
+- **风险与下一步**：真实 Milvus、嵌入接口、真实模型和实际 --confirm/--prune 均未执行；待审查后由用户另行授权真实验证。既有磁盘根目录清理前缀、嵌入异常分类及查询日志边界问题维持历史记录，本轮不修改。
+
+
+### 2026-11-09 — kb-index-cli-003-plan：超长块再切与按路径排除的方案
+
+- **Result**：写了 [方案](docs/kb_index_v3_plan.md)，打算交给 Codex 实现（kb-index-cli-003）：切块后超过 8000 字节的块用文本切块器再切；`--exclude` 按相对路径排除，配合 `--prune` 清掉已建入的块。依据是真实建库时唯一的失败，以及离线核对：`docs/` 下只有那个基线清单 JSON 会切出超长块。
+- **Not done**：未实现；未提交。
+
 ### 2026-11-09 — kb-index-cli-002 审查后修改
 
 - **Result**：Codex 实现通过审查（先写后删、分步说明、`--prune` 都按方案）。修两处：日志静默移到 `main()` 并只用公开接口；维度不一致等集合问题改抛 `MilvusCollectionError`，命令报“Milvus 集合不可用”而不是“连接 Milvus 失败”（D-070 补记）。
 - **Verification**：`tests/test_knowledge_cli.py` 63 项通过（新增 5 项）；对 `docs/` 预演 68 个文件、881 块、退出码 0，不连接任何服务；init.ps1 PASS。
 - **记下未改的小问题**：嵌入服务只放过 `EmbeddingResponseError`，依赖抛的其他 `ValueError` 会被包成 `EmbeddingRequestError`；失败日志改为只记异常类型，也影响知识检索的查询路径；磁盘根目录当建库目录时 `--prune` 前缀不对。
-- **Not done**：真实 `--confirm --prune` 待用户决定。已按用户“提交并验证吧”提交，未推送。
+- **已提交**：`44d435c`，未推送。
+- **Live**：真实验证（用户“提交并验证吧”“跑 --confirm”，Milvus 2.6.9 本机、DashScope 嵌入）：--prune 预演只读，0 个过时来源；--confirm --prune 处理 docs/ 68 个文件，成功 67 个、写入 859 块，退出码 1。建库前 64 个来源 818 块，建库后 67 个来源 859 块；每个来源的块数都等于现在的切块结果，没有重复或残留的旧块（如 DECISIONS.md 98→104 块被干净替换），没有误删来源，新建入 3 个文件。唯一失败的 harness/history/2026-11-04-state-before.json：JSON 切块后有 3 块超过 Milvus 内容字段 8000 字符上限（最长 26491），写入被拒；先写后删使它没有影响别的数据。
+- **待决定**：切块结果超过 8000 字符时没有再切（JSON 里很长的单个值切不开），应该再切或明确跳过；`docs/harness/history/` 是哈希清单，建库时建议跳过。
 
 ### 2026-11-09 — kb-index-cli-002：实施与验收
 

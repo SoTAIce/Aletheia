@@ -45,6 +45,18 @@ $env:CONVERSATION_STORAGE_DIR = "$env:TEMP\aletheia-run"
 
 ## 知识库建库
 
+推荐跳过基线历史清单，仍只做离线预演：
+
+```powershell
+.venv\Scripts\python.exe -B -m app.knowledge docs --exclude harness/history
+```
+
+`--exclude` 可重复，例如 `--exclude harness/history --exclude guide/old.md`；按相对路径段前缀匹配，`harness/history2` 和 `other/harness/history` 不受影响。路径使用 `/`，也支持反斜杠；两端包裹的斜杠可去除。空路径、盘符、UNC、单端绝对路径和含 `..` 的路径段非法，退出码 2。输出会说明排除了多少个支持文件。
+
+**注意：加 `--prune` 会将排除文件的已有来源视为过时来源。** 清理预演会列出它们，配合 `--confirm` 的完整运行会删除它们的块。只有排除参数而没有清理参数时，本次跳过这些文件，已有来源保留。
+
+所有类型的切块统一检查 UTF-8 字节数，超过默认 8000 字节时用文本切块器再切，保留元数据与顺序。JSON 再切片段作为检索文本，可能不再是合法 JSON；仍超限会报读取或切块失败。
+
 ```powershell
 # 预演：列出会处理的文件和各自切成几块，不调用嵌入接口，也不写入 Milvus
 .venv\Scripts\python.exe -B -m app.knowledge docs

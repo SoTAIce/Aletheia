@@ -65,9 +65,9 @@
     "docs/DOCUMENT_INDEX.md": "da02d597d3ce5a245fdf7bb17d4c6d3d9890a4cbb098225f5528ee2199f0321d",
     "docs/PROJECT_HANDOVER.md": "5f222b2e7b444d7b8858582ae40a5b24c2b3a89c729a429dccab304f0a5ded16",
     "docs/harness/baseline.md": "8c52bd2c932539187a6caeb84a3c4e0845526cd2c37d764506eb905d6c0c921c",
-    "feature_list.json": "fbb5e7c40abf002a91f8bd59582b5e89e7aa2bc079dab8a12612c28d0c1b5e63",
-    "progress.md": "329ed5936da20130ac0990ac10f446052b8336b9b7c1fd25d6316be4b7a03434",
-    "session-handoff.md": "3254a7625b1a7097e2af9c0e830b7b8bf73ca8a1c3613f1fbd7d28d87d1e71a7",
+    "feature_list.json": "618c524926bab63bb30eea8c604bfe55f9c30820e411ff48a8f2ee7fe1f63f1c",
+    "progress.md": "52645c7a0528b4369a25cacc04792955d191de2f7a17f173db9f8cf2686b8d78",
+    "session-handoff.md": "f1e1838dc3aea3fe71f9f62935a1d0abb4ef07d28026034cb6e213b6b1ae06e0",
     "tests/test_knowledge_cli.py": "ad6ea286e61afbba4fb17a31361fdfc9ffd40426560055d89ccd750a7c3e540a"
   },
   "untracked": {

@@ -624,3 +624,14 @@
 - 审查后修改（Claude，同日，用户“修掉两处”）：
   - 日志静默只包住命令行入口 `main()`，只用 Loguru 公开的 `disable` 和 `enable`，退出时恢复标准日志开关并把 Loguru 恢复为全部启用；`run()` 不再改动全局日志状态。原做法读写 `logger._core` 私有状态，Loguru 升级时可能失效。
   - `MilvusClientManager.connect` 分成两段：连接、建客户端、查询集合是否存在失败时抛 `MilvusConnectError`；连上之后集合不能用（向量维度和配置不一致、只读模式下集合不存在）抛新的 `MilvusCollectionError`，两者都是 `RuntimeError` 子类，消息不变。建库命令据此新增阶段 `collection`，提示“Milvus 集合不可用”并建议核对 `EMBEDDING_DIMENSIONS`，不再把维度不一致误报成“请先启动 Milvus”。
+
+
+## D-071 2026-11-09 知识库：超长块再切与按相对路径排除
+
+- 决策：DocumentSplitterService 新增 max_chunk_bytes，独立数字默认值 8000，通过测试与 MilvusClientManager.CONTENT_MAX_LENGTH 对齐；切块器不导入 Milvus 模块。按 UTF-8 字节限制，兼容字符和字节两种字段长度解释，对中文更保守。
+- 统一入口：四种类型在 split_document 返回前统一检查，超长块使用已有 text_splitter 再切，复制原块全部元数据并按原位置展开；普通块原样保留。再切后仍超长抛含文件名及“块超过长度上限”的 ValueError，由现有 index_single_file 包为 read 阶段，避免进入嵌入或写入。chunk_max_size、chunk_overlap、集合结构及模型不变。
+- 取舍：JSON 再切后的片段可能不再是合法 JSON；知识库只用其做检索文本，这是接受的行为。小于现有文本切块大小的自定义字节上限可能触发上述读取失败，不改变既有切块参数来强行满足。
+- 排除：supported_files(directory, exclude=()) 按相对路径段前缀匹配，保留排序及 EXCLUDED_DIRS；命令行 --exclude 可重复，非法值返回 2，不切块、不接触向量库；有排除参数才输出实际排除的支持文件数，重复或重叠规则不重复计数。不加参数时保留原输出。
+- 路径边界裁定：方案同时要求去掉首尾斜杠及拒绝绝对路径。两端包裹形式 /harness/history/（反斜杠同理）作为相对路径规范化；单端 /absolute、盘符（含盘符相对写法）、UNC、空路径及含 .. 路径段均拒绝。两端包裹形式按排除规则解释，不能用它指定目录外的绝对路径；误解此约定的代价是目录内同名相对来源可能被排除并在显式清理时删除。
+- 清理关系：排除文件不进入本次文件列表，--prune 会把其已建入的来源视为过时来源，预演列出，确认运行才删除；原清理判断和先写后删逻辑不变。帮助与 common.md 明确说明。history 不加入按目录名匹配的 EXCLUDED_DIRS，避免误排除其他同名目录。
+- 验证与约束：新增确定性回归覆盖超长 JSON、中文字节溢出、四类统一入口、元数据顺序、普通 Markdown 不变、默认值对齐、读取阶段失败、路径校验及假向量库清理。仅运行不带 --confirm、--prune 的实际目录预演；真实验证留给审查后用户另行授权。命令与结果见 progress.md，不修改用户差异、依赖、.env、模型默认值或 data/，不暂存、提交或推送。

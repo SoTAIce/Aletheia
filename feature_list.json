@@ -1350,10 +1350,42 @@
         "写入失败保留旧块；异常消息不进入命令行；清理遵守目录边界并在提前停止时跳过。",
         "确定性测试、默认预演、init.ps1 和本轮基线核对通过；真实服务验证待授权。"
       ],
-      "evidence": "tests/test_knowledge_cli.py 共 58 项通过（新增 48 项）；先失败后实现并覆盖独立审查的三项重要问题。init.ps1 管理状态、94 个 Python 文件语法、命令行加载及全套确定性测试通过：1692 项通过、16 项跳过（55.43 秒）。docs 默认预演初次 68 个文件、874 块，记录补齐后重跑为 68 个文件、876 块，均退出码 0；独立网络审计均为 0 次连接或地址解析，第二次计数对应结束清单刷新前的文档快照。D-070；完整命令与边界见 progress.md、session-handoff.md；基线见 docs/harness/history/baseline-2026-11-09-kb2.json。没有执行真实 --confirm/--prune 或调用真实服务；磁盘根目录前缀限制保留，使用具体文档子目录。 Claude 审查后修两处（用户“修掉两处”）：日志静默从 run() 移到命令行入口 main()，只用 Loguru 公开的 disable/enable，不再读写 logger._core；connect() 把连接阶段和集合阶段分开，维度不一致或只读时集合不存在改抛 MilvusCollectionError（RuntimeError 子类），建库命令报“Milvus 集合不可用”并提示核对 EMBEDDING_DIMENSIONS，不再误报“连接 Milvus 失败”；清理检查失败也按类型说明。tests/test_knowledge_cli.py 63 项通过；init.ps1 PASS。",
+      "evidence": "tests/test_knowledge_cli.py 共 58 项通过（新增 48 项）；先失败后实现并覆盖独立审查的三项重要问题。init.ps1 管理状态、94 个 Python 文件语法、命令行加载及全套确定性测试通过：1692 项通过、16 项跳过（55.43 秒）。docs 默认预演初次 68 个文件、874 块，记录补齐后重跑为 68 个文件、876 块，均退出码 0；独立网络审计均为 0 次连接或地址解析，第二次计数对应结束清单刷新前的文档快照。D-070；完整命令与边界见 progress.md、session-handoff.md；基线见 docs/harness/history/baseline-2026-11-09-kb2.json。没有执行真实 --confirm/--prune 或调用真实服务；磁盘根目录前缀限制保留，使用具体文档子目录。 Claude 审查后修两处（用户“修掉两处”）：日志静默从 run() 移到命令行入口 main()，只用 Loguru 公开的 disable/enable，不再读写 logger._core；connect() 把连接阶段和集合阶段分开，维度不一致或只读时集合不存在改抛 MilvusCollectionError（RuntimeError 子类），建库命令报“Milvus 集合不可用”并提示核对 EMBEDDING_DIMENSIONS，不再误报“连接 Milvus 失败”；清理检查失败也按类型说明。tests/test_knowledge_cli.py 63 项通过；init.ps1 PASS。 真实验证（用户“提交并验证吧”“跑 --confirm”，Milvus 2.6.9 本机、DashScope 嵌入）：--prune 预演只读，0 个过时来源；--confirm --prune 处理 docs/ 68 个文件，成功 67 个、写入 859 块，退出码 1。建库前 64 个来源 818 块，建库后 67 个来源 859 块；每个来源的块数都等于现在的切块结果，没有重复或残留的旧块（如 DECISIONS.md 98→104 块被干净替换），没有误删来源，新建入 3 个文件。唯一失败的 harness/history/2026-11-04-state-before.json：JSON 切块后有 3 块超过 Milvus 内容字段 8000 字符上限（最长 26491），写入被拒；先写后删使它没有影响别的数据。",
       "verification": {
         "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1",
         "scope": "静态、导入、确定性测试；默认文档预演及基线另外核对，真实服务待授权。",
+        "record": "progress.md"
+      }
+    },
+    {
+      "id": "kb-index-cli-003-plan",
+      "name": "Plan: re-split oversized chunks and exclude paths in the build command",
+      "description": "Design only, no code change (user said '写方案交给 Codex' on 2026-11-09 after the live build). docs/kb_index_v3_plan.md: DocumentSplitterService gets max_chunk_bytes (default 8000, equal to MilvusClientManager.CONTENT_MAX_LENGTH, counted in UTF-8 bytes) and re-splits any oversized chunk with its text splitter before returning, keeping metadata and order; a chunk still too long raises ValueError, a read-stage failure. supported_files gains exclude (relative paths matched by path-segment prefix, invalid ones refused) and the command line gets a repeatable --exclude; with --prune, sources of excluded files are pruned. Tests, a live run left for the user, records and constraints. Implementation is kb-index-cli-003.",
+      "status": "done",
+      "dependencies": [
+        "kb-index-cli-002"
+      ],
+      "acceptance": [
+        "The plan names both problems with the evidence, the change for each, the tests, the live run left for the user and the constraints."
+      ],
+      "evidence": "Written after the live --confirm --prune run and an offline check of every docs/ file: the only oversized chunks come from docs/harness/history/2026-11-04-state-before.json (3 of 23 chunks over 8000, the longest 26,491 characters); the largest other chunk is 786 characters, 2,027 bytes. Not implemented."
+    },
+    {
+      "id": "kb-index-cli-003",
+      "name": "超长块再切与按相对路径排除",
+      "description": "按既定方案统一限制 UTF-8 字节长度，增加可重复的路径排除参数与清理关系说明。",
+      "status": "done",
+      "dependencies": [
+        "kb-index-cli-003-plan"
+      ],
+      "acceptance": [
+        "超长块再切保留元数据与顺序；非法排除参数无副作用并返回 2。",
+        "确定性测试、两次无服务预演、健康检查及基线核对通过。"
+      ],
+      "evidence": "新增 23 项确定性测试；tests/test_document_splitter_limits.py 与 tests/test_knowledge_cli.py 共 86 项通过（3.93 秒），实现前 22 项失败、64 项通过。init.ps1：94 个 Python 文件、1720 项通过、16 项跳过（53.63 秒），退出码 0。两次普通预演均成功；同入口离线审计每块不超过 8000 字节，服务或网络尝试均 0 次；最新计数、结束复核和边界见 progress.md、session-handoff.md，D-071、common.md 和本轮基线清单已同步。仅确定性与离线验证，真实服务待授权；未提交。 最新收尾快照：默认 70 个文件、984 块；排除历史目录后 61 个文件、844 块（排除 9 个），均退出码 0。最大块 3750/2027 字节、服务或网络尝试 0 次。 收尾记录后再次运行 init.ps1：1720 项通过、16 项跳过（53.40 秒），退出码 0；导入前安装网络审计的两次模块入口预演也通过，计数不变。",
+      "verification": {
+        "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1",
+        "scope": "静态、导入、确定性测试；两次离线文档预演和基线另外核对，未运行真实服务。",
         "record": "progress.md"
       }
     }
@@ -1366,7 +1398,7 @@
     "baseline": "1093 passed, 2 skipped before test removal"
   },
   "schema_version": 2,
-  "updated_at": "2026-11-08",
+  "updated_at": "2026-11-09",
   "active_feature": null,
   "verification_context": {
     "tests_present": true,

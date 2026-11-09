@@ -653,3 +653,58 @@ def test_run_itself_leaves_logging_alone(tmp_path):
     finally:
         logger.remove(sink)
     assert logs and all('run 期间的日志' in line for line in logs)   # only main() silences logs
+
+
+# D-071：路径段排除；只使用本地文件和假向量库。
+@pytest.mark.parametrize('exclude', ['harness/history', '/harness/history/', '\\harness\\history\\'])
+def test_exclude_matches_only_leading_path_segments(tmp_path, exclude):
+    paths = ['harness/history/a.json', 'harness/history/x/y.md',
+             'harness/history2/a.md', 'other/harness/history/a.md', '.venv/hidden.md', 'keep.txt']
+    for name in paths:
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{}', encoding='utf-8')
+    result = VectorIndexService.supported_files(tmp_path, exclude=[exclude, 'keep.txt'])
+    assert [p.relative_to(tmp_path).as_posix() for p in result] == ['harness/history2/a.md', 'other/harness/history/a.md']
+
+
+@pytest.mark.parametrize('value', ['', '/', 'C:/private', 'C:private', '//server/share', '../history', 'a/../b', 'a\\..\\b'])
+def test_invalid_exclude_is_rejected_without_splitting_or_store_access(tmp_path, value):
+    with pytest.raises(ValueError):
+        VectorIndexService.supported_files(tmp_path, exclude=[value])
+    class NoSplitter:
+        def split_document(self, *args):
+            pytest.fail('参数错误时不应切块')
+    store, lines = FakeStore(), []
+    index = VectorIndexService(splitter=NoSplitter(), store_manager=store)
+    assert run(args(str(tmp_path), '--exclude', value), index, lines.append) == 2
+    assert '排除路径无效' in '\n'.join(lines)
+    assert store.events == [] and store.closed == 0
+
+
+@pytest.mark.parametrize('confirm', [False, True])
+def test_excluded_sources_are_pruned_with_fake_store(tmp_path, confirm):
+    root = workspace(tmp_path)
+    stale = (root / 'guide' / 'intro.md').as_posix()
+    store, lines = FakeStore(sources=[stale, (root / 'notes.txt').as_posix()]), []
+    argv = [str(root), '--exclude', 'guide', '--exclude', 'missing', '--prune']
+    if confirm:
+        argv.append('--confirm')
+    assert run(args(*argv), service(store), lines.append) == 0
+    assert '排除了 1 个文件' in '\n'.join(lines)
+    assert store.deleted == ([stale] if confirm else [])
+    assert store.replaced == ([(root / 'notes.txt').as_posix()] if confirm else [])
+    assert ('已清理：guide/intro.md' if confirm else '将清理：guide/intro.md') in '\n'.join(lines)
+
+
+def test_repeatable_exclude_dry_run_reports_count_and_touches_no_store(tmp_path):
+    root = workspace(tmp_path)
+    store, lines = FakeStore(), []
+    assert run(args(str(root), '--exclude', 'guide', '--exclude', 'notes.txt'), service(store), lines.append) == 0
+    assert '排除了 2 个文件' in '\n'.join(lines)
+    assert store.events == [] and store.closed == 0
+
+
+def test_help_explains_excluded_source_pruning():
+    help_text = build_parser().format_help()
+    assert '--exclude' in help_text and '排除文件的已有来源' in help_text

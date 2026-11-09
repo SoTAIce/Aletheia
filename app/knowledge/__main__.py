@@ -30,6 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--prune', action='store_true',
                         help='清理目录下不在本次文件列表里的来源（含排除目录和不支持的扩展名）；'
                              '预演会只读连接 Milvus，仅 --confirm 完整运行后才删除')
+    parser.add_argument('--exclude', action='append', default=[], metavar='路径',
+                        help='按相对路径排除文件或目录，可重复；--prune 会清理排除文件的已有来源')
     return parser
 
 
@@ -115,7 +117,7 @@ def _quiet_dependency_logs():
 
 
 def run(args, service=None, out=print) -> int:
-    """退出码：0 全部完成；1 有失败或提前停止；2 目录不存在。"""
+    """退出码：0 全部完成；1 有失败或提前停止；2 目录或排除参数无效。"""
     if service is None:
         from app.services.vector_index_service import vector_index_service as service
     from app.config import config
@@ -123,7 +125,16 @@ def run(args, service=None, out=print) -> int:
     if not directory.is_dir():
         out(f'目录不存在：{directory}')
         return 2
-    files = service.supported_files(directory)
+    exclude = getattr(args, 'exclude', ())
+    try:
+        files = (service.supported_files(directory, exclude=exclude) if exclude
+                 else service.supported_files(directory))
+    except ValueError:
+        out('排除路径无效：请使用非空且不含 .. 的相对路径。')
+        return 2
+    if exclude:
+        excluded_count = len(service.supported_files(directory)) - len(files)
+        out(f'按相对路径排除了 {excluded_count} 个文件。')
     kinds = '、'.join(config.rag_supported_extensions)
     prune = getattr(args, 'prune', False)
     if not files:

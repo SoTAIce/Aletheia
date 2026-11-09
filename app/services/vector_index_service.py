@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from loguru import logger
@@ -134,8 +134,20 @@ class VectorIndexService:
         return result
 
     @staticmethod
-    def supported_files(directory: str | Path) -> list[Path]:
-        """Files with a supported extension under directory, sorted, outside EXCLUDED_DIRS."""
+    def supported_files(directory: str | Path, exclude=()) -> list[Path]:
+        """按路径段前缀排除相对路径；保留既有目录过滤和排序。"""
+        prefixes = []
+        for value in exclude:
+            normalized = value.replace("\\", "/")
+            # 两端包裹的斜杠可去掉；盘符、UNC 和单端绝对路径不能转成相对路径。
+            if (PureWindowsPath(normalized).drive
+                    or (normalized.startswith("/") and not normalized.endswith("/"))
+                    or ".." in normalized.split("/")):
+                raise ValueError("排除路径无效：请使用不含 .. 的相对路径")
+            parts = PurePosixPath(normalized.strip("/")).parts
+            if not parts:
+                raise ValueError("排除路径无效：路径不能为空")
+            prefixes.append(parts)
         root = Path(directory).resolve()
         supported = {suffix.lower() for suffix in config.rag_supported_extensions}
         return sorted(
@@ -144,6 +156,7 @@ class VectorIndexService:
             if path.is_file()
             and path.suffix.lower() in supported
             and not any(part in EXCLUDED_DIRS for part in path.relative_to(root).parts[:-1])
+            and not any(path.relative_to(root).parts[:len(prefix)] == prefix for prefix in prefixes)
         )
 
     def _split(self, file_path: str | Path) -> tuple[str, list]:

@@ -16,7 +16,8 @@ from app.config import config
 
 
 class DocumentSplitterService:
-    def __init__(self) -> None:
+    def __init__(self, max_chunk_bytes: int = 8000) -> None:
+        self.max_chunk_bytes = max_chunk_bytes
         self.chunk_size = config.chunk_max_size
         self.chunk_overlap = config.chunk_overlap
         self.markdown_splitter = MarkdownHeaderTextSplitter(
@@ -61,12 +62,26 @@ class DocumentSplitterService:
     def split_document(self, content: str, file_path: str = "") -> list[Document]:
         suffix = Path(file_path).suffix.lower()
         if suffix == ".md":
-            return self.split_markdown(content, file_path)
-        if suffix == ".py":
-            return self.split_code(content, file_path)
-        if suffix == ".json":
-            return self.split_json(content, file_path)
-        return self.split_text(content, file_path)
+            documents = self.split_markdown(content, file_path)
+        elif suffix == ".py":
+            documents = self.split_code(content, file_path)
+        elif suffix == ".json":
+            documents = self.split_json(content, file_path)
+        else:
+            documents = self.split_text(content, file_path)
+
+        bounded = []
+        for document in documents:
+            if len(document.page_content.encode("utf-8")) > self.max_chunk_bytes:
+                bounded.extend(
+                    Document(page_content=text, metadata=document.metadata.copy())
+                    for text in self.text_splitter.split_text(document.page_content)
+                )
+            else:
+                bounded.append(document)
+        if any(len(doc.page_content.encode("utf-8")) > self.max_chunk_bytes for doc in bounded):
+            raise ValueError(f"{file_path}：块超过长度上限（{self.max_chunk_bytes} 字节）")
+        return bounded
 
     @staticmethod
     def _source_metadata(file_path: str) -> dict[str, str]:
