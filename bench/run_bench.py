@@ -156,7 +156,7 @@ SANDBOX_HINT = ('写完后先写测试，再用 run_tests 或 run_python 在沙�
 
 
 def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=False, team_timeout=None,
-            team_acceptance=False, single_runner='loop'):
+            team_acceptance=False, single_runner='loop', trace_dir=None):
     write = write or sandbox
     # Answer tasks are graded on the final answer even when write and sandbox tools are offered;
     # offering them is what lets auto routing consider the team (D-026).
@@ -170,6 +170,12 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
         env = dict(os.environ, TAVILY_API_KEY='', PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8',
                    ALETHEIA_TEAM_TRACE='1',
                    CONVERSATION_STORAGE_DIR='')   # no archive: ids differ per run, keep data/ clean
+        env.pop('ALETHEIA_TRACE_DIR', None)
+        env.pop('ALETHEIA_TRACE_NAME', None)
+        if trace_dir is not None:
+            # The child writes this run's trace there (TraceFileHook, D-073); the name matches the row.
+            env['ALETHEIA_TRACE_DIR'] = str(Path(trace_dir).resolve())
+            env['ALETHEIA_TRACE_NAME'] = f'{task["id"]}-{mode}-{index}'
         goal = task['write_goal'] if write and not answer_only else task['goal']
         if sandbox and not answer_only:
             goal += SANDBOX_HINT
@@ -360,6 +366,8 @@ def main(argv=None):
     parser.add_argument('--max-runs', type=int, default=6, help='refuse plans with more agent runs than this')
     parser.add_argument('--timeout', type=float, default=600, help='seconds per agent run')
     parser.add_argument('--keep-answers', help='directory for completed answers (for manual browser checks)')
+    parser.add_argument('--keep-traces', metavar='DIR',
+                        help="directory for each run's trace file (read with python -m app.agent.trace FILE)")
     parser.add_argument('--out', help='write the JSON report here as well as to stdout')
     parser.add_argument('--confirm-live', action='store_true', help='required: runs call the real model provider')
     parser.add_argument('--sandbox', action='store_true',
@@ -397,7 +405,7 @@ def main(argv=None):
                 for index in range(1, args.runs + 1):
                     rows.append(run_one(task, mode, index, args.timeout, args.keep_answers, args.write,
                                         args.sandbox, args.team_timeout,
-                                        args.team_acceptance, args.single_runner))
+                                        args.team_acceptance, args.single_runner, args.keep_traces))
                     print(json.dumps(rows[-1], ensure_ascii=False), file=sys.stderr, flush=True)
     finally:
         # The MCP stdio child does not inherit PYTHONDONTWRITEBYTECODE (DECISIONS D-011).

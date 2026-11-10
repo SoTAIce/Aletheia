@@ -19,7 +19,9 @@ import asyncio
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+import itertools
 import logging
+import secrets
 import time
 from typing import Any, Callable, Protocol
 
@@ -34,7 +36,9 @@ TASK_START, TASK_END = 'task_start', 'task_end'
 BEFORE_MODEL, AFTER_MODEL = 'before_model', 'after_model'
 BEFORE_TOOL, AFTER_TOOL = 'before_tool', 'after_tool'
 PLAN, STEP = 'plan', 'step'
-EVENT_TYPES = frozenset({TASK_START, TASK_END, BEFORE_MODEL, AFTER_MODEL, BEFORE_TOOL, AFTER_TOOL, PLAN, STEP})
+SCOPE_START, SCOPE_END = 'scope_start', 'scope_end'
+EVENT_TYPES = frozenset({TASK_START, TASK_END, BEFORE_MODEL, AFTER_MODEL, BEFORE_TOOL, AFTER_TOOL, PLAN, STEP,
+                         SCOPE_START, SCOPE_END})
 GATE_EVENTS = frozenset({BEFORE_MODEL, BEFORE_TOOL})
 
 GATE_TIMEOUT_SECONDS = 5.0
@@ -154,6 +158,90 @@ def using_hooks(hooks: HookSet):
         _current.reset(token)
 
 
+# Trace spans (D-073): every model call, tool call and scope gets a span id and names the scope
+# it happened in, so the events of one run form a tree. Ids are short host strings.
+SCOPE_KINDS = frozenset({'route', 'plan', 'step', 'member'})
+_LABELS = {'index': int, 'revision': int, 'member': str}
+_MAX_LABEL_CHARS = 64
+_span_prefix = secrets.token_hex(2)
+_span_numbers = itertools.count(1)
+_span: ContextVar[str | None] = ContextVar('aletheia_trace_span', default=None)
+
+
+def new_span_id() -> str:
+    return f's-{_span_prefix}-{next(_span_numbers)}'
+
+
+def current_span() -> str | None:
+    return _span.get()
+
+
+def _active(hooks: HookSet) -> bool:
+    return bool(hooks.observers or hooks.gates)
+
+
+def _scope_labels(labels: dict) -> dict:
+    """Host values only: a step index, a plan revision, a member name. An unknown key or a
+    wrong type is a programming error and raises; a long member name is cut (D-073)."""
+    checked = {}
+    for key, value in labels.items():
+        kind = _LABELS.get(key)
+        if kind is None:
+            raise ValueError(f'unknown trace label {key!r}')
+        if value is None:
+            continue
+        if kind is int and type(value) is not int:
+            raise TypeError(f'trace label {key} must be an integer')
+        if kind is str:
+            if not isinstance(value, str):
+                raise TypeError(f'trace label {key} must be a string')
+            value = value[:_MAX_LABEL_CHARS]
+        checked[key] = value
+    return checked
+
+
+@contextmanager
+def trace_scope(kind: str, **labels):
+    """A span around a stretch of work (a route choice, a plan, a step, a team member). Model
+    and tool calls inside it name it as their parent. Without hooks it emits nothing. It never
+    swallows or changes an exception; its scope_end event names the exception's type."""
+    if kind not in SCOPE_KINDS:
+        raise ValueError(f'unknown trace scope {kind!r}')
+    labels = _scope_labels(labels)
+    hooks = current_hooks()
+    if not _active(hooks):
+        yield None
+        return
+    span_id, parent_id = new_span_id(), _span.get()
+    hooks.emit({'type': SCOPE_START, 'span_id': span_id, 'parent_id': parent_id, 'kind': kind, **labels})
+    token = _span.set(span_id)
+    started, error = time.monotonic(), None
+    try:
+        yield span_id
+    except BaseException as exc:
+        error = type(exc).__name__
+        raise
+    finally:
+        _span.reset(token)
+        hooks.emit({'type': SCOPE_END, 'span_id': span_id, 'kind': kind,
+                    'seconds': round(time.monotonic() - started, 3), 'error': error})
+
+
+@contextmanager
+def root_span():
+    """The task span of one run (runtime.run): the outermost scope, with no parent. The runtime
+    emits task_start and task_end itself, carrying this id."""
+    if not _active(current_hooks()):
+        yield None
+        return
+    span_id = new_span_id()
+    token = _span.set(span_id)
+    try:
+        yield span_id
+    finally:
+        _span.reset(token)
+
+
 @contextmanager
 def model_purpose(purpose: str):
     """Label the model calls made inside (plan, route, ...); unlabelled calls are steps."""
@@ -244,7 +332,8 @@ class HookedTool:
             return await self._tool.invoke(arguments)
         from app.agent.side_effects import SIDE_EFFECT_TOOLS
         name = self.definition.name
-        base = {'tool': name, 'call_id': current_call_id(), 'side_effect': name in SIDE_EFFECT_TOOLS}
+        base = {'tool': name, 'call_id': current_call_id(), 'side_effect': name in SIDE_EFFECT_TOOLS,
+                'span_id': new_span_id(), 'parent_id': _span.get()}
         hooks.emit({'type': BEFORE_TOOL, **base, 'args_summary': summarize_arguments(arguments)})
         decision, denied_by = await hooks.gate({'type': BEFORE_TOOL, **base,
                                                 'args_summary': summarize_arguments(arguments)})
@@ -290,12 +379,13 @@ class HookedModel:
             return await self._model.generate(messages, tools)
         purpose = 'wrap_up' if isinstance(tools, ToolsShownOnly) else _purpose.get()
         callable_tools = 0 if isinstance(tools, ToolsShownOnly) else len(tools)
+        span = {'span_id': new_span_id(), 'parent_id': _span.get()}
         before = {'type': BEFORE_MODEL, 'purpose': purpose, 'message_count': len(messages),
-                  'tool_count': len(tools), 'callable_tools': callable_tools}
+                  'tool_count': len(tools), 'callable_tools': callable_tools, **span}
         hooks.emit(before)
         decision, denied_by = await hooks.gate(before)
         if not decision.allow:
-            hooks.emit({'type': AFTER_MODEL, 'purpose': purpose, 'denied_by': denied_by, 'success': False})
+            hooks.emit({'type': AFTER_MODEL, 'purpose': purpose, 'denied_by': denied_by, 'success': False, **span})
             raise PolicyDeniedError(denied_by, decision.reason)
         meter = current_meter()
         logged = len(meter.call_log) if meter is not None else None
@@ -305,23 +395,27 @@ class HookedModel:
         except BaseException as exc:
             hooks.emit({'type': AFTER_MODEL, 'purpose': purpose, 'success': False,
                         'seconds': round(time.monotonic() - started, 3), 'error': type(exc).__name__,
-                        **_usage_since(meter, logged)})
+                        **_usage_since(meter, logged), **span})
             raise
         hooks.emit({'type': AFTER_MODEL, 'purpose': purpose, 'success': True,
                     'seconds': round(time.monotonic() - started, 3),
                     'tool_calls': len(getattr(turn, 'tool_calls', ()) or ()),
-                    **_usage_since(meter, logged)})
+                    **_usage_since(meter, logged), **span})
         return turn
 
 
 def _usage_since(meter, logged) -> dict:
     """Provider usage of the calls this model call made (retries included), from the meter."""
     if meter is None or logged is None:
-        return {'provider_calls': None, 'prompt_tokens': None, 'completion_tokens': None, 'cached_tokens': None}
+        return {'provider_calls': None, 'prompt_tokens': None, 'completion_tokens': None, 'cached_tokens': None,
+                'response_model': None}
     entries = meter.call_log[logged:]
+    # The model name the provider reported for its last answer: a short label, never text (D-073).
+    names = [name for name in getattr(meter, 'response_models', ())[logged:] if name]
 
     def total(key):
         values = [entry.get(key) for entry in entries if entry.get(key) is not None]
         return sum(values) if values else None
     return {'provider_calls': len(entries), 'prompt_tokens': total('prompt'),
-            'completion_tokens': total('completion'), 'cached_tokens': total('cached')}
+            'completion_tokens': total('completion'), 'cached_tokens': total('cached'),
+            'response_model': names[-1] if names else None}

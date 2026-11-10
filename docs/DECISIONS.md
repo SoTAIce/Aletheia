@@ -645,3 +645,13 @@
 - 被否方案：改服务构造默认值（见上）；继续保持 `plan` 默认（评测和网页试用都不支持再等）。
 - 约束：每题只跑 1 次，结论有波动；循环模式的已知限制不变：不重新规划，阻塞恢复只在内存里（D-062、D-064）。
 - 来源：用户 2026-11-09“改成单一循环”“改完写好文档”
+
+## D-073 2026-11-10 本机追踪：事件带区间编号，拼成执行树
+
+- 决定：在 hook 事件（D-059）上加区间编号，不另起一套记录。`hooks.trace_scope(kind, **labels)` 用上下文变量记录当前区间，发出 `scope_start`/`scope_end`；`HookedModel`、`HookedTool` 的前后两条事件带同一个 `span_id` 和当时的 `parent_id`；`runtime.run()` 用 `root_span()` 让任务成为根，`task_start`/`task_end` 带它的编号。作用域放在调用方：`runtime.py`（`plan`、`step`）、`team_v2.py`（`member`）、服务的 `_choose_route`（`route`，在任务之前，没有父节点）。审计文件升到第 2 版，记录头加 `trace: true`。
+- 编号：进程内递增数加 2 字节随机前缀（如 `s-3f9a-12`），只需在一个文件内唯一。没有观察者和拦截者时不生成编号、不发事件，保持零开销。上下文变量随 `asyncio` 任务复制，并行成员互不串。
+- 读取：`trace_view.build_trace` 是纯函数，把一个文件的记录拼成树并算总计；缺结束事件标“未结束”，父节点缺失挂到任务下，丢弃过事件或有坏行时 `complete` 为假。第 1 版文件没有编号，按出现顺序配对、平铺，标 `paired_by_order`，有并行成员时可能配错（旧文件的固有限制）。查看入口：`python -m app.agent.trace`、`GET /api/sessions/{session}/tasks/{task}/trace`（无记录 404 `trace_unavailable`）、网页“执行记录”面板、评测 `--keep-traces 目录`（`TraceFileHook`，因为评测关闭了归档）。
+- 服务商模型名：`after_model` 加 `response_model`（响应里的 `model` 字段，短 ASCII 标签），用来确认中转站有没有换上游；存在 `RunMeter.response_models`，不改用量快照和评测报告。
+- 不记原文：事件仍只有宿主字段；循环的 `todo` 条目文字原本就在审计文件里，追踪结果只取条目数。记录原文、OpenTelemetry 导出、运行中实时追踪不做，需用户另行决定（`docs/tracing_plan.md` 第 8 节）：第一项会放宽“不记录私有对话和服务商原文”的约束，后两项要新增依赖或改变写入时机。
+- 不改 `planner.py`、`step_executor.py`、`tool_calling_step_runner.py`（用户有未提交的注释）；进度回调和网页进度流的白名单不变。
+- 来源：用户 2026-11-09“我还希望加入tracing”“先写方案”，2026-11-10“我感觉tracing比较合理，然后你负责实现吧，codeX额度有限了”。

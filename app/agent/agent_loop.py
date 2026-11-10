@@ -206,8 +206,9 @@ class AgentLoopRunner:
                                  tuple(refs)) from exc
 
     def _emit_todo(self):
-        from app.agent.hooks import current_hooks
-        current_hooks().emit({'type': 'todo', 'items': [dict(item) for item in self.todo]})
+        from app.agent.hooks import current_hooks, current_span
+        current_hooks().emit({'type': 'todo', 'items': [dict(item) for item in self.todo],
+                              'parent_id': current_span()})
 
     async def run(self, context: StepExecutionContext) -> StepRunOutput:
         if not isinstance(context, StepExecutionContext):

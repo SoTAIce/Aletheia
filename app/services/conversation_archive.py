@@ -439,6 +439,48 @@ class ConversationArchive:
                 Path(temporary).unlink(missing_ok=True)
         return path
 
+    MAX_AUDIT_BYTES = 8 * 1024 * 1024
+
+    def _audit_directory(self) -> Path:
+        directory = self._directory.parent / "audit"
+        self._check_path(directory)
+        return directory
+
+    def list_audits(self) -> list[str]:
+        """Names of this session's audit files (without .jsonl), sorted; read-only (trace-001)."""
+        directory = self._audit_directory()
+        if not directory.is_dir():
+            return []
+        return sorted(path.stem for path in directory.glob("*.jsonl")
+                      if re.fullmatch(r"[0-9A-Za-z_-]{1,120}", path.stem) and path.is_file())
+
+    def load_audit(self, name: str) -> tuple[list[dict], int]:
+        """One audit file's records and the number of unreadable lines skipped (trace-001).
+        A file over MAX_AUDIT_BYTES is refused."""
+        if not isinstance(name, str) or not re.fullmatch(r"[0-9A-Za-z_-]{1,120}", name):
+            raise ValueError("invalid audit name")
+        path = self._audit_directory() / f"{name}.jsonl"
+        self._check_path(path)
+        if not path.is_file():
+            raise KeyError(name)
+        if path.stat().st_size > self.MAX_AUDIT_BYTES:
+            raise ValueError("audit file is too large")
+        records, skipped = [], 0
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                except ValueError:
+                    skipped += 1
+                    continue
+                if isinstance(record, dict):
+                    records.append(record)
+                else:
+                    skipped += 1
+        return records, skipped
+
     def _artifact_path(self, ref: str) -> Path:
         if not isinstance(ref, str):
             raise ValueError("invalid archive reference")

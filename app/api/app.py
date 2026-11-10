@@ -196,6 +196,16 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
         _check_id('session_id', session_id)
         return {'turns': await call(service.session_turns(session_id, user_id=user_id, limit=limit))}
 
+    @app.get('/api/sessions/{session_id}/tasks/{task_id}/trace', dependencies=guarded)
+    async def trace(session_id: str, task_id: str):
+        """The runs of one task as span trees, from its audit files (trace-001, D-073)."""
+        _check_id('session_id', session_id)
+        _check_id('task_id', task_id)
+        runs = await call(service.task_traces(session_id, task_id, user_id=user_id))
+        if not runs:
+            raise ApiError(404, 'trace_unavailable', '这次任务没有执行记录（可能是未开启归档或审计）。')
+        return {'runs': runs}
+
     @app.post('/api/sessions/{session_id}/messages', status_code=202, dependencies=guarded)
     async def message(session_id: str, body: MessageIn):
         _check_id('session_id', session_id)

@@ -4,6 +4,7 @@ import argparse
 import asyncio
 from contextlib import AsyncExitStack
 import json
+import os
 from pathlib import Path
 
 from app.agent.run_meter import RunMeter, metering
@@ -11,6 +12,23 @@ from app.config import config
 from app.models.taskstate import TaskStatus
 from app.services.rag_agent_service import RagAgentService
 from app.tools.tool_loader import local_mcp_servers
+
+
+def trace_hooks(*roots, environ=os.environ):
+    """The benchmark's trace file (D-073): with ALETHEIA_TRACE_DIR set, each run's trace is
+    written there by a TraceFileHook. A directory inside a root the agent can read or write is
+    refused, so the agent never sees or changes its own trace. Returns a HookSet or None."""
+    directory = environ.get('ALETHEIA_TRACE_DIR')
+    if not directory:
+        return None
+    target = Path(directory).resolve()
+    for root in roots:
+        if root and (target == Path(root).resolve() or Path(root).resolve() in target.parents):
+            print('ALETHEIA_TRACE_DIR is inside an agent root; no trace file is written')
+            return None
+    from app.agent.builtin_hooks import TraceFileHook
+    from app.agent.hooks import HookSet
+    return HookSet([TraceFileHook(target, prefix=environ.get('ALETHEIA_TRACE_NAME', ''))])
 
 
 def cache_line(usage: dict) -> str:
@@ -227,9 +245,11 @@ async def main(args) -> int:
         team_options = team_options_for(getattr(args, 'execution_mode', 'single'), write_root, sandbox,
                                         getattr(args, 'team_timeout', None),
                                         getattr(args, 'team_acceptance', False))
+        filesystem_root = args.filesystem_root or config.mcp_filesystem_root or None
         service = await stack.enter_async_context(RagAgentService(
+            hooks=trace_hooks(filesystem_root, write_root),
             mcp_servers=local_mcp_servers(
-                filesystem_root=args.filesystem_root or config.mcp_filesystem_root or None,
+                filesystem_root=filesystem_root,
                 write_root=write_root,
                 tavily_api_key=config.tavily_api_key, sandbox=sandbox,
             ),

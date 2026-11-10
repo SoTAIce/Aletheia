@@ -5,6 +5,7 @@ import hashlib
 import json
 import logging
 import math
+import re
 from dataclasses import asdict
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -643,6 +644,42 @@ class RagAgentService:
             turns = conversation.retrieve_turns(limit) if conversation is not None else []
         return [_turn_view(turn, self._resumable(key, turn)) for turn in turns]
 
+    async def task_traces(self, session_id: str, task_id: str, *, user_id: str | None = None) -> list[dict]:
+        """The traces of one task's runs, oldest first, from the session's audit files (trace-001,
+        D-073). A blocked task and its resume are two runs. Without an archive, an audit file or a
+        matching run the list is empty. Read-only: no run path changes."""
+        self._validate_identity(user_id)
+        for name, value in (('session_id', session_id), ('task_id', task_id)):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must not be empty")
+        if not self._memory_directory:
+            return []
+        root, label = self._archive_root(user_id), self._archive_label(user_id, session_id)
+        suffix = '-' + (re.sub(r'[^0-9A-Za-z_-]', '', task_id)[:64] or 'task')
+
+        def read():
+            if not ConversationArchive.exists(root, label):
+                return []
+            archive = ConversationArchive(root, label)
+            from app.agent.trace_view import build_trace
+            traces = []
+            for name in archive.list_audits():
+                if not name.endswith(suffix):
+                    continue
+                try:
+                    records, skipped = archive.load_audit(name)
+                except (KeyError, ValueError, OSError):
+                    continue
+                trace = build_trace(records)
+                if trace.get('task_id') not in (None, task_id):
+                    continue
+                trace['skipped_lines'] = skipped
+                if skipped:
+                    trace['complete'] = False
+                traces.append(trace)
+            return sorted(traces, key=lambda t: str(t.get('started_at') or ''))
+        return await asyncio.to_thread(read)
+
     async def _choose_route(self, question, model, mode, team_options):
         """single/team are the user's choice; auto applies host rules, then one model call."""
         from app.agent.route_selection import ModeChoice, choose_mode, log_choice
@@ -650,8 +687,8 @@ class RagAgentService:
             choice = ModeChoice(mode, 'user', mode)
             log_choice(choice)
             return choice
-        from app.agent.hooks import model_purpose
-        with model_purpose('route'):
+        from app.agent.hooks import model_purpose, trace_scope
+        with model_purpose('route'), trace_scope('route'):     # before the task span, no parent (D-073)
             return await choose_mode(question, team_options, model)
 
     def _team_registry(self, options=None):

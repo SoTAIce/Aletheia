@@ -362,7 +362,9 @@ class DelegatingTeamRunner:
                                        context_manager=manager)
         entry = {'member': name, 'role': role, 'tools': sorted(tools)}
         try:
-            output = await runner.run(worker_context)
+            from app.agent.hooks import trace_scope
+            with trace_scope('member', member=name):        # the member's calls form one span (D-073)
+                output = await runner.run(worker_context)
         except StepRunError as exc:
             if manager is not None:
                 entry.update(compacted=manager.compacted, strong_compacted=manager.strong)

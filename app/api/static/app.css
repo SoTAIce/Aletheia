@@ -233,6 +233,31 @@ kbd { font: 11.5px/1 var(--mono); padding: 3px 6px; border: 1px solid var(--rule
 .codeblock pre code { background: none; padding: 0; font-size: 13.5px; white-space: pre; }
 
 /* run trace: a quiet list in the margin of the reply */
+/* Run record (trace-001, D-073): one row per span, indented by depth, with a bar on a shared time axis. */
+.run-trace { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: 10px; background: var(--card); font-size: 12.5px; }
+.trace-run + .trace-run { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--rule); }
+.trace-run h4 { margin: 0 0 4px; font-size: 13px; font-weight: 600; }
+.trace-totals { margin: 0 0 8px; color: var(--ink-2); }
+.trace-warning { margin: 0 0 8px; color: var(--warn); background: var(--warn-wash); padding: 4px 8px; border-radius: 6px; }
+.trace-rows { list-style: none; margin: 0; padding: 0; }
+.trace-row { display: grid; grid-template-columns: minmax(0, 1fr) 64px minmax(80px, 30%); gap: 10px; align-items: center; padding: 3px 0; border-top: 1px dashed var(--rule); }
+.trace-row:first-child { border-top: none; }
+.trace-name { padding-left: calc(var(--depth, 0) * 14px); min-width: 0; overflow-wrap: anywhere; }
+.trace-head { color: var(--ink); font-weight: 500; }
+.trace-detail { display: block; color: var(--muted); }
+.trace-time { text-align: right; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.trace-lane { position: relative; height: 8px; background: var(--paper-2); border-radius: 4px; }
+.trace-bar { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: var(--rule-strong); }
+.kind-model .trace-bar { background: var(--accent); }
+.kind-tool .trace-bar { background: var(--ok); }
+.status-error .trace-bar, .status-failed .trace-bar { background: var(--fail); }
+.status-denied .trace-bar, .status-blocked .trace-bar { background: var(--warn); }
+.status-unfinished .trace-bar { background: repeating-linear-gradient(90deg, var(--warn) 0 4px, transparent 4px 8px); }
+.status-error .trace-detail, .status-failed .trace-detail, .status-denied .trace-detail { color: var(--fail); }
+@media (max-width: 860px) {
+  .trace-row { grid-template-columns: minmax(0, 1fr) 56px; }
+  .trace-lane { grid-column: 1 / -1; }
+}
 .trace { margin-top: 18px; }
 .trace summary { cursor: pointer; list-style: none; font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
 .trace summary::-webkit-details-marker { display: none; }

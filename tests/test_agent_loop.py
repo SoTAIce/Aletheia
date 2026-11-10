@@ -71,7 +71,7 @@ async def test_todo_is_kept_by_the_loop_and_reported_to_observers():
     with using_hooks(HookSet((observer,))):
         output = await runner.run(context)
     assert output.content == 'done' and output.tool_calls == () and read.invoke.await_count == 0
-    assert runner.todo == items and events == [{'type': 'todo', 'items': items}]
+    assert runner.todo == items and events == [{'type': 'todo', 'items': items, 'parent_id': None}]
 
 
 async def test_a_bad_todo_is_answered_with_an_error():

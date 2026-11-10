@@ -140,6 +140,9 @@ $env:PYTHONDONTWRITEBYTECODE = '1'
 # 保留每题答案以便检查失败原因：--keep-answers 后面必须跟目录
 .venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks all --split holdout --modes single --runs 1 --max-runs 13 --keep-answers output\answers-holdout --out output\bench-holdout-loop.json
 
+# 保留每题的执行追踪（D-073）：--keep-traces 后面必须跟目录，文件名以“题目-模式-序号”开头
+.venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks all --modes single --runs 1 --max-runs 11 --keep-traces output\traces-tune --out output\bench-tune-loop.json
+
 # 单独跑某几题，普通模式和团队模式各 1 次（真实调用）
 .venv\Scripts\python.exe -B -m bench.run_bench --confirm-live --tasks billing_qa todo_html --modes single team --runs 1 --out output\bench-some.json
 ```
@@ -147,4 +150,19 @@ $env:PYTHONDONTWRITEBYTECODE = '1'
 - 默认最多跑 6 次（任务数 × 模式数 × 次数），超过要加 `--max-runs`。
 - 单次超时 600 秒，用 `--timeout` 修改。
 - 评测报告写在 `output\`，这个目录不进版本库。
-- 更多选项见 `bench/README.md`：`--write`、`--sandbox`、`--keep-answers`。
+- 更多选项见 `bench/README.md`：`--write`、`--sandbox`、`--keep-answers`、`--keep-traces`。
+
+### 查看执行追踪（只读，不调用模型）
+
+```powershell
+# 一个追踪或审计文件（评测 --keep-traces 的文件，或归档里 audit\ 下的文件）
+.venv\Scripts\python.exe -m app.agent.trace output\traces-tune\<文件名>.jsonl
+
+# 列出一个会话的运行；命令行开了长期记忆时加 --user-id local，网页的会话加 --web
+.venv\Scripts\python.exe -m app.agent.trace --session cli
+
+# 看某个任务的执行树（--json 输出结构化结果）
+.venv\Scripts\python.exe -m app.agent.trace --session cli --task <任务编号>
+```
+
+网页上每条回复下面有“执行记录”按钮，点开是同一棵树和时间条。

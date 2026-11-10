@@ -575,8 +575,135 @@ function agentPart(turn, extra = {}) {
     if (turn.status === 'completed') foot.append(copyButton(() => turn.reply || '', '复制回复'));
     part.append(foot);
   }
+  if (turn.task_id && ['completed', 'blocked', 'failed', 'cancelled'].includes(turn.status)) {
+    let foot = part.querySelector('.reply-foot');
+    if (!foot) { foot = el('div', 'reply-foot'); part.append(foot); }
+    foot.append(traceButton(part, turn.task_id));
+  }
   if (extra.trace) part.append(extra.trace);
   return part;
+}
+
+// ---- run record: the trace of a finished task, from its audit files (trace-001, D-073) ----
+
+const SPAN_TEXT = {task: '任务', route: '路由', plan: '规划', step: '步骤', member: '成员', model: '模型',
+                   tool: '工具', todo: '清单'};
+const SPAN_STATUS = {failed: '失败', error: '出错', denied: '被拒绝', unfinished: '未结束', blocked: '等待回答'};
+
+function number(n) { return (n || 0).toLocaleString('zh-CN'); }
+function secondsText(s) { return typeof s !== 'number' ? '—' : `${s < 1 ? s.toFixed(2) : s.toFixed(1)} 秒`; }
+
+function traceButton(part, taskId) {
+  const button = el('button', 'mini-btn');
+  button.type = 'button';
+  button.append(icon('i-clock'), document.createTextNode('执行记录'));
+  button.setAttribute('aria-expanded', 'false');
+  let panel = null;
+  button.addEventListener('click', async () => {
+    if (panel) {
+      panel.hidden = !panel.hidden;
+      button.setAttribute('aria-expanded', String(!panel.hidden));
+      return;
+    }
+    button.disabled = true;
+    try {
+      const {runs} = await api(`/api/sessions/${encodeURIComponent(state.session)}/tasks/${encodeURIComponent(taskId)}/trace`);
+      panel = tracePanel(runs);
+    } catch (e) {
+      if (e.status === 401) return;
+      panel = el('div', 'run-trace');
+      panel.append(el('p', 'note', e.message || '读取执行记录失败。'));
+    } finally {
+      button.disabled = false;
+    }
+    part.querySelector('.reply-foot').after(panel);
+    button.setAttribute('aria-expanded', 'true');
+  });
+  return button;
+}
+
+function spanHead(span) {
+  const a = span.attrs || {};
+  if (span.kind === 'plan') return a.revision ? `规划 第 ${a.revision} 版` : '规划';
+  if (span.kind === 'route') return '选择执行方式';
+  if (span.kind === 'todo') return `清单 ${a.items || 0} 项（完成 ${a.done || 0}）`;
+  if (span.kind === 'task') return `任务 ${String(span.label).slice(0, 8)}`;
+  return `${SPAN_TEXT[span.kind] || span.kind} ${span.label}`;
+}
+
+function spanDetail(span) {
+  const a = span.attrs || {};
+  const parts = [];
+  if (span.kind === 'model') {
+    if (a.prompt_tokens != null) parts.push(`输入 ${number(a.prompt_tokens)}`);
+    if (a.completion_tokens != null) parts.push(`输出 ${number(a.completion_tokens)}`);
+    if (a.cached_tokens) parts.push(`缓存 ${number(a.cached_tokens)}`);
+    if (a.tool_calls) parts.push(`请求工具 ${a.tool_calls}`);
+    if (a.provider_calls > 1) parts.push(`请求 ${a.provider_calls} 次`);
+    if (a.response_model) parts.push(`服务商模型 ${a.response_model}`);
+  }
+  if (span.kind === 'tool') {
+    if (span.status === 'ok' && a.chars != null) parts.push(`${number(a.chars)} 字符`);
+    for (const [key, value] of Object.entries(a.args_summary || {})) {
+      if (value === null || typeof value !== 'object') parts.push(`${key}=${value}`);
+    }
+  }
+  if (span.kind === 'step' && a.runner) parts.push(`执行方式 ${a.runner}`);
+  if (SPAN_STATUS[span.status]) parts.push(SPAN_STATUS[span.status]);
+  if (a.denied_by) parts.push(`由 ${a.denied_by}`);
+  if (a.error) parts.push(`错误类型 ${a.error}`);
+  return parts.join(' · ');
+}
+
+function flatSpans(spans, depth = 0, out = []) {
+  for (const span of spans || []) {
+    out.push([span, depth]);
+    flatSpans(span.children, depth + 1, out);
+  }
+  return out;
+}
+
+function tracePanel(runs) {
+  const box = el('div', 'run-trace');
+  runs.forEach((run, index) => {
+    const section = el('section', 'trace-run');
+    if (runs.length > 1) section.append(el('h4', '', `第 ${index + 1} 次运行`));
+    const t = run.totals || {};
+    section.append(el('p', 'trace-totals',
+      [secondsText(run.seconds), `模型调用 ${t.model_calls || 0} 次`, `工具调用 ${t.tool_calls || 0} 次`,
+       `输入 ${number(t.prompt_tokens)}`, `输出 ${number(t.completion_tokens)}`, `缓存命中 ${number(t.cached_tokens)}`].join(' · ')));
+    if (!run.complete) section.append(el('p', 'trace-warning', '记录不完整：有调用没有结束记录、事件超过上限被丢弃，或运行没有正常结束。'));
+    if (run.paired_by_order) section.append(el('p', 'trace-warning', '这是旧版记录，没有调用之间的关系，按出现顺序平铺显示。'));
+    const rows = flatSpans(run.spans);
+    // The bars share one time axis: from the first span's start to the last span's end.
+    let first = Infinity, last = 0;
+    for (const [span] of rows) {
+      first = Math.min(first, span.start || 0);
+      last = Math.max(last, (span.start || 0) + (span.seconds || 0));
+    }
+    const range = Math.max(last - first, 0.001);
+    const list = el('ol', 'trace-rows');
+    for (const [span, depth] of rows) {
+      const row = el('li', `trace-row kind-${span.kind} status-${span.status}`);
+      const name = el('div', 'trace-name');
+      name.style.setProperty('--depth', String(depth));
+      name.append(el('span', 'trace-head', spanHead(span)));
+      const detail = spanDetail(span);
+      if (detail) name.append(el('span', 'trace-detail', detail));
+      const time = el('span', 'trace-time', span.status === 'unfinished' ? '未结束' : secondsText(span.seconds));
+      const lane = el('div', 'trace-lane');
+      const bar = el('span', 'trace-bar');
+      const left = ((span.start || 0) - first) / range * 100;
+      bar.style.setProperty('left', `${Math.min(Math.max(left, 0), 100)}%`);
+      bar.style.setProperty('width', `${Math.max((span.seconds || 0) / range * 100, 0.5)}%`);
+      lane.append(bar);
+      row.append(name, time, lane);
+      list.append(row);
+    }
+    section.append(list);
+    box.append(section);
+  });
+  return box;
 }
 
 function renderOutline() {
@@ -765,7 +892,8 @@ class LiveView {
       for (const card of this.approvals.values()) trace.append(card);   // what the user decided (D-061)
       trace.open = event.type === 'failed';
     }
-    const turn = {status: event.type, reply: event.content || event.question || '', finished_at: new Date().toISOString()};
+    const turn = {status: event.type, reply: event.content || event.question || '', finished_at: new Date().toISOString(),
+                  task_id: event.task_id};
     this.part.replaceWith(agentPart(turn, {message: event.message, usage: event.usage, trace}));
     if (event.type === 'blocked') { state.waiting = {task_id: event.task_id, question: event.question}; updateComposer(); }
     scrollToEnd();

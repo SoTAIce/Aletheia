@@ -201,7 +201,7 @@ class OpenAICompatibleToolCallingModel:
                 # the request was sent; its usage is unknown (D-034)
                 record_model_call(None, shared)
                 raise
-            record_model_call(getattr(raw_response, 'usage', None), shared)
+            record_model_call(getattr(raw_response, 'usage', None), shared, getattr(raw_response, 'model', None))
         except APIResponseValidationError as exc:
             raise _retryable(ModelResponseError("provider returned an invalid response")) from exc
         except APITimeoutError as exc:

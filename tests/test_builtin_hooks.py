@@ -67,9 +67,11 @@ async def test_each_run_leaves_one_audit_file_with_host_records_only(tmp_path):
     header, *events = read(path)
     assert header['type'] == 'audit' and header['mode'] == 'single' and header['read_only'] is False
     assert header['events'] == len(events) and header['dropped'] == 0
-    assert [e['type'] for e in events] == ['task_start', 'plan', 'before_model', 'after_model', 'before_tool',
-                                           'after_tool', 'before_model', 'after_model', 'step', 'task_end']
-    assert events[3]['prompt_tokens'] == 290 and events[-1]['total_tokens'] == 600
+    assert header['version'] == 2 and header['trace'] is True                # span ids (D-073)
+    assert [e['type'] for e in events] == ['task_start', 'scope_start', 'scope_end', 'plan', 'scope_start',
+                                           'before_model', 'after_model', 'before_tool', 'after_tool',
+                                           'before_model', 'after_model', 'scope_end', 'step', 'task_end']
+    assert events[6]['prompt_tokens'] == 290 and events[-1]['total_tokens'] == 600
     text = json.dumps(read(path), ensure_ascii=False)
     assert 'secret answer' not in text and 'private words' not in text
 

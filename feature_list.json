@@ -1257,6 +1257,35 @@
       "evidence": "2026-11-09 live before the change (user '先再跑评测', '再跑并保留答案'): loop tune 11/11 (output/bench-tune-loop-1109.json, 25 calls, 490,917 tokens; plan 11/11, 53 calls, 1,149,625), holdout 10/13 then 11/13 (bench-holdout-loop-1109.json, bench-holdout-loop-1109b.json; plan 11/13). Changing the service constructor default was tried and broke 60+ plan-semantics service tests, so it was kept as plan. Changed: app/agent/__main__.py, app/api/__main__.py, bench/run_bench.py, comment in rag_agent_service.py; tests in test_agent_loop.py, test_run_options.py, test_web_loop_runner.py (+1 test). Targeted 67 passed; init.ps1 PASS 1721 passed, 16 skipped. No live run after the change; not committed."
     },
     {
+      "id": "trace-plan-001",
+      "name": "Plan: tracing built on the hook events",
+      "description": "Design only, no code change (user 2026-11-09 '我还希望加入tracing', '先写方案'). docs/tracing_plan.md: span ids and parent scopes on hook events (audit file version 2), a pure trace_view builder with a text renderer, archive readers, a service method, a web endpoint and an execution panel, a CLI viewer and bench --keep-traces; local only, no new dependency, no model or tool text. Content capture, provider model name, OpenTelemetry export and live traces are listed as later decisions.",
+      "status": "done",
+      "dependencies": [
+        "loop-default-001"
+      ],
+      "acceptance": [
+        "The plan names every file to change, the tests, the records, the constraints and the questions the user must answer."
+      ],
+      "evidence": "docs/tracing_plan.md written 2026-11-09; checked against app/agent/hooks.py, builtin_hooks.py, runtime.py, agent_loop.py, conversation_archive.py save_audit, rag_agent_service.py _run_hooks and _turn_view, app/api/app.py routes as of 45291d9. Implemented as trace-001 on 2026-11-10."
+    },
+    {
+      "id": "trace-001",
+      "name": "Local tracing: spans, viewer, web panel",
+      "description": "docs/tracing_plan.md stage 1, implemented by Claude (user 2026-11-10: plan accepted, Codex quota limited). Span ids via hooks.trace_scope/root_span (task, route, plan, step, member); audit version 2 with a trace flag; TraceFileHook; app/agent/trace_view.py (build_trace, render_text, version 1 files paired by order); ConversationArchive.list_audits/load_audit; RagAgentService.task_traces; GET /api/sessions/{id}/tasks/{task}/trace (404 trace_unavailable); web run-record button and waterfall panel; python -m app.agent.trace; bench --keep-traces via ALETHEIA_TRACE_DIR/ALETHEIA_TRACE_NAME. Also the provider's response model name on after_model (plan section 8 item 2), kept apart from usage snapshots.",
+      "status": "done",
+      "dependencies": [
+        "trace-plan-001"
+      ],
+      "acceptance": [
+        "Model and tool events carry span ids and parents; parallel team members do not mix.",
+        "Audit files of version 1 and 2 build into a trace; unfinished and dropped events are marked.",
+        "CLI viewer, web endpoint and panel show a run's tree with times and tokens; no model or tool text is stored.",
+        "Deterministic tests and init.ps1 pass; no new dependency."
+      ],
+      "evidence": "2026-11-10: tests/test_trace.py 35 tests (span ids for ok/error/denied model and tool calls, nesting, parallel members, cancellation, no-hook passthrough, labels, model names, plan/loop/team trees, build_trace edge cases and version 1, fixed render_text, archive readers, service blocked+resume, web endpoint 200/404/400/401, CLI exit codes, bench env, trace file round trip); exact-event assertions in test_hooks.py, test_builtin_hooks.py, test_agent_loop.py updated. init.ps1 PASS 1756 passed, 16 skipped. Web panel checked in the browser with a scripted fake model (desktop and 375px, live finish and reloaded turn). planner.py, step_executor.py, tool_calling_step_runner.py untouched. No live model run; not committed."
+    },
+    {
       "id": "cleanup-stage0-plan-001",
       "name": "Plan: architecture stage 0, remove unused legacy code",
       "description": "Design only, no code change (user asked on 2026-11-08 for the next step as a plan to hand to Codex). docs/stage0_cleanup_plan.md: delete app/agent/aiops (6 files), app/agent/mcp_client.py (used only by aiops) and the mcp_demo registry_client and time_client; keep mcp_demo time_server and web_search_client (tests, README) and vector_index_service.py (the only code that indexes documents into the knowledge base, so the architecture review was wrong to call it legacy); leave the duplicated tool list of the plan runner, pyproject dependencies and a missing indexing command for later decisions. Lists the doc corrections, a guard test, records and constraints; implementation is cleanup-stage0-001.",

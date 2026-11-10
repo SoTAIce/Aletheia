@@ -48,6 +48,11 @@ FAILURE_MESSAGES = {
 }
 
 
+def _int_or_none(value):
+    """A trace label takes only a real integer (D-073)."""
+    return value if type(value) is int else None
+
+
 def _policy_denial(exc):
     """The gate refusal behind an error, if any (D-060); its reason is host-authored."""
     from app.agent.hooks import PolicyDeniedError
@@ -165,21 +170,23 @@ class AgentRuntime:
     async def run(self, *, on_event=None) -> AgentRunResult:
         """on_event, if given, is called synchronously with host-authored progress
         records ('plan', 'step'); it must not block, and its errors never affect the task."""
-        from app.agent.hooks import CallbackHook, TASK_END, TASK_START, current_hooks, using_hooks
+        from app.agent.hooks import CallbackHook, TASK_END, TASK_START, current_hooks, root_span, using_hooks
         async with self._lock:
             # The callback becomes one observer among the run's hooks (D-059).
             hooks = current_hooks()
             if on_event is not None:
                 hooks = hooks.with_observers(CallbackHook(on_event))
-            with using_hooks(hooks):
+            # The run is the root span of its trace (D-073).
+            with using_hooks(hooks), root_span() as span_id:
+                span = {'span_id': span_id, 'parent_id': None}
                 self._on_event = on_event
-                hooks.emit({'type': TASK_START, 'task_id': self.memory.task_state.task_id})
+                hooks.emit({'type': TASK_START, 'task_id': self.memory.task_state.task_id, **span})
                 try:
                     result = await self._run_locked()
                 except BaseException as exc:
                     hooks.emit({'type': TASK_END, 'task_id': self.memory.task_state.task_id,
                                 'status': 'cancelled' if isinstance(exc, asyncio.CancelledError) else 'error',
-                                'error': type(exc).__name__})
+                                'error': type(exc).__name__, **span})
                     raise
                 finally:
                     self._on_event = None
@@ -187,7 +194,7 @@ class AgentRuntime:
                 hooks.emit({'type': TASK_END, 'task_id': result.task_id, 'status': result.status.value,
                             'failure_kind': result.failure_kind, 'model_calls': usage.get('model_calls'),
                             'total_tokens': usage.get('total_tokens'),
-                            'cached_prompt_tokens': usage.get('cached_prompt_tokens')})
+                            'cached_prompt_tokens': usage.get('cached_prompt_tokens'), **span})
                 return result
 
     def _emit(self, event: dict) -> None:
@@ -305,9 +312,12 @@ class AgentRuntime:
                     self._replan_count += 1
                 try:
                     context = self._planner.build_context(self.memory)
-                    async with asyncio.timeout(self._meter.bound(self._planning_timeout)):
-                        proposal = await (self._planner.replan(context) if context.plan_revision
-                                          else self._planner.plan(context))
+                    from app.agent.hooks import trace_scope
+                    revision = _int_or_none(task.plan_revision)
+                    with trace_scope('plan', revision=None if revision is None else revision + 1):
+                        async with asyncio.timeout(self._meter.bound(self._planning_timeout)):
+                            proposal = await (self._planner.replan(context) if context.plan_revision
+                                              else self._planner.plan(context))
                     self._executor.accept_plan(proposal)
                     logger.info('Plan revision {}: {} step(s)', task.plan_revision, len(task.plan))
                     self._emit({'type': 'plan', 'revision': task.plan_revision,
@@ -336,11 +346,13 @@ class AgentRuntime:
             started = time.monotonic()
             try:
                 try:
-                    from app.agent.hooks import pausable_deadline
+                    from app.agent.hooks import pausable_deadline, trace_scope
                     # Time spent waiting for the user's approval does not count (D-061).
-                    async with asyncio.timeout(self._meter.bound(self._step_timeout)) as deadline:
-                        with pausable_deadline(deadline):
-                            receipt = await self._step_executor.execute(next_step.step_id)
+                    with trace_scope('step', index=self._execution_count,
+                                     revision=_int_or_none(task.plan_revision)):
+                        async with asyncio.timeout(self._meter.bound(self._step_timeout)) as deadline:
+                            with pausable_deadline(deadline):
+                                receipt = await self._step_executor.execute(next_step.step_id)
                 except BaseException as exc:
                     self._log_step(next_step.step_id, started, exc)
                     raise

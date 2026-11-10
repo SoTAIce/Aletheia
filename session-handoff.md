@@ -1,16 +1,17 @@
-# Current Session Handoff — 2026-11-09
+# Current Session Handoff — 2026-11-10
 
-## 新会话从这里开始（2026-11-09 默认改用单一循环）
+## 新会话从这里开始（2026-11-10 追踪已实现，未提交）
 
 **当前状态**
-- HEAD `64b2a49`（main，未推送）。loop-default-001 已完成但**未提交**：命令行、网页和评测的普通模式默认改为单一循环（D-072），`RagAgentService` 构造默认仍是 `plan`；要用按计划模式加 `--single-runner plan`。`feature_list.json` 的 active_feature=null。
-- init.ps1 通过：94 个 Python 文件，1721 项通过、16 项跳过。基线清单 [baseline-2026-11-09-kb3.json](docs/harness/history/baseline-2026-11-09-kb3.json)，核对命令见 docs/harness/baseline.md（本轮未刷新清单）。
+- HEAD `45291d9`（main，未推送）。loop-default-001 已完成并提交：命令行、网页和评测的普通模式默认改为单一循环（D-072），`RagAgentService` 构造默认仍是 `plan`；要用按计划模式加 `--single-runner plan`。`feature_list.json` 的 active_feature=null。
+- **trace-001 已实现，未提交**（2026-11-10，D-073）：事件带区间编号（审计第 2 版），`app/agent/trace_view.py` 拼树，命令行 `python -m app.agent.trace`，网页每条回复下的“执行记录”面板，评测 `--keep-traces 目录`，`after_model` 带服务商返回的模型名。用假模型在浏览器里看过面板；没有跑真实模型。
+- init.ps1 通过：1756 项通过、16 项跳过（2026-11-10）。基线清单 [baseline-2026-11-09-kb3.json](docs/harness/history/baseline-2026-11-09-kb3.json)，核对命令见 docs/harness/baseline.md（本轮未刷新清单）。
 - 改默认前的真实评测（单一循环）：调参集 11/11；留出集 10/13、11/13（`output/bench-*-1109*.json`，答案在 `output/answers-holdout-loop-1109b/`，不进版本库）。网页上用户自己试用，反馈流畅（未逐项确认）。详见 progress.md、D-072。
 - 知识库已真实建好：Milvus 集合 `biz` 里 61 个来源、844 块。Milvus **不会自启**；重启电脑后先开 Docker Desktop，再运行 `docker compose -f deploy/milvus/compose.yaml up -d`，见 common.md。
 
 **未提交的改动**
-- 本轮代码和测试：`app/agent/__main__.py`、`app/api/__main__.py`、`bench/run_bench.py`、`app/services/rag_agent_service.py`（一行注释）、`tests/test_agent_loop.py`、`tests/test_run_options.py`、`tests/test_web_loop_runner.py`。
-- 本项目的记录：`feature_list.json`、`progress.md`、`session-handoff.md`、`common.md`、`AGENTS.md`、`docs/DECISIONS.md`、`docs/PROJECT_HANDOVER.md`、`docs/DOCUMENT_INDEX.md`、`docs/harness/baseline.md`、`docs/harness/history/baseline-2026-11-09-kb3.json`。用户说提交时一起提交（`docs/harness/baseline.md` 的改动来自前几轮，提交前先看一眼）。
+- trace-001：`app/agent/hooks.py`、`builtin_hooks.py`、`run_meter.py`、`runtime.py`、`team_v2.py`、`agent_loop.py`、`openai_compatible_tool_calling_model.py`、`__main__.py`，新文件 `trace_view.py`、`trace.py`；`app/services/conversation_archive.py`、`rag_agent_service.py`；`app/api/app.py`、`static/app.js`、`static/app.css`；`bench/run_bench.py`；测试 `tests/test_trace.py`（新）和 `test_hooks.py`、`test_builtin_hooks.py`、`test_agent_loop.py`。
+- 记录：`docs/tracing_plan.md`（新）、`docs/DECISIONS.md`（D-073）、`common.md`、`AGENTS.md`、`docs/PROJECT_HANDOVER.md`、`docs/DOCUMENT_INDEX.md`、`feature_list.json`、`progress.md`、本文件。
 - **用户自己的差异，永远不进提交**：`README.md`；`app/agent/planner.py`、`app/agent/step_executor.py`、`app/agent/tool_calling_step_runner.py` 里的中文注释；删除的 `scripts/benchmark_conversation_memory.py`、`scripts/validate_multi_runner_live.py`、`scripts/validate_summary_context.py`。改这三个代码文件时只能暂存自己的那几处（`git hash-object -w` 加 `git update-index --cacheinfo`），不能整文件暂存。
 
 **工作方式**
@@ -19,10 +20,13 @@
 - 不推送、不 amend；真实模型、评测和嵌入接口每次都要用户明确授权。
 
 **下一步任务（按优先级，都要用户决定后才做）**
-1. **提交 loop-default-001**：只提交本轮代码、测试和记录，不碰用户差异。
-2. **循环模式里 `side_effects_qa` 未通过的原因**：只做离线分析，不必重跑（两种方式都不过）。
-3. **中转站换上游的疑点**：`fix_split_amount` 两次失败的首次请求提示令牌只有约 1,500～1,900（正常约 20,190）。可考虑在评测报告里记下服务商返回的模型名，以便以后确认；要先定方案。
-4. 小问题，不急：`--prune` 在目录为磁盘根时的前缀判断；嵌入服务里 `ValueError` 的范围可以再收窄；`--exclude` 补 `/absolute` 和单反斜杠绝对路径的专门测试；系统 TEMP 里 Codex 留下的空目录拒绝删除（不改访问权限）。
+1. **追踪（tracing）收尾**：等用户提交 trace-001；可选：用户在真实网页上点一次“执行记录”确认，或授权一次带 `--keep-traces` 的评测，用服务商模型名核对中转站。以后的选项（记录原文、OpenTelemetry、实时追踪）见 [方案](docs/tracing_plan.md) 第 8 节，都要用户另行决定。
+2. **选择工作目录**（用户 2026-11-09 提出，说明是后续更新，还没定方案）：希望在智能体里可以选择工作目录；选的目录涉及 C 盘时要给用户弹警告。现状是只能在启动时用 `--filesystem-root`、`--write-root` 指定。动手前要先写方案：在哪里选（网页逐条消息、网页设置，还是命令行交互）、读目录和写目录是否分开、警告的形式和是否要确认、和 D-029 敏感路径及写入目录限制的关系。
+3. 小问题，不急：`--prune` 在目录为磁盘根时的前缀判断；嵌入服务里 `ValueError` 的范围可以再收窄；`--exclude` 补 `/absolute` 和单反斜杠绝对路径的专门测试；系统 TEMP 里 Codex 留下的空目录拒绝删除（不改访问权限）。
+
+**用户已决定不做的**（2026-11-09：“agent 可以解决正常问题就可以”）
+- `side_effects_qa` 不再追：标准答案认为 `remember(item, history=[])` 只改默认参数、不算修改传入参数，模型每次都把它算进去；这是题目对边界情形的定义之争，不是智能体的能力问题。
+- 中转站疑似换上游（`fix_split_amount` 两次失败的首次请求提示令牌只有约 1,500～1,900，正常约 20,190）暂时不解决。
 
 ## 最新交接：kb-index-cli-003（已提交 `64b2a49`，真实建库完成）
 

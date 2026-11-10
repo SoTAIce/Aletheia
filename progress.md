@@ -7,7 +7,7 @@
 - **最新验收（2026-11-09）**：kb-index-cli-003 已提交为 `64b2a49`，真实建库完成（61 个文件、844 块，失败 0，与切块结果逐条一致）；init.ps1 94 个 Python 文件、1720 项通过、16 项跳过。
 - **仓库状态**：D:	riesgent，HEAD 64b2a49，未推送；工作区保留用户差异和本轮记录（含 common.md 新增的 Milvus 启动一节），未提交，active_feature=null。
 - **标准验收路径**：powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1；基线核对见 docs/harness/baseline.md。该检查不验证真实模型、外部服务或容器。
-- **当前限制与下一步**：命令行、网页和评测的普通模式默认已改为单一循环（loop-default-001，D-072，未提交）；init.ps1 1721 项通过、16 项跳过；完整任务列表见 session-handoff.md 顶部。Milvus 不自启，启动命令见 common.md。
+- **当前限制与下一步**：追踪 trace-001 已实现、未提交（D-073）；普通模式默认是单一循环（D-072，已提交 `45291d9`）；init.ps1 1756 项通过、16 项跳过；完整任务列表见 session-handoff.md 顶部。Milvus 不自启，启动命令见 common.md。
 
 ## 已确认基线（历史，未重新测量）
 
@@ -17,6 +17,19 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-10 — trace-001：本机追踪（用户“我感觉tracing比较合理，然后你负责实现吧，codeX额度有限了”）
+
+- **Result**：按 [追踪方案](docs/tracing_plan.md) 第一阶段实现（D-073）。`hooks.trace_scope`/`root_span` 给事件加区间编号和父子关系，作用域在 `runtime.py`（任务、规划、步骤）、`team_v2.py`（成员）、服务的路由选择；审计第 2 版；`TraceFileHook`；`trace_view.build_trace`/`render_text`（兼容第 1 版）；归档 `list_audits`/`load_audit`；服务 `task_traces`；接口 `GET /api/sessions/{session}/tasks/{task}/trace`；网页“执行记录”按钮和时间条面板；命令行 `python -m app.agent.trace`；评测 `--keep-traces`。并入服务商返回的模型名（`after_model.response_model`）。
+- **验证**：新增 `tests/test_trace.py` 35 项；更新 3 个逐字比较事件的测试。init.ps1 通过，1756 项通过、16 项跳过。`node --check app.js` 通过；用假模型起本机网页，在桌面宽度和 375px 下看过面板（运行结束时和刷新后都能打开，无横向滚动）。
+- **Not done**：没有跑真实模型或评测；未提交。`planner.py`、`step_executor.py`、`tool_calling_step_runner.py` 没有改。与方案的差别见方案第 10 节（按钮叫“执行记录”等）。
+
+### 2026-11-09 — trace-plan-001：追踪方案（用户“我还希望加入tracing”“先写方案”）
+
+- **Result**：写了 [追踪方案](docs/tracing_plan.md)：在现有 hook 事件上加区间编号和父子关系（审计文件第 2 版）、`trace_view.py` 把事件拼成树并输出文字、归档读取、服务方法、网页接口和“执行过程”面板、命令行查看、评测 `--keep-traces`。本机、不加依赖、不记原文；记录原文、服务商模型名、OpenTelemetry 导出、实时追踪列为以后另行决定。
+- **依据**：对照了 `hooks.py`、`builtin_hooks.py`、`runtime.py`、`agent_loop.py`、`conversation_archive.py`、`rag_agent_service.py`、`app/api/app.py`（HEAD `45291d9`）。现有事件没有调用编号和所属步骤或成员，审计文件没有读取入口，评测不产生审计文件。
+- **同时记录**：用户决定 `side_effects_qa` 和中转站疑似换上游不再处理；提出“选择工作目录、涉及 C 盘弹警告”为后续功能（未定方案）。交接里 loop-default-001 的状态改为已提交 `45291d9`。
+- **Not done**：未实现（trace-001 为 planned）；方案第 9 节的问题待用户回答；本条和方案未提交。只改了文档和功能表；登记后 init.ps1 通过（管理状态检查和确定性测试，未改代码）。
 
 ### 2026-11-09 — loop-default-001：默认改用单一循环（用户“改成单一循环”“改完写好文档”）
 

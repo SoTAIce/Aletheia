@@ -22,6 +22,19 @@ def _non_negative_int(value):
     return value if type(value) is int and value >= 0 else None
 
 
+_MODEL_NAME_CHARS = 100
+
+
+def _model_name(value):
+    """A provider's model name as a short label: printable ASCII only, or None."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or len(value) > _MODEL_NAME_CHARS or not all(' ' < ch <= '~' for ch in value):
+        return None
+    return value
+
+
 def _cached_tokens(usage):
     """Cached prompt tokens as OpenAI-compatible providers report them
     (usage.prompt_tokens_details.cached_tokens), or None when not reported."""
@@ -47,6 +60,9 @@ class RunMeter:
     # cached (None = not reported), completion, and how much of the previous request to the
     # same model this one starts with unchanged (shared_prefix, 0..1; None = unknown).
     call_log: list = field(default_factory=list)
+    # The model name each logged call's response reported (None = not reported), kept apart from
+    # call_log so usage snapshots and reports stay as they were; read by the trace (D-073).
+    response_models: list = field(default_factory=list)
     started: float = field(default_factory=time.monotonic)
 
     def __post_init__(self):
@@ -61,8 +77,9 @@ class RunMeter:
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
 
-    def record(self, usage, shared_prefix: float | None = None) -> None:
-        """Add one provider call; usage is the provider's usage object, or None."""
+    def record(self, usage, shared_prefix: float | None = None, model: str | None = None) -> None:
+        """Add one provider call; usage is the provider's usage object, or None; model is the
+        model name the response reported."""
         self.model_calls += 1
         prompt = _non_negative_int(getattr(usage, 'prompt_tokens', None))
         completion = _non_negative_int(getattr(usage, 'completion_tokens', None))
@@ -73,6 +90,7 @@ class RunMeter:
             share = shared_prefix if isinstance(shared_prefix, float) and 0 <= shared_prefix <= 1 else None
             self.call_log.append({'prompt': prompt, 'cached': cached, 'completion': completion,
                                   'shared_prefix': None if share is None else round(share, 3)})
+            self.response_models.append(_model_name(model))
         if prompt is None and completion is None:
             self.calls_without_usage += 1
             return
@@ -162,7 +180,7 @@ def metering(meter: RunMeter):
         _current.reset(token)
 
 
-def record_model_call(usage, shared_prefix: float | None = None) -> None:
+def record_model_call(usage, shared_prefix: float | None = None, model: str | None = None) -> None:
     meter = _current.get()
     if meter is not None:
-        meter.record(usage, shared_prefix)
+        meter.record(usage, shared_prefix, model)

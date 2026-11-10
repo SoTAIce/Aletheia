@@ -27,7 +27,12 @@ class Recorder:
         self.events.append(event)
 
     def types(self):
-        return [e['type'] for e in self.events]
+        return [e['type'] for e in self.events if not e['type'].startswith('scope_')]
+
+
+def untraced(event):
+    """An event without its span ids (D-073), which tests/test_trace.py checks."""
+    return {k: v for k, v in event.items() if k not in ('span_id', 'parent_id')}
 
 
 class DenyTool:
@@ -68,12 +73,13 @@ async def test_events_come_in_order_and_carry_no_model_or_tool_text(tmp_path):
     assert recorder.types() == ['task_start', 'plan', 'before_model', 'after_model', 'before_tool',
                                 'after_tool', 'before_model', 'after_model', 'step', 'task_end']
     by_type = {e['type']: e for e in recorder.events}
-    assert by_type['before_tool'] == {'type': 'before_tool', 'tool': 'get_current_time', 'call_id': 'c1',
+    assert untraced(by_type['before_tool']) == {'type': 'before_tool', 'tool': 'get_current_time', 'call_id': 'c1',
                                       'side_effect': False, 'args_summary': {}}
     assert by_type['after_tool']['success'] is True and by_type['after_tool']['chars'] > 0
-    first_model = recorder.events[2]
+    calls = [e for e in recorder.events if not e['type'].startswith('scope_')]
+    first_model = calls[2]
     assert first_model['purpose'] == 'step' and first_model['callable_tools'] > 0
-    assert recorder.events[3]['tool_calls'] == 1
+    assert calls[3]['tool_calls'] == 1
     assert by_type['task_end']['status'] == 'completed' and by_type['task_end']['task_id'] == result.task_id
     text = json.dumps(recorder.events, ensure_ascii=False)
     assert 'secret answer' not in text and 'What time' not in text
@@ -101,7 +107,7 @@ async def test_a_denied_tool_is_not_run_and_the_model_is_told(tmp_path):
     told = json.loads(model.generate.call_args_list[1].args[0][-1].content)
     assert told['success'] is False and told['error'] == 'not executed: not on this page'
     after = [e for e in recorder.events if e['type'] == 'after_tool']
-    assert after == [{'type': 'after_tool', 'tool': 'get_current_time', 'call_id': 'c1', 'side_effect': False,
+    assert [untraced(e) for e in after] == [{'type': 'after_tool', 'tool': 'get_current_time', 'call_id': 'c1', 'side_effect': False,
                       'success': False, 'chars': 0, 'seconds': 0.0, 'denied_by': 'deny-tool'}]
     assert result.step_log[0]['tools'][0]['success'] is False
 
