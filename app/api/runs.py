@@ -30,6 +30,11 @@ class ApiError(Exception):
 def service_error(exc: Exception) -> ApiError:
     """Map the service's host-authored refusals to API codes; anything else is internal."""
     text = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else ''
+    from app.services.workspace import WorkspaceConfirmationRequired, WorkspaceError
+    if isinstance(exc, WorkspaceConfirmationRequired):
+        return ApiError(409, 'workspace_confirmation_required', exc.message)
+    if isinstance(exc, WorkspaceError):
+        return ApiError(400, 'workspace_invalid', exc.message)
     if isinstance(exc, ValueError):
         if 'request ID conflict' in text or 'archived result conflicts' in text:
             return ApiError(409, 'request_conflict', '这个请求编号已经用于另一条消息。')
@@ -54,6 +59,7 @@ class Run:
     question_id: str | None
     requested: dict = field(default_factory=dict)   # options as submitted, for idempotency (D-051)
     options: dict | None = None                     # options in effect: mode, runner, write, memory (D-065)
+    attachments: tuple = ()                         # refs of text files dropped into the message (workspace-001)
     events: list[dict] = field(default_factory=list)
     status: str = 'running'          # running | completed | blocked | failed | cancelled
     finished_at: float | None = None
@@ -137,7 +143,8 @@ class RunManager:
 
     def start(self, session_id: str, content: str, request_id: str, *,
               resume_task_id: str | None = None, question_id: str | None = None,
-              options: dict | None = None, requested: dict | None = None) -> tuple[Run, bool]:
+              options: dict | None = None, requested: dict | None = None,
+              attachments=()) -> tuple[Run, bool]:
         """Start a run, or return the same run for a repeated request_id. Returns (run, created).
 
         options are the resolved choices of a new task; a resume ignores them and keeps the
@@ -161,7 +168,7 @@ class RunManager:
         if resume_task_id is not None:
             options = self._service.task_options(session_id, resume_task_id, user_id=self._user_id)
         run = Run(request_id, session_id, content, resume_task_id, question_id, dict(requested or {}),
-                  dict(options) if options is not None else None)
+                  dict(options) if options is not None else None, attachments=tuple(attachments))
         self._runs[request_id] = run
         self._active_by_session[session_id] = request_id
         run.add({'type': 'accepted', 'run_id': request_id, 'session_id': session_id})
@@ -173,6 +180,11 @@ class RunManager:
         if run.resume_task_id is None and run.options is not None:
             choices = {'execution_mode': run.options['mode'], 'allow_writes': run.options['write'],
                        'use_memory': run.options['memory'], 'single_runner': run.options.get('runner')}
+            if run.options.get('workspace'):              # workspace-001: checked again by the service
+                choices.update(workspace=run.options['workspace'],
+                               workspace_confirmed=bool(run.options.get('workspace_confirmed')))
+        if run.attachments:
+            choices['attachments'] = run.attachments
         if self._approval_tools:
             # Side-effect tools wait for the person on the page (D-061).
             from app.agent.hooks import HookSet

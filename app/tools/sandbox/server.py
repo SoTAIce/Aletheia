@@ -38,8 +38,8 @@ def run_python_code_text(sandbox: DockerSandbox, code: str) -> str:
         raise ValueError(str(exc)) from None
 
 
-def create_server(workspace: Path, sandbox: DockerSandbox | None = None) -> FastMCP:
-    sandbox = sandbox or DockerSandbox(workspace)
+def create_server(workspace: Path, sandbox: DockerSandbox | None = None, denied=()) -> FastMCP:
+    sandbox = sandbox or DockerSandbox(workspace, denied=denied)
     mcp = FastMCP('AletheiaSandbox')
 
     @mcp.tool()
@@ -79,8 +79,10 @@ def create_server(workspace: Path, sandbox: DockerSandbox | None = None) -> Fast
 def main() -> None:
     parser = argparse.ArgumentParser(description='Aletheia sandbox MCP server')
     parser.add_argument('--workspace', required=True)
+    parser.add_argument('--deny', action='append', default=[],
+                        help='A folder the agent may never read or write (repeatable)')
     args = parser.parse_args()
-    create_server(Path(args.workspace)).run()
+    create_server(Path(args.workspace), denied=tuple(args.deny)).run()
 
 
 if __name__ == '__main__':

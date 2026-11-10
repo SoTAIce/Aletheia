@@ -370,3 +370,39 @@ kbd { font: 11.5px/1 var(--mono); padding: 3px 6px; border: 1px solid var(--rule
 .approval-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
 .approval-actions button:disabled { opacity: .5; cursor: default; }
 .approval-result { font-size: 13.5px; color: var(--muted); }
+
+/* Working directory and attachments (workspace-001, D-074). */
+.dir-btn {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 260px; height: 28px; padding: 0 11px;
+  border-radius: 999px; border: 1px dashed var(--rule-strong); background: var(--card); color: var(--ink-2); font-size: 12.5px;
+}
+.dir-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.dir-btn svg { width: 14px; height: 14px; }
+.dir-btn:hover:not(:disabled) { border-color: var(--ink-2); }
+.dir-btn:disabled { opacity: .45; cursor: not-allowed; }
+.dir-btn.system { border-color: var(--warn); color: var(--warn); background: var(--warn-wash); }
+.attachments:not([hidden]) { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.attachment { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 4px 2px 10px; border-radius: 8px; background: var(--paper-2); font-size: 12.5px; color: var(--ink-2); }
+.attachment .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.attachment .size { color: var(--muted); }
+.attachment button { border: none; background: none; color: var(--muted); padding: 2px; display: inline-grid; place-items: center; }
+.attachment button:hover { color: var(--fail); }
+.attachment svg { width: 12px; height: 12px; }
+.composer.dropping { border-color: var(--accent); background: var(--accent-wash); }
+.drop-hint { font-size: 12.5px; color: var(--accent); margin-top: 4px; }
+.dialog { border: 1px solid var(--rule-strong); border-radius: 14px; padding: 0; width: min(480px, calc(100vw - 32px)); background: var(--card); color: var(--ink); box-shadow: 0 12px 40px rgba(0, 0, 0, .18); }
+.dialog::backdrop { background: rgba(20, 19, 17, .35); }
+.dialog-body { display: grid; gap: 12px; padding: 20px 22px 18px; }
+.dialog-title { margin: 0; font-size: 17px; font-weight: 600; }
+.dialog-body p { margin: 0; font-size: 14px; color: var(--ink-2); }
+.dialog-path { font-family: var(--mono); font-size: 13px !important; color: var(--ink) !important; overflow-wrap: anywhere; background: var(--paper-2); padding: 6px 10px; border-radius: 8px; }
+.dialog-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dialog-actions .spacer { flex: 1; }
+.dialog .ghost-btn { color: var(--ink-2); }
+.dialog .pill { padding: 6px 16px; }
+.danger-btn { border: none; border-radius: 999px; padding: 6px 16px; font-size: 13.5px; background: var(--fail); color: #fff; }
+.danger-btn:hover { opacity: .9; }
+.dir-recent:empty { display: none; }
+.dir-recent { display: flex; flex-direction: column; gap: 2px; }
+.dir-recent button { text-align: left; border: none; background: none; padding: 4px 8px; border-radius: 6px; font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; }
+.dir-recent button:hover { background: var(--active); }

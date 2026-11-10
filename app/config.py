@@ -118,6 +118,12 @@ class Settings(BaseSettings):
     mcp_monitor_url: str = "http://localhost:8004/mcp"
     mcp_filesystem_root: str = ""
     mcp_filesystem_write_root: str = ""
+    # Choosing the working directory (workspace-001, D-074): folders the agent may never read or
+    # write, and optionally the only folders a working directory may be in (both ';'-separated).
+    # The web page offers the choice on a loopback host, elsewhere only with allowed roots.
+    workspace_choice: bool = True
+    workspace_deny_dirs: str = ""
+    workspace_allowed_roots: str = ""
     tavily_api_key: str = ""
 
     prometheus_base_url: str = "http://127.0.0.1:9090"

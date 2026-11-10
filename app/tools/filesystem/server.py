@@ -14,12 +14,14 @@ def create_server(
     write_root: Path | None = None,
     max_read_bytes: int = 64 * 1024,
     max_write_bytes: int = 64 * 1024,
+    denied: tuple = (),
 ) -> FastMCP:
     file_access = FileAccess(
         root=root,
         write_root=write_root,
         max_read_bytes=max_read_bytes,
         max_write_bytes=max_write_bytes,
+        denied=tuple(denied),
     )
     mcp = FastMCP("AletheiaFilesystem")
 
@@ -89,6 +91,8 @@ def main() -> None:
     parser.add_argument("--write-root", type=Path, help="Existing absolute WRITE directory; omitted means read-only")
     parser.add_argument("--max-read-bytes", type=int, default=64 * 1024)
     parser.add_argument("--max-write-bytes", type=int, default=64 * 1024)
+    parser.add_argument("--deny", type=Path, action="append", default=[],
+                        help="A folder the agent may never read or write (repeatable)")
     args = parser.parse_args()
     try:
         server = create_server(
@@ -96,6 +100,7 @@ def main() -> None:
             write_root=args.write_root,
             max_read_bytes=args.max_read_bytes,
             max_write_bytes=args.max_write_bytes,
+            denied=tuple(args.deny),
         )
     except (OSError, ValueError, TypeError) as exc:
         parser.error(str(exc))

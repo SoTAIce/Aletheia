@@ -104,6 +104,12 @@ def _check_limit(limit) -> None:
 MODES = ('single', 'team', 'auto')
 
 
+MAX_ATTACHMENTS = 5
+MAX_ATTACHMENT_CHARS = 1_000_000
+WORKSPACE_CHANGED_NOTE = ('The working directory of this conversation has changed since the earlier turns; '
+                          'file paths mentioned before refer to the previous directory and may not exist now.')
+
+
 def _check_choice(name, value) -> None:
     if value is not None and type(value) is not bool:
         raise ValueError(f'{name} must be true, false or None')
@@ -143,6 +149,7 @@ class RagAgentService:
         runner_requirements: RequirementsProvider | None = None,
         execution_mode: str = 'single', team_options=None, hooks=None,
         single_runner: str = 'plan', loop_options=None,
+        workspace_servers=None, workspace_policy=None, default_workspace: str | None = None,
     ) -> None:
         self.streaming = streaming
         self.model = model
@@ -185,6 +192,17 @@ class RagAgentService:
             write_root=config.mcp_filesystem_write_root or None,
             tavily_api_key=config.tavily_api_key,
         )
+        # Choosing the working directory (workspace-001, D-074): workspace_servers(root, writable)
+        # gives one run's tool servers for a checked directory; None keeps the fixed mcp_servers.
+        if workspace_servers is not None and not callable(workspace_servers):
+            raise TypeError('workspace_servers must be callable')
+        from app.services.workspace import WorkspacePolicy
+        if workspace_policy is not None and not isinstance(workspace_policy, WorkspacePolicy):
+            raise TypeError('workspace_policy must be WorkspacePolicy')
+        self._workspace_servers = workspace_servers
+        self._workspace_policy = workspace_policy or (WorkspacePolicy.from_config() if workspace_servers else None)
+        self._default_workspace = str(Path(default_workspace).resolve()) if default_workspace else None
+        self._session_workspaces: dict = {}     # conversation key -> directory of its last task
         self._knowledge_search = knowledge_search
         self._include_knowledge = include_knowledge
         self._limits = dict(max_executions=max_executions, max_replans=max_replans,
@@ -302,10 +320,38 @@ class RagAgentService:
         """Per-request choices this service accepts (D-051). A mode outside these is refused; the
         default mode is always accepted. Team and auto need the team prepared at startup."""
         accepted = {'single', self._execution_mode} | ({'team', 'auto'} if self._team_options is not None else set())
-        return {'modes': [m for m in MODES if m in accepted], 'default_mode': self._execution_mode,
-                'runners': ['plan', 'loop'] if self._runner_options['runner_registry'] is None else ['plan'],
-                'default_runner': self._single_runner,
-                'memory_available': self._longterm_memory is not None}
+        offered = {'modes': [m for m in MODES if m in accepted], 'default_mode': self._execution_mode,
+                   'runners': ['plan', 'loop'] if self._runner_options['runner_registry'] is None else ['plan'],
+                   'default_runner': self._single_runner,
+                   'memory_available': self._longterm_memory is not None}
+        if self._workspace_servers is not None:      # only when offered, so the old answer stays as it was
+            offered.update(workspace_available=True, default_workspace=self._default_workspace)
+        return offered
+
+    def check_workspace(self, path):
+        """Whether a directory can be the working directory (workspace-001); nothing is listed."""
+        if self._workspace_servers is None:
+            raise ValueError('workspace choice is not available')
+        return self._workspace_policy.check(path)
+
+    async def save_attachment(self, session_id: str, name: str, text: str, *, user_id: str | None = None) -> dict:
+        """Keep a text file the user dropped into the conversation (workspace-001); the model
+        reads it with read_context_artifact. Needs the conversation archive."""
+        self._validate_identity(user_id)
+        self._validate_input('attachment', session_id)
+        if not self._memory_directory:
+            raise ValueError('attachments need the conversation archive')
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError('attachment name must not be empty')
+        name = name.replace('\\', '/').rsplit('/', 1)[-1].strip()[:200]
+        if not isinstance(text, str) or not text or len(text) > MAX_ATTACHMENT_CHARS or '\x00' in text:
+            raise ValueError(f'attachment must be text of 1 to {MAX_ATTACHMENT_CHARS} characters')
+        root, label = self._archive_root(user_id), self._archive_label(user_id, session_id)
+
+        def save():
+            return ConversationArchive(root, label).save_text(text, kind='upload', metadata={'name': name})
+        ref = await asyncio.to_thread(save)
+        return {'ref': ref, 'name': name, 'chars': len(text)}
 
     def task_options(self, session_id: str, task_id: str, *, user_id: str | None = None) -> dict | None:
         """The run options a live blocked task started with; a resume keeps them (D-051)."""
@@ -330,7 +376,8 @@ class RagAgentService:
         question_id: str | None = None, on_event=None,
         execution_mode: str | None = None, allow_writes: bool | None = None, use_memory: bool | None = None,
         single_runner: str | None = None,
-        hooks=None,
+        hooks=None, workspace: str | None = None, workspace_confirmed: bool = False,
+        attachments=None,
     ) -> AgentRunResult:
         """on_event, if given, receives host-authored progress records ('route',
         then the runtime's 'plan' and 'step'); see AgentRuntime.run (D-045).
@@ -351,6 +398,18 @@ class RagAgentService:
             raise ValueError('single_runner loop assembles its own runner registry')
         _check_choice('allow_writes', allow_writes)
         _check_choice('use_memory', use_memory)
+        _check_choice('workspace_confirmed', workspace_confirmed)
+        if workspace is not None:
+            if self._workspace_servers is None:
+                raise ValueError('workspace choice is not available')
+            # Checked here again whatever the caller checked (D-074); raises WorkspaceError.
+            workspace = self._workspace_policy.require(workspace, confirmed=bool(workspace_confirmed))
+        attachments = tuple(attachments or ())
+        if len(attachments) > MAX_ATTACHMENTS or not all(isinstance(r, str) and r for r in attachments):
+            raise ValueError(f'at most {MAX_ATTACHMENTS} attachment references')
+        if attachments and resume_task_id is not None:
+            # A resumed loop continues its own messages and would not see a new pinned note.
+            raise ValueError('attachments go with a new message, not with an answer')
         if use_memory and self._longterm_memory is None:
             raise ValueError('long-term memory is not configured')
         for name, value in (('request_id', request_id), ('resume_task_id', resume_task_id), ('question_id', question_id)):
@@ -427,6 +486,8 @@ class RagAgentService:
                            'runner': single_runner or self._single_runner,
                            'write': True if allow_writes is None else allow_writes,
                            'memory': (self._longterm_memory is not None) if use_memory is None else use_memory}
+                if self._workspace_servers is not None:
+                    options['workspace'] = workspace       # None: the startup directory and its servers
             task = memory.task_state
             turn = ConversationTurn([ConversationMessage(MessageRole.USER, question, stamp)], turn_id, stamp,
                                     task_id=task.task_id, status=TurnStatus.RECEIVED, question_id=question_id)
@@ -460,7 +521,15 @@ class RagAgentService:
                 )
                 if runtime is not None:
                     task.resolve_question(question_id, question)
-                else:
+                if attachments:
+                    task.pin_content(await self._attachment_note(conversation, attachments), 'attachments')
+                current = options.get('workspace') or self._default_workspace
+                previous = self._session_workspaces.get(key)
+                if runtime is None and previous is not None and previous != current:
+                    task.pin_content(WORKSPACE_CHANGED_NOTE, 'workspace_note')
+                if runtime is None and current:
+                    self._session_workspaces[key] = current
+                if runtime is None:
                     history = await context_manager.prepare_conversation(conversation, task.active_goal)
                     task.pin_content(history, 'conversation_memory')
                     if self._longterm_memory is not None and options['memory']:
@@ -480,7 +549,7 @@ class RagAgentService:
                     if self._planner_model is None:
                         planner_model = PlanningModel(ContextManagedModel(model, context_manager))
                     async with open_tool_registry(
-                        memory, mcp_servers=self._mcp_servers, conversation=conversation,
+                        memory, mcp_servers=self._servers_for(options), conversation=conversation,
                         knowledge_search=self._knowledge_search, include_knowledge=self._include_knowledge,
                         local_tools=(ContextArchiveTool(conversation.archive, context_manager.tool_result_chars),)
                                     if conversation.archive else (),
@@ -501,7 +570,8 @@ class RagAgentService:
                         self._task_options[(key, task.task_id)] = options
                         route = choice.mode
                         if audit is not None:
-                            audit.note(mode=route, read_only=choice.read_only)
+                            audit.note(mode=route, read_only=choice.read_only,
+                                       workspace=options.get('workspace') or self._default_workspace)
                         _emit(on_event, {'type': 'route', 'mode': route, 'read_only': choice.read_only,
                                          'options': dict(options)})
                         # Read-only tasks lose write tools and get read-only runs (D-027/D-028).
@@ -679,6 +749,27 @@ class RagAgentService:
                 traces.append(trace)
             return sorted(traces, key=lambda t: str(t.get('started_at') or ''))
         return await asyncio.to_thread(read)
+
+    def _servers_for(self, options):
+        """The tool servers of one run: the chosen working directory's, or the fixed ones."""
+        if self._workspace_servers is not None and options.get('workspace'):
+            return tuple(self._workspace_servers(options['workspace'], bool(options['write'])))
+        return self._mcp_servers
+
+    async def _attachment_note(self, conversation, refs):
+        """A host note naming the files the user attached; the texts stay in the archive."""
+        if conversation.archive is None:
+            raise ValueError('attachments need the conversation archive')
+        files = []
+        for ref in refs:
+            info = await asyncio.to_thread(conversation.archive.artifact_info, ref)   # foreign refs raise
+            if info['kind'] != 'upload':
+                raise ValueError('not an attachment reference')
+            files.append({'name': info['metadata'].get('name'), 'ref': ref, 'chars': info['chars']})
+        return json.dumps({'attachments': files,
+                           'how_to_read': 'The user attached these text files to this message. Read them '
+                                          'with read_context_artifact(ref), in pieces when long.'},
+                          ensure_ascii=False)
 
     async def _choose_route(self, question, model, mode, team_options):
         """single/team are the user's choice; auto applies host rules, then one model call."""

@@ -1270,6 +1270,34 @@
       "evidence": "docs/tracing_plan.md written 2026-11-09; checked against app/agent/hooks.py, builtin_hooks.py, runtime.py, agent_loop.py, conversation_archive.py save_audit, rag_agent_service.py _run_hooks and _turn_view, app/api/app.py routes as of 45291d9. Implemented as trace-001 on 2026-11-10."
     },
     {
+      "id": "workspace-plan-001",
+      "name": "Plan: choose the working directory, with a system drive warning",
+      "description": "Design only, no code change (user 2026-11-09 asked to choose the agent's working directory and be warned when it is on the C drive; 2026-11-10 '可以先做第一项，输出方案'). docs/workspace_choice_plan.md: one working directory for reads and writes (writes still per message), app/services/workspace.py check_workspace with a host refusal list (drive roots, network paths, system folders, the project's data directories) and an optional WORKSPACE_ALLOWED_ROOTS, a server-checked system drive confirmation (409 workspace_confirmation_required), a per-run tool server factory in RagAgentService, a web workspace bar with a confirm dialog and POST /api/workspace/check, an interactive /dir command, off by default (--choose-workspace), allowed roots required when the web server listens beyond loopback. It changes D-051's 'write scope only from startup arguments', which the user must confirm.",
+      "status": "done",
+      "dependencies": [
+        "trace-001"
+      ],
+      "acceptance": [
+        "The plan names every file to change, the refusal list, the tests, the records, the constraints and the questions the user must answer."
+      ],
+      "evidence": "docs/workspace_choice_plan.md written 2026-11-10 after reading tool_loader.local_mcp_servers, app/tools/filesystem/file_access.py, rag_agent_service.py query_result options and open_tool_registry, app/agent/__main__.py and app/api/__main__.py startup, app/api/app.py RunOptionsIn, app.js renderOptions, D-029 and D-051 at db13d64. Not implemented."
+    },
+    {
+      "id": "workspace-001",
+      "name": "Choose the working directory per session",
+      "description": "docs/workspace_choice_plan.md with the user's answers (section 10), implemented by Claude on branch exp/workspace-choice in a worktree. app/services/workspace.py (WorkspacePolicy.check/require, confirm_startup); FileAccess, the filesystem server and the sandbox take --deny folders; tool_loader.workspace_servers; RagAgentService workspace/workspace_confirmed/attachments, check_workspace, save_attachment, a workspace-changed note; web: options.workspace, POST /api/workspace/check, POST /api/sessions/{id}/attachments, a folder button, a directory dialog, a system drive confirmation dialog, drag and drop of UTF-8 text files; CLI /dir and --confirm-system-drive for both launchers; bench passes --confirm-system-drive; WORKSPACE_CHOICE, WORKSPACE_DENY_DIRS, WORKSPACE_ALLOWED_ROOTS.",
+      "status": "done",
+      "dependencies": [
+        "workspace-plan-001"
+      ],
+      "acceptance": [
+        "Refused directories are refused by the service, not only the page; a system drive directory needs a confirmation the server checks.",
+        "A run's file and sandbox tools use the chosen directory; a resumed task keeps its directory; with the feature off every entry point behaves as before.",
+        "Deterministic tests and init.ps1 pass; no new dependency."
+      ],
+      "evidence": "2026-11-10 on exp/workspace-choice: tests/test_workspace.py 37 tests (refusal codes, system places and the temp exception, system drive root only, junction into the system drive, closed folders and allowed roots, settings, startup confirmation, FileAccess and sandbox hiding closed folders, server --deny args, service directory/resume/note/attachments, web endpoints incl. 409 confirmation, launcher loopback rule, CLI /dir with y/n, bench flag); test_run_options.py launcher test pinned to the old semantics (choice off, a real temp root). init.ps1 PASS 1793 passed, 16 skipped. Browser with a scripted fake model and the real filesystem server: chose a D: folder (listing came from it), a C: temp folder (dialog, Esc cancels, confirm works, button turns amber), dropped a text and a binary file (text attached, binary refused), sent both, 375px without horizontal scroll. No live model run. Not merged into main."
+    },
+    {
       "id": "trace-001",
       "name": "Local tracing: spans, viewer, web panel",
       "description": "docs/tracing_plan.md stage 1, implemented by Claude (user 2026-11-10: plan accepted, Codex quota limited). Span ids via hooks.trace_scope/root_span (task, route, plan, step, member); audit version 2 with a trace flag; TraceFileHook; app/agent/trace_view.py (build_trace, render_text, version 1 files paired by order); ConversationArchive.list_audits/load_audit; RagAgentService.task_traces; GET /api/sessions/{id}/tasks/{task}/trace (404 trace_unavailable); web run-record button and waterfall panel; python -m app.agent.trace; bench --keep-traces via ALETHEIA_TRACE_DIR/ALETHEIA_TRACE_NAME. Also the provider's response model name on after_model (plan section 8 item 2), kept apart from usage snapshots.",

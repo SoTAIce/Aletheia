@@ -20,6 +20,8 @@
     <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2" fill="none"/><path d="M12 8v4l2.5 2" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2" stroke="currentColor" stroke-width="1.8" fill="none"/><path d="M5 15V6a1 1 0 0 1 1-1h9" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></symbol>
     <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linejoin="round"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="m19 11.5-7.4 7.4a4.6 4.6 0 0 1-6.5-6.5l7.8-7.8a3 3 0 0 1 4.3 4.3l-7.7 7.7a1.5 1.5 0 0 1-2.1-2.1l7-7" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
   </svg>
 
@@ -70,7 +72,9 @@
           <span id="waiting-question"></span>
         </div>
         <form id="composer" class="composer">
+          <div id="attachments" class="attachments" hidden></div>
           <textarea id="input" rows="1" placeholder="描述你想完成的事情"></textarea>
+          <div id="drop-hint" class="drop-hint" hidden>松开鼠标，把文本文件附到这条消息</div>
           <div class="composer-bar">
             <div id="run-options" class="run-options" hidden>
               <label class="opt-mode" title="普通：一个执行者按计划逐步完成；团队：负责人把任务委派给执行者；自动：每个新任务先判断用哪种">
@@ -90,6 +94,9 @@
               </label>
               <button id="opt-write" class="chip" type="button" aria-pressed="false">写文件</button>
               <button id="opt-memory" class="chip" type="button" aria-pressed="false">长期记忆</button>
+              <button id="opt-dir" class="dir-btn" type="button" hidden><svg><use href="#i-folder"/></svg><span id="opt-dir-text"></span></button>
+              <button id="attach-btn" class="dir-btn" type="button" hidden aria-label="附加文本文件"><svg><use href="#i-clip"/></svg><span>附件</span></button>
+              <input id="attach-input" type="file" multiple hidden>
             </div>
             <span id="hint" class="hint">Enter 发送，Shift+Enter 换行</span>
             <span id="run-chip" class="running" hidden><span class="pulse"></span>运行中</span>
@@ -120,5 +127,35 @@
       <p id="memory-empty" class="muted" hidden>还没有长期记忆。</p>
     </aside>
   </div>
+
+  <dialog id="dir-dialog" class="dialog" aria-labelledby="dir-title">
+    <form id="dir-form" class="dialog-body">
+      <h2 id="dir-title" class="dialog-title">工作目录</h2>
+      <p class="muted">智能体读文件、写文件都在这个目录里。填写完整路径，例如 D:\projects\demo。</p>
+      <label class="sr-only" for="dir-input">目录路径</label>
+      <input id="dir-input" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="D:\projects\demo">
+      <div id="dir-recent" class="dir-recent"></div>
+      <p id="dir-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" id="dir-default" class="ghost-btn">用默认目录</button>
+        <span class="spacer"></span>
+        <button type="button" id="dir-cancel" class="ghost-btn">取消</button>
+        <button type="submit" id="dir-use" class="pill">使用</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="drive-dialog" class="dialog" role="alertdialog" aria-labelledby="drive-title" aria-describedby="drive-text">
+    <div class="dialog-body">
+      <h2 id="drive-title" class="dialog-title">这个目录在系统盘上</h2>
+      <p id="drive-path" class="dialog-path"></p>
+      <p id="drive-text">开启写文件后，智能体可以在这个目录里新建和覆盖文件、在沙盒里运行代码。系统盘上常有系统和程序文件，误改可能影响电脑使用，建议换到其他盘。</p>
+      <div class="dialog-actions">
+        <span class="spacer"></span>
+        <button type="button" id="drive-cancel" class="ghost-btn">取消</button>
+        <button type="button" id="drive-confirm" class="danger-btn">仍然使用</button>
+      </div>
+    </div>
+  </dialog>
 </body>
 </html>

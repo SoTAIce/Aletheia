@@ -107,6 +107,7 @@ def report(result, write=print) -> None:
 
 INTERACTIVE_HELP = ('直接输入目标开始一个任务；任务等待回答时，直接输入回答即可继续。'
                     '命令：/help 显示帮助，/new 放弃正在等待回答的任务，/exit 退出（Ctrl+D、Ctrl+Z 回车同样退出）；'
+                    '/dir 查看工作目录，/dir 路径 更换工作目录；'
                     '长期记忆：/remember 内容 记住一条，/memories 查看，/forget 编号 删除。')
 MEMORY_OFF = '长期记忆没有开启：在 .env 里设置 LONGTERM_MEMORY_DSN 后可用。'
 
@@ -145,6 +146,36 @@ async def _read_line(prompt):
     return await asyncio.to_thread(input, prompt)
 
 
+async def dir_command(command, state, service, read_line, write=print, waiting=None) -> None:
+    """/dir shows the working directory; /dir PATH changes it for the next tasks (workspace-001).
+    A directory on the system drive needs a typed 'y' (D-074)."""
+    offered = service.run_options()
+    if not offered.get('workspace_available'):
+        write('这个服务不能更换工作目录。')
+        return
+    raw = command[len('/dir'):].strip()
+    if not raw:
+        current = state.get('workspace') or offered.get('default_workspace')
+        write('工作目录：' + (current or '（没有设置，文件工具不可用）'))
+        return
+    from app.services.workspace import SYSTEM_DRIVE_WARNING, system_drive
+    result = service.check_workspace(raw)
+    if result.problem is not None:
+        write('不能使用这个目录：' + result.message)
+        return
+    if result.system_drive:
+        write(SYSTEM_DRIVE_WARNING.format(drive=system_drive(), path=result.path))
+        try:
+            answer = await read_line('仍然使用这个目录吗？输入 y 确认，其他任意输入取消：')
+        except EOFError:
+            answer = ''
+        if answer.strip().lower() != 'y':
+            write('已取消，工作目录没有更换。')
+            return
+    state.update(workspace=result.path, confirmed=result.system_drive)
+    write('工作目录已更换为：' + result.path + ('（等待回答的任务仍用原来的目录）' if waiting else ''))
+
+
 async def interactive(service, args, read_line=None, write=print, memory=None) -> int:
     """Keep one service and session open across turns (D-040).
 
@@ -157,6 +188,7 @@ async def interactive(service, args, read_line=None, write=print, memory=None) -
     write('Aletheia 交互模式，会话：' + args.session_id + '。' + INTERACTIVE_HELP)
     waiting = None          # task id of a blocked task waiting for an answer
     queued = args.goal      # a goal given on the command line is the first turn
+    place = {}              # the working directory chosen with /dir (workspace-001)
     while True:
         if queued is not None:
             line, queued = queued, None
@@ -178,6 +210,9 @@ async def interactive(service, args, read_line=None, write=print, memory=None) -
             write('已放弃正在等待回答的任务。' if waiting else '当前没有等待回答的任务。')
             waiting = None
             continue
+        if command == '/dir' or command.startswith('/dir '):
+            await dir_command(command, place, service, read_line, write, waiting)
+            continue
         if command.split(' ', 1)[0] in ('/remember', '/memories', '/forget'):
             await memory_command(command, memory, user_id, write)
             continue
@@ -188,8 +223,10 @@ async def interactive(service, args, read_line=None, write=print, memory=None) -
                          timeout_seconds=getattr(args, 'max_seconds', None))
         try:
             with metering(meter):
+                chosen = ({'workspace': place['workspace'], 'workspace_confirmed': place['confirmed']}
+                          if place.get('workspace') and waiting is None else {})
                 result = await service.query_result(line, args.session_id, user_id=user_id,
-                                                    resume_task_id=waiting)
+                                                    resume_task_id=waiting, **chosen)
         except Exception as exc:
             # Host-side refusals (for example no resumable task); never print provider text.
             write(f'请求没有执行：{type(exc).__name__}')
@@ -236,6 +273,15 @@ async def main(args) -> int:
         if problem:
             print(f'SandboxUnavailableError: {problem}')
             return 2
+        filesystem_root = args.filesystem_root or config.mcp_filesystem_root or None
+        # Every directory passes the same checks; one on the system drive needs confirming (D-074).
+        from app.services.workspace import WorkspacePolicy, confirm_startup
+        policy = WorkspacePolicy.from_config()
+        problem = confirm_startup(policy, (filesystem_root, write_root),
+                                  confirmed=getattr(args, 'confirm_system_drive', False))
+        if problem:
+            print(f'WorkspaceError: {problem}')
+            return 2
         memory = None
         if config.longterm_memory_dsn:
             from app.services.longterm_memory_setup import open_longterm_memory
@@ -245,14 +291,19 @@ async def main(args) -> int:
         team_options = team_options_for(getattr(args, 'execution_mode', 'single'), write_root, sandbox,
                                         getattr(args, 'team_timeout', None),
                                         getattr(args, 'team_acceptance', False))
-        filesystem_root = args.filesystem_root or config.mcp_filesystem_root or None
+        from app.tools.tool_loader import workspace_servers
         service = await stack.enter_async_context(RagAgentService(
             hooks=trace_hooks(filesystem_root, write_root),
             mcp_servers=local_mcp_servers(
                 filesystem_root=filesystem_root,
                 write_root=write_root,
-                tavily_api_key=config.tavily_api_key, sandbox=sandbox,
+                tavily_api_key=config.tavily_api_key, sandbox=sandbox, deny=policy.closed_folders(),
             ),
+            # /dir in the interactive mode; a chosen directory is writable only when a write root was given.
+            workspace_servers=(workspace_servers(tavily_api_key=config.tavily_api_key, sandbox=sandbox,
+                                                 writes=bool(write_root), deny=policy.closed_folders())
+                               if config.workspace_choice else None),
+            workspace_policy=policy, default_workspace=write_root or filesystem_root,
             include_knowledge=not args.no_knowledge,
             max_executions=args.max_executions, max_replans=args.max_replans,
             conversation_compressor=compressor,
@@ -297,6 +348,8 @@ def build_parser():
                                           'long-term memory is on; D-042)')
     parser.add_argument("--filesystem-root", help="Directory exposed by the filesystem MCP server")
     parser.add_argument("--write-root", help="Optional writable directory; omitted means read-only")
+    parser.add_argument('--confirm-system-drive', action='store_true',
+                        help='Confirm a --filesystem-root/--write-root on the system drive (C:) without a prompt (D-074)')
     parser.add_argument("--no-knowledge", action="store_true", help="Disable RAG when no knowledge store is configured")
     parser.add_argument('--execution-mode', choices=['single', 'team', 'auto'], default='single',
                         help='single: ordinary tool calling; team: the delegating team; '

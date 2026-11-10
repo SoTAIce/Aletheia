@@ -88,11 +88,17 @@ class RunResult:
 
 class DockerSandbox:
     def __init__(self, workspace, *, image: str = DEFAULT_IMAGE, limits: SandboxLimits = SandboxLimits(),
-                 docker: str = 'docker', popen=subprocess.Popen, run=subprocess.run):
+                 docker: str = 'docker', popen=subprocess.Popen, run=subprocess.run, denied=()):
         root = Path(workspace)
         if not root.is_dir() or root.is_symlink():
             raise SandboxError('workspace must be an existing directory')
         self.workspace = root.resolve(strict=True)
+        # Folders the user closed to the agent (workspace-001) inside the workspace, as lower-case
+        # relative parts: masked with empty mounts like secrets, and refused as run paths.
+        self._denied = frozenset(
+            tuple(part.lower() for part in d.relative_to(self.workspace).parts)
+            for d in (Path(x).resolve() for x in denied)
+            if d != self.workspace and d.is_relative_to(self.workspace))
         self.image, self.limits, self.docker = image, limits, docker
         self._popen, self._run = popen, run
 
@@ -109,6 +115,8 @@ class DockerSandbox:
             current = current / part
             if current.is_symlink():
                 raise SandboxError('links are not allowed')
+        if self._is_denied(posix.parts):
+            raise SandboxError('path is in a folder the user has closed to the agent')
         if kind == 'file' and not host.is_file():
             raise SandboxError('file does not exist in the workspace')
         if kind == 'any' and not host.exists():
@@ -121,6 +129,10 @@ class DockerSandbox:
                 not isinstance(a, str) or not _ARG.fullmatch(a) for a in args):
             raise SandboxError('arguments must be a few short plain strings')
         return args
+
+    def _is_denied(self, parts) -> bool:
+        lowered = tuple(part.lower() for part in parts)
+        return any(lowered[:len(d)] == d for d in self._denied)
 
     # ---- protected paths inside the workspace (D-029) ----
     def protected_mounts(self, empty_file: str | None, *, workspace_mode: str = 'rw') -> list[str]:
@@ -141,6 +153,9 @@ class DockerSandbox:
                 if entry.is_symlink():
                     continue
                 if entry.is_dir():
+                    if self._is_denied(rel):
+                        flags += ['--tmpfs', f'{target}:ro,size=4k']
+                        continue
                     if entry.name.lower() in _SCAN_SKIP:
                         continue
                     if is_secret_path(rel):
@@ -151,7 +166,7 @@ class DockerSandbox:
                         flags += ['--volume', f'{entry.path}:{target}:ro']
                     stack.append((entry.path, rel, frozen or freeze))   # secrets inside still get masked
                 elif entry.is_file():
-                    if is_secret_path(rel):
+                    if is_secret_path(rel) or self._is_denied(rel):
                         if empty_file is None:
                             raise SandboxError('an empty mask file is required')
                         flags += ['--volume', f'{empty_file}:{target}:ro']

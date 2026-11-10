@@ -49,6 +49,20 @@ async def serve(args) -> int:
     if problem:
         print(f'SandboxUnavailableError: {problem}')
         return 2
+    filesystem_root = args.filesystem_root or config.mcp_filesystem_root or None
+    # Every directory passes the same checks; one on the system drive needs confirming (D-074).
+    from app.services.workspace import WorkspacePolicy, confirm_startup
+    from app.tools.tool_loader import workspace_servers
+    policy = WorkspacePolicy.from_config()
+    problem = confirm_startup(policy, (filesystem_root, write_root), confirmed=args.confirm_system_drive)
+    if problem:
+        print(f'WorkspaceError: {problem}')
+        return 2
+    # The page may choose the working directory on a loopback host; elsewhere only inside
+    # WORKSPACE_ALLOWED_ROOTS, since anyone who reaches the page could point the agent anywhere.
+    choice = config.workspace_choice and (is_loopback(host) or bool(policy.allowed_roots))
+    if config.workspace_choice and not choice:
+        print('工作目录选择已关闭：非本机地址需要先配置 WORKSPACE_ALLOWED_ROOTS。', flush=True)
     async with AsyncExitStack() as stack:
         memory = None
         if config.longterm_memory_dsn:
@@ -57,18 +71,25 @@ async def serve(args) -> int:
         # The team is always prepared under the fixed-team rules so a message may pick it; the default
         # mode stays --execution-mode, and auto still allows the team only with writes and the sandbox
         # (D-026). The step timeout widens for team tasks only, inside the service (D-051).
-        team_options = team_options_for('team', write_root, args.sandbox)
+        team_options = team_options_for('team', write_root or choice, args.sandbox)
         service = await stack.enter_async_context(RagAgentService(
             mcp_servers=local_mcp_servers(
-                filesystem_root=args.filesystem_root or config.mcp_filesystem_root or None,
-                write_root=write_root, tavily_api_key=config.tavily_api_key, sandbox=args.sandbox),
+                filesystem_root=filesystem_root,
+                write_root=write_root, tavily_api_key=config.tavily_api_key, sandbox=args.sandbox,
+                deny=policy.closed_folders()),
+            # A chosen directory is also the write directory when a message turns writing on.
+            workspace_servers=(workspace_servers(tavily_api_key=config.tavily_api_key, sandbox=args.sandbox,
+                                                 writes=True, deny=policy.closed_folders())
+                               if choice else None),
+            workspace_policy=policy, default_workspace=write_root or filesystem_root,
             include_knowledge=not args.no_knowledge, execution_mode=args.execution_mode,
             single_runner=args.single_runner,
             team_options=team_options, step_timeout_seconds=step_timeout_for(args.sandbox, None),
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
         ))
         app = create_app(service, user_id=config.web_user_id, access_token=config.web_access_token,
-                         memory=memory, write_enabled=bool(write_root),
+                         memory=memory, write_enabled=bool(write_root) or choice,
+                         write_default=bool(write_root),
                          max_concurrent_runs=config.web_max_concurrent_runs,
                          event_retention_seconds=config.web_event_retention_seconds,
                          shutdown_timeout_seconds=config.web_shutdown_timeout_seconds,
@@ -89,6 +110,8 @@ def build_parser():
     parser.add_argument('--filesystem-root', help='Directory exposed by the filesystem MCP server')
     parser.add_argument('--write-root', help='Optional writable directory; omitted means read-only')
     parser.add_argument('--sandbox', action='store_true', help='Allow the Docker sandbox (needs --write-root)')
+    parser.add_argument('--confirm-system-drive', action='store_true',
+                        help='Confirm a --filesystem-root/--write-root on the system drive (C:) without a prompt (D-074)')
     parser.add_argument('--no-knowledge', action='store_true', help='Disable RAG when no knowledge store is configured')
     parser.add_argument('--execution-mode', choices=['single', 'team', 'auto'], default='single')
     parser.add_argument('--single-runner', choices=['plan', 'loop'], default='loop')

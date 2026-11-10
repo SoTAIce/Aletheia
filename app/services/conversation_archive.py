@@ -484,7 +484,7 @@ class ConversationArchive:
     def _artifact_path(self, ref: str) -> Path:
         if not isinstance(ref, str):
             raise ValueError("invalid archive reference")
-        match = re.fullmatch(r"ctx:([0-9a-f]{64}):(tool|summary):([0-9a-f]{32})", ref)
+        match = re.fullmatch(r"ctx:([0-9a-f]{64}):(tool|summary|upload):([0-9a-f]{32})", ref)
         if match is None or match[1] != self._session_digest:
             raise ValueError("invalid or foreign archive reference")
         path = self._artifact_directory() / f"{match[2]}-{match[3]}.json"
@@ -492,7 +492,8 @@ class ConversationArchive:
         return path
 
     def _publish_artifact(self, kind: str, text: str, metadata: dict) -> str:
-        if kind not in {"tool", "summary"} or not isinstance(text, str):
+        # upload: a text file the user dropped into the conversation (workspace-001).
+        if kind not in {"tool", "summary", "upload"} or not isinstance(text, str):
             raise ValueError("invalid archive text or kind")
         identity = uuid4().hex
         ref = f"ctx:{self._session_digest}:{kind}:{identity}"
@@ -543,6 +544,13 @@ class ConversationArchive:
             raise ValueError("artifact metadata must be a dictionary")
         with self._lock:
             return self._publish_artifact(kind, text, metadata or {})
+
+    def artifact_info(self, ref: str) -> dict:
+        """Kind, metadata and length of one saved text, without the text (workspace-001)."""
+        with self._lock:
+            record = self._read_artifact(ref)
+        return {"ref": ref, "kind": record["kind"], "metadata": dict(record["metadata"]),
+                "chars": len(record["text"])}
 
     def read_text(self, ref: str, offset: int = 0, limit: int = 8000) -> str:
         # The read size follows the model's inline tool-result budget, up to 120000 characters (D-052).

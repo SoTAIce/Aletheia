@@ -5,6 +5,7 @@ the runs and waits for or cancels them on shutdown. user_id is fixed by the serv
 never taken from a request. Every error body is {"code", "message"} without exception text.
 """
 
+import asyncio
 import hmac
 import json
 import logging
@@ -20,6 +21,7 @@ from pydantic import BaseModel, ConfigDict, StrictBool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.runs import ApiError, RunManager, service_error
+from app.services.workspace import system_drive
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,8 @@ class RunOptionsIn(BaseModel):
     runner: Literal['plan', 'loop'] | None = None
     write: StrictBool | None = None
     memory: StrictBool | None = None
+    workspace: str | None = None                 # workspace-001: the working directory for this task
+    workspace_confirmed: StrictBool | None = None  # the user confirmed a directory on the system drive
 
 
 class MessageIn(BaseModel):
@@ -54,6 +58,18 @@ class MessageIn(BaseModel):
     resume_task_id: str | None = None
     question_id: str | None = None
     options: RunOptionsIn | None = None
+    attachments: list[str] | None = None         # refs from POST .../attachments (workspace-001)
+
+
+class WorkspaceIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    path: str
+
+
+class AttachmentIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    name: str
+    content: str
 
 
 class ApprovalIn(BaseModel):
@@ -80,6 +96,7 @@ def _memory_view(record) -> dict:
 
 
 def create_app(service, *, user_id: str, access_token: str = '', memory=None, write_enabled: bool = False,
+               write_default: bool | None = None,
                max_concurrent_runs: int = 2, event_retention_seconds: float = 1800.0,
                shutdown_timeout_seconds: float = 30.0, clock=None,
                approval_tools: frozenset[str] = frozenset(), approval_wait_seconds: float = 300.0) -> FastAPI:
@@ -162,8 +179,11 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
         offered = service.run_options()
         return {'modes': list(offered['modes']), 'default_mode': offered['default_mode'],
                 'runners': list(offered['runners']), 'default_runner': offered['default_runner'],
-                'write_available': write_enabled, 'write_default': write_enabled,
-                'memory_available': offered['memory_available'], 'memory_default': offered['memory_available']}
+                'write_available': write_enabled,
+                'write_default': write_enabled if write_default is None else bool(write_default and write_enabled),
+                'memory_available': offered['memory_available'], 'memory_default': offered['memory_available'],
+                **({'workspace_available': True, 'default_workspace': offered.get('default_workspace'),
+                    'system_drive': system_drive()} if offered.get('workspace_available') else {})}
 
     def resolve(requested: dict) -> dict:
         """Fill omitted choices with the defaults; refuse ones this server cannot honour (D-051)."""
@@ -176,7 +196,17 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
             raise ApiError(400, 'write_unavailable', '服务启动时没有指定写入目录，不能写文件。')
         if requested.get('memory') and not offered['memory_available']:
             raise ApiError(400, 'memory_unavailable', '长期记忆没有开启，不能使用。')
-        return {'mode': requested.get('mode') or offered['default_mode'],
+        resolved_place = {}
+        if requested.get('workspace') is not None:
+            if not offered.get('workspace_available'):
+                raise ApiError(400, 'workspace_unavailable', '这台服务不能更换工作目录。')
+            check = service.check_workspace(requested['workspace'])
+            if check.problem is not None:
+                raise ApiError(400, 'workspace_invalid', check.message)
+            if check.system_drive and not requested.get('workspace_confirmed'):
+                raise ApiError(409, 'workspace_confirmation_required', '这个目录在系统盘上，需要你确认后才能使用。')
+            resolved_place = {'workspace': check.path, 'workspace_confirmed': bool(check.system_drive)}
+        return {**resolved_place, 'mode': requested.get('mode') or offered['default_mode'],
                 'runner': requested.get('runner') or offered['default_runner'],
                 'write': offered['write_default'] if requested.get('write') is None else requested['write'],
                 'memory': offered['memory_default'] if requested.get('memory') is None else requested['memory']}
@@ -217,13 +247,43 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
         if body.question_id is not None and body.resume_task_id is None:
             raise ApiError(400, 'invalid_input', '回答问题时需要同时给出任务编号。')
         requested = body.options.model_dump(exclude_none=True) if body.options is not None else {}
+        attachments = tuple(body.attachments or ())
+        if len(attachments) > 5 or not all(isinstance(r, str) and 0 < len(r) <= 200 for r in attachments):
+            raise ApiError(400, 'invalid_input', '一条消息最多附带 5 个文件。')
+        if attachments and body.resume_task_id is not None:
+            raise ApiError(400, 'invalid_input', '回答问题时不能附带文件，请在新消息里附带。')
+        if attachments:
+            requested['attachments'] = list(attachments)     # part of the request, for idempotency
         # A resumed task keeps the choices it started with, so the request's own are ignored (D-051).
         options = resolve(requested) if body.resume_task_id is None else None
         run, created = runs.start(session_id, body.content, body.request_id,
                                   resume_task_id=body.resume_task_id, question_id=body.question_id,
-                                  options=options, requested=requested)
+                                  options=options, requested=requested, attachments=attachments)
         payload = {'run_id': run.run_id, 'events': f'/api/runs/{run.run_id}/events', 'created': created}
         return JSONResponse(payload, status_code=202 if created else 200)
+
+    @app.post('/api/workspace/check', dependencies=guarded)
+    async def workspace_check(body: WorkspaceIn):
+        """Whether a directory can be the working directory (workspace-001); lists nothing."""
+        if not run_options().get('workspace_available'):
+            raise ApiError(404, 'workspace_unavailable', '这台服务不能更换工作目录。')
+        return (await asyncio.to_thread(service.check_workspace, body.path)).view()
+
+    @app.post('/api/sessions/{session_id}/attachments', status_code=201, dependencies=guarded)
+    async def attach(session_id: str, body: AttachmentIn):
+        """Keep a text file dropped into the message box; the next message names its ref."""
+        _check_id('session_id', session_id)
+        from app.services.rag_agent_service import MAX_ATTACHMENT_CHARS
+        if not body.content or len(body.content) > MAX_ATTACHMENT_CHARS or '\x00' in body.content:
+            raise ApiError(400, 'invalid_input', f'只能附带文本文件，最长 {MAX_ATTACHMENT_CHARS:,} 字符。')
+        if not body.name.strip() or len(body.name) > 500:
+            raise ApiError(400, 'invalid_input', '文件名不对。')
+        try:
+            return await service.save_attachment(session_id, body.name, body.content, user_id=user_id)
+        except ValueError as exc:
+            if 'archive' in str(exc):
+                raise ApiError(400, 'attachments_unavailable', '服务没有开启对话归档，不能附带文件。') from None
+            raise ApiError(400, 'invalid_input', '附件不符合要求。') from None
 
     @app.get('/api/runs/{run_id}', dependencies=guarded)
     async def run_state(run_id: str):

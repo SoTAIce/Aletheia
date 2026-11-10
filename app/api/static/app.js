@@ -5,6 +5,10 @@
 const TOKEN_KEY = 'aletheia-token';
 const RUN_KEY = 'aletheia-runs';          // session id -> run id still being followed
 const OPTIONS_KEY = 'aletheia-options';   // this tab's choice of mode, runner, writes and memory
+const PLACES_KEY = 'aletheia-workspaces';  // session id -> {path, confirmed}: its working directory (D-074)
+const RECENT_KEY = 'aletheia-recent-dirs'; // directories used in this tab, newest first
+const MAX_ATTACHMENTS = 5;
+const MAX_ATTACHMENT_CHARS = 1000000;
 const SVG_NS = 'http://www.w3.org/2000/svg';   // a namespace name, not a resource that is loaded
 const TAG = {completed: ['done', '已完成'], blocked: ['ask', '等待你回答'], failed: ['fail', '未完成'],
              cancelled: ['', '已停止'], running: ['run', '进行中']};
@@ -34,7 +38,8 @@ const EXAMPLES = [
 
 const $ = (id) => document.getElementById(id);
 const state = {token: '', session: null, sessions: [], turns: [], waiting: null, run: null,
-               caps: null, options: null};   // caps: health.options; options: what the next run asks for
+               caps: null, options: null,    // caps: health.options; options: what the next run asks for
+               place: null, attachments: []}; // place: chosen working directory; attachments: uploaded files
 
 // ---- small helpers --------------------------------------------------------------------
 
@@ -356,6 +361,8 @@ function applyCaps(caps) {
     option.textContent = MODE_NAMES[option.value] + (option.disabled ? '（未开启）' : '');
   }
   $('run-options').hidden = false;
+  $('opt-dir').hidden = !caps.workspace_available;
+  $('attach-btn').hidden = false;
   renderOptions();
 }
 
@@ -379,6 +386,9 @@ function renderOptions() {
     button.title = answering ? '回答问题时沿用原任务的设置' : !available ? off
       : opts[key] ? '已开启，点一下关闭' : '已关闭，点一下开启';
   }
+  renderPlace();
+  $('attach-btn').disabled = answering || state.attachments.length >= MAX_ATTACHMENTS;
+  $('attach-btn').title = answering ? '回答问题时不能附带文件' : '附加文本文件（也可以直接拖到输入框）';
   $('opt-mode').disabled = answering;
   $('opt-mode').parentElement.title = answering ? '回答问题时沿用原任务的设置'
     : '普通：一个执行者按计划逐步完成；团队：负责人把任务委派给执行者；自动：每个新任务先判断用哪种';
@@ -420,6 +430,8 @@ function renderSessions() {
 async function openSession(sessionId) {
   state.session = sessionId;
   state.run = null;
+  state.place = (saved(PLACES_KEY, {}) || {})[sessionId] || null;
+  clearAttachments();
   closePanels();
   toast('');
   renderSessions();
@@ -434,12 +446,147 @@ function newSession() {
   state.session = newId('web-');
   state.run = null;
   state.turns = [];
+  state.place = null;
+  clearAttachments();
+  renderOptions();
   closePanels();
   toast('');
   renderSessions();
   renderTurns();
   setBusy(false);
   $('input').focus();
+}
+
+// ---- working directory (workspace-001, D-074) ------------------------------------------
+
+function dirName(path) {
+  const parts = String(path || '').split(/[\\/]/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : String(path || '');
+}
+
+function renderPlace() {
+  const button = $('opt-dir');
+  if (!state.caps || !state.caps.workspace_available) return;
+  const path = state.place ? state.place.path : state.caps.default_workspace;
+  $('opt-dir-text').textContent = path ? dirName(path) : '选择工作目录';
+  const onSystem = Boolean(state.place && state.place.confirmed);
+  button.classList.toggle('system', onSystem);
+  button.disabled = Boolean(state.waiting);
+  button.title = state.waiting ? '回答问题时沿用原任务的工作目录'
+    : (path ? `工作目录：${path}` : '还没有工作目录，文件工具不可用') + (onSystem ? '（在系统盘上，已确认）' : '') + '；点一下更换';
+}
+
+function recentDirs() { const list = saved(RECENT_KEY, []); return Array.isArray(list) ? list.slice(0, 5) : []; }
+
+function openDirDialog() {
+  const dialog = $('dir-dialog');
+  $('dir-input').value = state.place ? state.place.path : '';
+  $('dir-error').hidden = true;
+  const recent = $('dir-recent');
+  recent.replaceChildren();
+  for (const path of recentDirs()) {
+    const item = el('button', '', path);
+    item.type = 'button';
+    item.addEventListener('click', () => { $('dir-input').value = path; $('dir-input').focus(); });
+    recent.append(item);
+  }
+  $('dir-default').hidden = !state.place;
+  dialog.showModal();
+  $('dir-input').focus();
+}
+
+function confirmSystemDrive(path) {
+  // Resolves true only when the person presses "仍然使用"; Esc or 取消 is a no.
+  return new Promise((resolve) => {
+    const dialog = $('drive-dialog');
+    $('drive-title').textContent = `这个目录在系统盘（${state.caps.system_drive || 'C:'}）上`;
+    $('drive-path').textContent = path;
+    const done = (answer) => {
+      $('drive-confirm').removeEventListener('click', yes);
+      $('drive-cancel').removeEventListener('click', no);
+      dialog.removeEventListener('cancel', no);
+      if (dialog.open) dialog.close();
+      resolve(answer);
+    };
+    const yes = () => done(true);
+    const no = (event) => { if (event) event.preventDefault(); done(false); };
+    $('drive-confirm').addEventListener('click', yes);
+    $('drive-cancel').addEventListener('click', no);
+    dialog.addEventListener('cancel', no);
+    dialog.showModal();
+    $('drive-cancel').focus();      // the safe answer has the focus
+  });
+}
+
+async function useDir(raw) {
+  const error = $('dir-error');
+  error.hidden = true;
+  if (!raw.trim()) { error.textContent = '请填写目录路径。'; error.hidden = false; return; }
+  let check;
+  try {
+    check = await api('/api/workspace/check', {method: 'POST', body: {path: raw.trim()}});
+  } catch (e) {
+    if (e.status === 401) return;
+    error.textContent = e.message; error.hidden = false; return;
+  }
+  if (check.problem) { error.textContent = check.message || '不能使用这个目录。'; error.hidden = false; return; }
+  if (check.system_drive) {
+    $('dir-dialog').close();
+    if (!(await confirmSystemDrive(check.path))) { toast('没有更换工作目录。'); return; }
+  }
+  state.place = {path: check.path, confirmed: Boolean(check.system_drive)};
+  save(RECENT_KEY, [check.path, ...recentDirs().filter((p) => p !== check.path)].slice(0, 5));
+  if (state.session && state.turns.length) {
+    save(PLACES_KEY, {...(saved(PLACES_KEY, {}) || {}), [state.session]: state.place});
+  }
+  if ($('dir-dialog').open) $('dir-dialog').close();
+  renderOptions();
+  toast('');
+}
+
+// ---- attachments: text files dropped into the message box (workspace-001) --------------
+
+function clearAttachments() { state.attachments = []; renderAttachments(); }
+
+function renderAttachments() {
+  const box = $('attachments');
+  box.replaceChildren();
+  for (const item of state.attachments) {
+    const chip = el('span', 'attachment');
+    chip.append(el('span', 'name', item.name), el('span', 'size', `${item.chars.toLocaleString('zh-CN')} 字符`));
+    const remove = el('button');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `移除 ${item.name}`);
+    remove.append(icon('i-close'));
+    remove.addEventListener('click', () => { state.attachments = state.attachments.filter((a) => a !== item); renderAttachments(); });
+    chip.append(remove);
+    box.append(chip);
+  }
+  box.hidden = !state.attachments.length;
+  if (state.caps) $('attach-btn').disabled = Boolean(state.waiting) || state.attachments.length >= MAX_ATTACHMENTS;
+}
+
+async function addFiles(files) {
+  if (state.waiting) { toast('回答问题时不能附带文件，请在新消息里附带。'); return; }
+  for (const file of files) {
+    if (state.attachments.length >= MAX_ATTACHMENTS) { toast(`一条消息最多附带 ${MAX_ATTACHMENTS} 个文件。`); break; }
+    if (file.size > MAX_ATTACHMENT_CHARS * 4) { toast(`${file.name} 太大了。`); continue; }
+    let text;
+    try { text = await file.text(); } catch (e) { toast(`读不了 ${file.name}。`); continue; }
+    if (!text || text.includes('\u0000') || text.includes('\ufffd')) {
+      toast(`${file.name} 不是 UTF-8 编码的文本文件，目前只能附带这类文件。`); continue;
+    }
+    if (text.length > MAX_ATTACHMENT_CHARS) { toast(`${file.name} 超过 ${MAX_ATTACHMENT_CHARS.toLocaleString('zh-CN')} 字符。`); continue; }
+    if (!state.session) state.session = newId('web-');
+    try {
+      const stored = await api(`/api/sessions/${encodeURIComponent(state.session)}/attachments`,
+                               {method: 'POST', body: {name: file.name, content: text}});
+      state.attachments.push(stored);
+      renderAttachments();
+    } catch (e) {
+      if (e.status !== 401) toast(e.message);
+    }
+  }
 }
 
 // ---- conversation as a document -------------------------------------------------------
@@ -926,13 +1073,21 @@ async function send(text) {
   else if (state.caps && state.options) {
     body.options = {...state.options};
     if (!state.caps.runner_supported) delete body.options.runner;   // an older server refuses unknown fields
+    if (state.caps.workspace_available && state.place) {
+      body.options.workspace = state.place.path;
+      if (state.place.confirmed) body.options.workspace_confirmed = true;   // the server checks again (D-074)
+    }
   }
+  const attached = state.waiting ? [] : state.attachments.map((a) => a.ref);
+  if (attached.length) body.attachments = attached;
   if (!state.session) state.session = newId('web-');
   setBusy(true);
   toast('');
   const box = appendTurn(text);
   try {
     const {run_id} = await api(`/api/sessions/${encodeURIComponent(state.session)}/messages`, {method: 'POST', body});
+    if (state.place) save(PLACES_KEY, {...(saved(PLACES_KEY, {}) || {}), [state.session]: state.place});
+    if (attached.length) clearAttachments();
     $('input').value = '';
     autosize();
     state.turns.push({user: text, status: 'received', created_at: new Date().toISOString()});
@@ -1045,6 +1200,46 @@ $('opt-mode').addEventListener('change', (e) => setOption('mode', e.target.value
 $('opt-runner').addEventListener('change', (e) => setOption('runner', e.target.value));
 $('opt-write').addEventListener('click', () => setOption('write', !state.options.write));
 $('opt-memory').addEventListener('click', () => setOption('memory', !state.options.memory));
+$('opt-dir').addEventListener('click', openDirDialog);
+$('dir-form').addEventListener('submit', (event) => { event.preventDefault(); useDir($('dir-input').value); });
+$('dir-cancel').addEventListener('click', () => $('dir-dialog').close());
+$('dir-default').addEventListener('click', () => {
+  state.place = null;
+  if (state.session) {
+    const places = saved(PLACES_KEY, {}) || {};
+    delete places[state.session];
+    save(PLACES_KEY, places);
+  }
+  $('dir-dialog').close();
+  renderOptions();
+});
+$('attach-btn').addEventListener('click', () => $('attach-input').click());
+$('attach-input').addEventListener('change', (event) => {
+  const files = [...event.target.files];
+  event.target.value = '';
+  addFiles(files);
+});
+{
+  const composer = $('composer');
+  let depth = 0;
+  const hasFiles = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
+  composer.addEventListener('dragenter', (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    depth += 1;
+    composer.classList.add('dropping');
+    $('drop-hint').hidden = false;
+  });
+  composer.addEventListener('dragover', (event) => { if (hasFiles(event)) event.preventDefault(); });
+  const leave = () => { depth = 0; composer.classList.remove('dropping'); $('drop-hint').hidden = true; };
+  composer.addEventListener('dragleave', () => { depth -= 1; if (depth <= 0) leave(); });
+  composer.addEventListener('drop', (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    leave();
+    addFiles([...event.dataTransfer.files]);
+  });
+}
 document.addEventListener('keydown', (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault();

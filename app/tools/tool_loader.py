@@ -19,8 +19,11 @@ from app.tools.tool_registry import ToolRegistry
 
 def local_mcp_servers(*, filesystem_root: str | Path | None = None,
                       write_root: str | Path | None = None,
-                      tavily_api_key: str = "", sandbox: bool = False) -> tuple[StdioServerParameters, ...]:
-    """Configure existing stdio servers; omit unconfigured optional services."""
+                      tavily_api_key: str = "", sandbox: bool = False,
+                      deny=()) -> tuple[StdioServerParameters, ...]:
+    """Configure existing stdio servers; omit unconfigured optional services. deny: folders
+    the file tools and the sandbox hide (workspace-001, D-074)."""
+    deny_args = [arg for folder in deny for arg in ("--deny", str(Path(folder).resolve()))]
     project_root = str(Path(__file__).resolve().parents[2])
     servers = []
     if write_root and not filesystem_root:
@@ -31,6 +34,7 @@ def local_mcp_servers(*, filesystem_root: str | Path | None = None,
         args = ["-m", "app.tools.filesystem.server", "--root", str(Path(filesystem_root).resolve())]
         if write_root:
             args += ["--write-root", str(Path(write_root).resolve())]
+        args += deny_args
         servers.append(StdioServerParameters(command=sys.executable, args=args, cwd=project_root,
                                               env={"PYTHONDONTWRITEBYTECODE": "1"}))
     if sandbox:
@@ -38,7 +42,7 @@ def local_mcp_servers(*, filesystem_root: str | Path | None = None,
         # no API keys. The container itself receives none of it.
         servers.append(StdioServerParameters(
             command=sys.executable,
-            args=["-m", "app.tools.sandbox.server", "--workspace", str(Path(write_root).resolve())],
+            args=["-m", "app.tools.sandbox.server", "--workspace", str(Path(write_root).resolve()), *deny_args],
             cwd=project_root, env={"PYTHONDONTWRITEBYTECODE": "1"},
         ))
     if tavily_api_key.strip():
@@ -47,6 +51,16 @@ def local_mcp_servers(*, filesystem_root: str | Path | None = None,
             cwd=project_root, env={"TAVILY_API_KEY": tavily_api_key, "PYTHONDONTWRITEBYTECODE": "1"},
         ))
     return tuple(servers)
+
+
+def workspace_servers(*, tavily_api_key: str = "", sandbox: bool = False, writes: bool = False, deny=()):
+    """The per-run tool servers for a chosen working directory (workspace-001): one directory
+    for reading and, when writes are on for the server and the run, for writing and the sandbox."""
+    def servers(root, writable):
+        write_root = root if writes and writable else None
+        return local_mcp_servers(filesystem_root=root, write_root=write_root, tavily_api_key=tavily_api_key,
+                                 sandbox=bool(sandbox and write_root), deny=deny)
+    return servers
 
 
 @asynccontextmanager

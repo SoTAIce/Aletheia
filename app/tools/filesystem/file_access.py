@@ -18,6 +18,7 @@ _AUTORUN_DIRS = frozenset({".github", ".vscode", ".idea", ".devcontainer"})
 _AUTORUN_FILES = frozenset({"sitecustomize.py", "usercustomize.py"})
 _AUTORUN_SUFFIXES = (".pth",)
 PROTECTED_MESSAGE = "path is protected: secrets, VCS internals and auto-run files are off limits"
+DENIED_MESSAGE = "path is in a folder the user has closed to the agent"
 
 
 def _is_secret_name(name: str) -> bool:
@@ -47,6 +48,7 @@ class FileAccess:
         *,
         write_root: Path | None = None,
         max_write_bytes: int = 64 * 1024,
+        denied: tuple = (),
     ) -> None:
         if not isinstance(root, Path):
             raise TypeError("root must be a pathlib.Path")
@@ -85,6 +87,12 @@ class FileAccess:
         self._root = resolved_root
         self._max_read_bytes = max_read_bytes
         self._max_list_entries: int = 200
+        # Folders the user closed to the agent (workspace-001): never read, listed, searched or
+        # written, as if they did not exist; compared after resolving links.
+        self._denied = tuple(Path(d).resolve() for d in denied)
+
+    def _is_denied(self, path: Path) -> bool:
+        return any(path == d or d in path.parents for d in self._denied)
 
     def resolve_read_path(self, path: str) -> Path:
         if not isinstance(path, str):
@@ -116,6 +124,9 @@ class FileAccess:
 
         if is_secret_path(resolved_path.relative_to(self._root).parts):
             raise PermissionError(PROTECTED_MESSAGE)
+
+        if self._is_denied(resolved_path):
+            raise PermissionError(DENIED_MESSAGE)
 
         if not resolved_path.is_file():
             raise ValueError("path must point to a regular file")
@@ -226,10 +237,12 @@ class FileAccess:
             dirs[:] = sorted(d for d in dirs
                              if not d.startswith(".") and d not in self._SEARCH_SKIP_DIRS
                              and not (base / d).is_symlink()
-                             and not is_secret_path((base / d).relative_to(self._root).parts))
+                             and not is_secret_path((base / d).relative_to(self._root).parts)
+                             and not self._is_denied(base / d))
             for name in sorted(names):
                 file = base / name
-                if file.is_symlink() or is_secret_path(file.relative_to(self._root).parts):
+                if (file.is_symlink() or is_secret_path(file.relative_to(self._root).parts)
+                        or self._is_denied(file)):
                     continue
                 yield file
 
@@ -279,6 +292,9 @@ class FileAccess:
         if is_secret_path(resolved_path.relative_to(self._root).parts):
             raise PermissionError(PROTECTED_MESSAGE)
 
+        if self._is_denied(resolved_path):
+            raise PermissionError(DENIED_MESSAGE)
+
         if not resolved_path.is_dir():
             raise ValueError("path must point to a directory")
 
@@ -294,8 +310,8 @@ class FileAccess:
         resolved_path = self.resolve_directory_path(path)
         entries = []
         for child in resolved_path.iterdir():
-            if is_secret_path((child.name,)):
-                continue            # never reveal that a secret exists (D-029)
+            if is_secret_path((child.name,)) or self._is_denied(child):
+                continue            # never reveal that a secret or a closed folder exists (D-029)
             if child.is_file() and not child.is_symlink():
                 entries.append({
                     "name": child.name,
@@ -496,6 +512,8 @@ class FileAccess:
             raise ValueError("path must name a file, not a directory")
         if is_protected_write_path(relative_path.parts):
             raise PermissionError(PROTECTED_MESSAGE)
+        if self._is_denied(self._write_root / relative_path):
+            raise PermissionError(DENIED_MESSAGE)
 
         # Reject Windows device names and ambiguous filename normalization.
         reserved = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"}

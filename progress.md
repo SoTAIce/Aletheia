@@ -18,6 +18,18 @@
 
 ## Session Record
 
+### 2026-11-10 — workspace-001：选择工作目录、系统盘确认、禁止目录、拖拽附件（分支 `exp/workspace-choice`）
+
+- **Result**：按方案和用户的七条回答实现（D-074）。所有目录走 `app/services/workspace.py` 的同一套检查；系统盘目录必须确认（网页对话框、`/dir` 输入 `y`、启动参数交互确认或 `--confirm-system-drive`），服务端也校验；`WORKSPACE_DENY_DIRS` 和本项目数据目录禁止读写，在工作目录里时文件工具和沙盒都看不到；网页文件夹按钮、目录对话框、拖拽 UTF-8 文本附件；命令行 `/dir`。
+- **验证**：新增 `tests/test_workspace.py` 37 项，`test_run_options.py` 的启动测试固定为旧语义。init.ps1 通过，1793 项通过、16 项跳过。浏览器里用假模型和真实文件服务试过：选 D 盘目录、选 C 盘目录（确认框、Esc 取消、确认生效）、拖入文本和二进制文件、发送、手机宽度。
+- **Not done**：没有跑真实模型；在工作树分支上，未并入 `main`，等用户确认。
+
+### 2026-11-10 — workspace-plan-001：选择工作目录方案（用户“可以先做第一项，输出方案”）
+
+- **Result**：写了 [选择工作目录方案](docs/workspace_choice_plan.md)：读写共用一个工作目录（写不写仍按每条消息）；`app/services/workspace.py` 判断目录（拒绝磁盘根、网络路径、系统目录、本项目数据目录，可选白名单，标记系统盘）；服务按次生成工具服务；网页会话顶部更换目录、系统盘确认框、服务端 409 校验；命令行 `/dir`；默认关闭，非本机监听时必须配白名单。启动参数指定的系统盘目录只警告不拦截（评测临时目录在 C 盘）。
+- **依据**：对照了 `tool_loader.py`、`file_access.py`、`rag_agent_service.py`、两个入口的启动代码、`app/api/app.py`、`app.js`、D-029、D-051（HEAD `db13d64`）。会改变 D-051 的一条，需要用户确认。
+- **Not done**：未实现（workspace-001 为 planned）；方案第 9 节六个问题待用户回答；未提交。只改了文档和功能表（已验证可解析）。
+
 ### 2026-11-10 — trace-001：本机追踪（用户“我感觉tracing比较合理，然后你负责实现吧，codeX额度有限了”）
 
 - **Result**：按 [追踪方案](docs/tracing_plan.md) 第一阶段实现（D-073）。`hooks.trace_scope`/`root_span` 给事件加区间编号和父子关系，作用域在 `runtime.py`（任务、规划、步骤）、`team_v2.py`（成员）、服务的路由选择；审计第 2 版；`TraceFileHook`；`trace_view.build_trace`/`render_text`（兼容第 1 版）；归档 `list_audits`/`load_audit`；服务 `task_traces`；接口 `GET /api/sessions/{session}/tasks/{task}/trace`；网页“执行记录”按钮和时间条面板；命令行 `python -m app.agent.trace`；评测 `--keep-traces`。并入服务商返回的模型名（`after_model.response_model`）。

@@ -183,7 +183,9 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
         result_path = work / 'result.json'   # outside the agent's root
         cmd = [sys.executable, '-B', '-m', 'app.agent', goal,
                '--session-id', f'bench-{task["id"]}-{mode}-{index}', '--filesystem-root', str(root),
-               '--no-knowledge', '--execution-mode', mode, '--result-json', str(result_path)]
+               '--no-knowledge', '--execution-mode', mode, '--result-json', str(result_path),
+               # The root is the bench's own new folder under TEMP, which is on C: (D-074).
+               '--confirm-system-drive']
         if write:
             # The TEMP root is both the read and the write root; nothing else is writable.
             cmd += ['--write-root', str(root)]

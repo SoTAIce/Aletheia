@@ -314,8 +314,10 @@ async def test_a_resume_ignores_new_options_and_keeps_the_tasks_own(tmp_path, re
     (['--execution-mode', 'single', '--single-runner', 'plan'], None, False, False),
 ])
 async def test_the_web_launcher_always_prepares_the_team_but_keeps_the_default_mode(
-        monkeypatch, argv, write_root, sandbox, writes):
+        monkeypatch, tmp_path, argv, write_root, sandbox, writes):
     import uvicorn
+    # A startup directory must exist; tmp_path is on the system drive, so it is confirmed (D-074).
+    argv = [str(tmp_path) if a == 'w' else a for a in argv] + ['--confirm-system-drive']
     from app.api import __main__ as launcher
     from app.api import app as app_module
     from app.config import config
@@ -344,7 +346,8 @@ async def test_the_web_launcher_always_prepares_the_team_but_keeps_the_default_m
     monkeypatch.setattr(uvicorn, 'Server', FakeServer)
     monkeypatch.setattr(uvicorn, 'Config', lambda *a, **kw: None)
     for name, value in (('web_access_token', 't'), ('longterm_memory_dsn', ''),
-                        ('mcp_filesystem_write_root', ''), ('mcp_filesystem_root', '')):
+                        ('mcp_filesystem_write_root', ''), ('mcp_filesystem_root', ''),
+                        ('workspace_choice', False)):      # choosing the directory: tests/test_workspace.py
         monkeypatch.setattr(config, name, value)
     assert await launcher.serve(launcher.build_parser().parse_args(argv)) == 0
     assert seen['execution_mode'] == argv[1]
