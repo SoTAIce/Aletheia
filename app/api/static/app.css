@@ -402,6 +402,9 @@ kbd { font: 11.5px/1 var(--mono); padding: 3px 6px; border: 1px solid var(--rule
 .dialog .pill { padding: 6px 16px; }
 .danger-btn { border: none; border-radius: 999px; padding: 6px 16px; font-size: 13.5px; background: var(--fail); color: #fff; }
 .danger-btn:hover { opacity: .9; }
+.dir-row { display: flex; gap: 8px; align-items: stretch; }
+.dir-row .text-input { flex: 1; min-width: 0; }
+.dir-row .ghost-btn { flex: none; white-space: nowrap; }
 .dir-recent:empty { display: none; }
 .dir-recent { display: flex; flex-direction: column; gap: 2px; }
 .dir-recent button { text-align: left; border: none; background: none; padding: 4px 8px; border-radius: 6px; font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; }

@@ -133,7 +133,10 @@
       <h2 id="dir-title" class="dialog-title">工作目录</h2>
       <p class="muted">智能体读文件、写文件都在这个目录里。填写完整路径，例如 D:\projects\demo。</p>
       <label class="sr-only" for="dir-input">目录路径</label>
-      <input id="dir-input" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="D:\projects\demo">
+      <div class="dir-row">
+        <input id="dir-input" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="D:\projects\demo">
+        <button type="button" id="dir-browse" class="ghost-btn" hidden>浏览…</button>
+      </div>
       <div id="dir-recent" class="dir-recent"></div>
       <p id="dir-error" class="form-error" role="alert" hidden></p>
       <div class="dialog-actions">

@@ -66,6 +66,11 @@ class WorkspaceIn(BaseModel):
     path: str
 
 
+class PickIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    initial: str | None = None                   # the folder the window opens in
+
+
 class AttachmentIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     name: str
@@ -99,7 +104,8 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
                write_default: bool | None = None,
                max_concurrent_runs: int = 2, event_retention_seconds: float = 1800.0,
                shutdown_timeout_seconds: float = 30.0, clock=None,
-               approval_tools: frozenset[str] = frozenset(), approval_wait_seconds: float = 300.0) -> FastAPI:
+               approval_tools: frozenset[str] = frozenset(), approval_wait_seconds: float = 300.0,
+               folder_picker=None) -> FastAPI:
     """An empty access_token disables authentication; the launcher only allows that on loopback."""
     options = {} if clock is None else {'clock': clock}
     runs = RunManager(service, user_id=user_id, max_concurrent=max_concurrent_runs,
@@ -183,7 +189,8 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
                 'write_default': write_enabled if write_default is None else bool(write_default and write_enabled),
                 'memory_available': offered['memory_available'], 'memory_default': offered['memory_available'],
                 **({'workspace_available': True, 'default_workspace': offered.get('default_workspace'),
-                    'system_drive': system_drive()} if offered.get('workspace_available') else {})}
+                    'system_drive': system_drive(), 'folder_picker': folder_picker is not None}
+                   if offered.get('workspace_available') else {})}
 
     def resolve(requested: dict) -> dict:
         """Fill omitted choices with the defaults; refuse ones this server cannot honour (D-051)."""
@@ -268,6 +275,22 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
         if not run_options().get('workspace_available'):
             raise ApiError(404, 'workspace_unavailable', '这台服务不能更换工作目录。')
         return (await asyncio.to_thread(service.check_workspace, body.path)).view()
+
+    @app.post('/api/workspace/pick', dependencies=guarded)
+    async def workspace_pick(body: PickIn):
+        """Open the system's choose-a-folder window on this machine (loopback only) and check the answer."""
+        if folder_picker is None or not run_options().get('workspace_available'):
+            raise ApiError(404, 'picker_unavailable', '这台服务不能弹出选择目录的窗口，请直接填写路径。')
+        from app.services.folder_picker import FolderPickerBusy
+        try:
+            path = await folder_picker(body.initial)
+        except FolderPickerBusy as exc:
+            raise ApiError(409, 'picker_busy', str(exc)) from None
+        except OSError:
+            raise ApiError(500, 'picker_failed', '没能打开选择目录的窗口，请直接填写路径。') from None
+        if not path:
+            return {'path': None}
+        return (await asyncio.to_thread(service.check_workspace, path)).view()
 
     @app.post('/api/sessions/{session_id}/attachments', status_code=201, dependencies=guarded)
     async def attach(session_id: str, body: AttachmentIn):

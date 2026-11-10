@@ -491,8 +491,35 @@ function openDirDialog() {
     recent.append(item);
   }
   $('dir-default').hidden = !state.place;
+  const browse = $('dir-browse');
+  browse.hidden = !state.caps.folder_picker;
+  browse.disabled = false;
+  browse.textContent = '浏览…';
   dialog.showModal();
-  $('dir-input').focus();
+  (state.caps.folder_picker ? browse : $('dir-input')).focus();
+}
+
+async function pickDir() {
+  // The server opens the system's own folder window on this machine (loopback only).
+  const browse = $('dir-browse');
+  const error = $('dir-error');
+  error.hidden = true;
+  browse.disabled = true;
+  browse.textContent = '请在弹出的窗口里选择…';
+  let check;
+  try {
+    const initial = $('dir-input').value.trim() || (state.place ? state.place.path : state.caps.default_workspace) || null;
+    check = await api('/api/workspace/pick', {method: 'POST', body: initial ? {initial} : {}});
+  } catch (e) {
+    if (e.status !== 401) { error.textContent = e.message; error.hidden = false; }
+    return;
+  } finally {
+    browse.disabled = false;
+    browse.textContent = '浏览…';
+  }
+  if (!check.path) return;                    // the window was closed without choosing
+  $('dir-input').value = check.path;
+  await applyDir(check);
 }
 
 function confirmSystemDrive(path) {
@@ -529,6 +556,11 @@ async function useDir(raw) {
     if (e.status === 401) return;
     error.textContent = e.message; error.hidden = false; return;
   }
+  await applyDir(check);
+}
+
+async function applyDir(check) {
+  const error = $('dir-error');
   if (check.problem) { error.textContent = check.message || '不能使用这个目录。'; error.hidden = false; return; }
   if (check.system_drive) {
     $('dir-dialog').close();
@@ -1203,6 +1235,7 @@ $('opt-memory').addEventListener('click', () => setOption('memory', !state.optio
 $('opt-dir').addEventListener('click', openDirDialog);
 $('dir-form').addEventListener('submit', (event) => { event.preventDefault(); useDir($('dir-input').value); });
 $('dir-cancel').addEventListener('click', () => $('dir-dialog').close());
+$('dir-browse').addEventListener('click', pickDir);
 $('dir-default').addEventListener('click', () => {
   state.place = null;
   if (state.session) {

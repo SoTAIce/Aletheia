@@ -53,6 +53,7 @@ async def serve(args) -> int:
     # Every directory passes the same checks; one on the system drive needs confirming (D-074).
     from app.services.workspace import WorkspacePolicy, confirm_startup
     from app.tools.tool_loader import workspace_servers
+    from app.services.folder_picker import FolderPicker
     policy = WorkspacePolicy.from_config()
     problem = confirm_startup(policy, (filesystem_root, write_root), confirmed=args.confirm_system_drive)
     if problem:
@@ -94,7 +95,9 @@ async def serve(args) -> int:
                          event_retention_seconds=config.web_event_retention_seconds,
                          shutdown_timeout_seconds=config.web_shutdown_timeout_seconds,
                          approval_tools=config.web_approval_tool_names,
-                         approval_wait_seconds=config.web_approval_timeout_seconds)
+                         approval_wait_seconds=config.web_approval_timeout_seconds,
+                         # The system folder window opens on the server's screen, so only for loopback.
+                         folder_picker=FolderPicker() if choice and is_loopback(host) else None)
         server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_config=None,
                                                access_log=False, server_header=False))
         print(f'Aletheia 网页后端：http://{host}:{port}（写文件：{"开启" if write_root else "关闭"}，'

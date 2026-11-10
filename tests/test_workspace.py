@@ -346,6 +346,56 @@ async def test_the_web_page_needs_the_confirmation_for_the_system_drive(on_syste
         assert accepted.status_code == 202
 
 
+async def test_the_folder_window_answer_is_checked_like_a_typed_path(off_system, tmp_path):
+    from test_web_api import api
+    from app.services.folder_picker import FolderPickerBusy
+    work = tmp_path / 'work'
+    work.mkdir()
+    answers = [str(work), None, str(tmp_path / 'missing'), FolderPickerBusy('busy')]
+    seen = []
+
+    async def picker(initial):
+        seen.append(initial)
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+    svc, *_ = service(tmp_path, [], factory=Factory())
+    async with api(svc, write_enabled=True, folder_picker=picker) as web:
+        assert (await web.client.get('/api/health')).json()['options']['folder_picker'] is True
+        chosen = (await web.client.post('/api/workspace/pick', json={'initial': 'D:\\x'})).json()
+        assert chosen['path'] == str(work.resolve()) and chosen['problem'] is None
+        assert (await web.client.post('/api/workspace/pick', json={})).json() == {'path': None}
+        assert (await web.client.post('/api/workspace/pick', json={})).json()['problem'] == 'not_found'
+        busy = await web.client.post('/api/workspace/pick', json={})
+        assert busy.status_code == 409 and busy.json()['code'] == 'picker_busy'
+        assert seen == ['D:\\x', None, None, None]
+    svc, *_ = service(tmp_path, [], factory=Factory())
+    async with api(svc, write_enabled=True) as web:                     # no picker: typed paths only
+        assert (await web.client.get('/api/health')).json()['options']['folder_picker'] is False
+        assert (await web.client.post('/api/workspace/pick', json={})).status_code == 404
+
+
+async def test_the_folder_picker_runs_one_window_at_a_time(tmp_path):
+    import asyncio, sys
+    from app.services.folder_picker import FolderPicker, FolderPickerBusy
+    script = tmp_path / 'fake.py'                     # stands in for python: prints its start folder back
+    script.write_text('import sys, time\ntime.sleep(0.3)\nsys.stdout.write(sys.argv[-2] or "")\n', encoding='utf-8')
+    picker = FolderPicker(python=sys.executable)
+    import app.services.folder_picker as module          # run the fake in place of the dialog script
+    original = module._SCRIPT
+    module._SCRIPT = f'exec(open({str(script)!r}, encoding="utf-8").read())'
+    try:
+        first = asyncio.create_task(picker(str(tmp_path)))
+        await asyncio.sleep(0.05)
+        with pytest.raises(FolderPickerBusy):
+            await picker(None)
+        assert await first == os.path.normpath(str(tmp_path))
+        assert await picker(str(tmp_path / 'missing')) is None          # a missing start folder is dropped
+    finally:
+        module._SCRIPT = original
+
+
 async def test_without_the_choice_the_page_refuses_a_directory(tmp_path):
     from test_web_api import api
     svc, *_ = service(tmp_path, [])
@@ -393,6 +443,8 @@ async def test_the_web_launcher_offers_the_choice_on_loopback_or_inside_allowed_
     assert await launcher.serve(launcher.build_parser().parse_args(['--host', host])) == 0
     assert (seen['workspace_servers'] is not None) is offered
     assert seen['app']['write_enabled'] is offered and seen['app']['write_default'] is False
+    # The system folder window opens on the server's own screen, so loopback only.
+    assert (seen['app']['folder_picker'] is not None) is (host == '127.0.0.1')
     assert ('write_file' in seen['team_options'].allowed_tools) is offered
 
 

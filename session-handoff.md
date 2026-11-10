@@ -1,32 +1,38 @@
 # Current Session Handoff — 2026-11-10
 
-## 新会话从这里开始（2026-11-10 追踪已实现，未提交）
+## 新会话从这里开始（2026-11-10，选择工作目录已完成并并入 main）
 
 **当前状态**
-- HEAD `45291d9`（main，未推送）。loop-default-001 已完成并提交：命令行、网页和评测的普通模式默认改为单一循环（D-072），`RagAgentService` 构造默认仍是 `plan`；要用按计划模式加 `--single-runner plan`。`feature_list.json` 的 active_feature=null。
-- **trace-001 已实现，未提交**（2026-11-10，D-073）：事件带区间编号（审计第 2 版），`app/agent/trace_view.py` 拼树，命令行 `python -m app.agent.trace`，网页每条回复下的“执行记录”面板，评测 `--keep-traces 目录`，`after_model` 带服务商返回的模型名。用假模型在浏览器里看过面板；没有跑真实模型。
-- init.ps1 通过：1756 项通过、16 项跳过（2026-11-10）。基线清单 [baseline-2026-11-09-kb3.json](docs/harness/history/baseline-2026-11-09-kb3.json)，核对命令见 docs/harness/baseline.md（本轮未刷新清单）。
-- 改默认前的真实评测（单一循环）：调参集 11/11；留出集 10/13、11/13（`output/bench-*-1109*.json`，答案在 `output/answers-holdout-loop-1109b/`，不进版本库）。网页上用户自己试用，反馈流畅（未逐项确认）。详见 progress.md、D-072。
-- 知识库已真实建好：Milvus 集合 `biz` 里 61 个来源、844 块。Milvus **不会自启**；重启电脑后先开 Docker Desktop，再运行 `docker compose -f deploy/milvus/compose.yaml up -d`，见 common.md。
+- `main` 已包含追踪（trace-001，`db13d64`，D-073）和选择工作目录（workspace-001，D-074）。工作目录在实验分支 `exp/workspace-choice` 上做完，用户在网页上用真实模型试过并提了两条意见（要系统弹窗选文件夹；工作树里看不到以前的会话），修完后快进并入 `main`。都**未推送**。
+- 实验工作树 `.claude/worktrees/workspace-choice` 还在，分支内容已全部在 `main` 里，可以删掉（删前确认里面没有要留的东西，它的 `data/` 里只有试用时的会话）。
+- `feature_list.json` 的 active_feature=null。init.ps1 通过：1795 项通过、16 项跳过（2026-11-10）。基线清单 [baseline-2026-11-09-kb3.json](docs/harness/history/baseline-2026-11-09-kb3.json)，本轮未刷新。
+- 知识库：Milvus 集合 `biz` 里 61 个来源、844 块。Milvus **不会自启**；重启电脑后先开 Docker Desktop，再运行 `docker compose -f deploy/milvus/compose.yaml up -d`，见 common.md。
 
-**未提交的改动**
-- trace-001：`app/agent/hooks.py`、`builtin_hooks.py`、`run_meter.py`、`runtime.py`、`team_v2.py`、`agent_loop.py`、`openai_compatible_tool_calling_model.py`、`__main__.py`，新文件 `trace_view.py`、`trace.py`；`app/services/conversation_archive.py`、`rag_agent_service.py`；`app/api/app.py`、`static/app.js`、`static/app.css`；`bench/run_bench.py`；测试 `tests/test_trace.py`（新）和 `test_hooks.py`、`test_builtin_hooks.py`、`test_agent_loop.py`。
-- 记录：`docs/tracing_plan.md`（新）、`docs/DECISIONS.md`（D-073）、`common.md`、`AGENTS.md`、`docs/PROJECT_HANDOVER.md`、`docs/DOCUMENT_INDEX.md`、`feature_list.json`、`progress.md`、本文件。
-- **用户自己的差异，永远不进提交**：`README.md`；`app/agent/planner.py`、`app/agent/step_executor.py`、`app/agent/tool_calling_step_runner.py` 里的中文注释；删除的 `scripts/benchmark_conversation_memory.py`、`scripts/validate_multi_runner_live.py`、`scripts/validate_summary_context.py`。改这三个代码文件时只能暂存自己的那几处（`git hash-object -w` 加 `git update-index --cacheinfo`），不能整文件暂存。
+**选择工作目录：现在是什么样（详见 [方案](docs/workspace_choice_plan.md) 第 10、11 节和 D-074）**
+- 所有目录（网页选的、`/dir` 选的、启动参数给的）都过 `app/services/workspace.py` 的同一套检查；系统盘（C 盘）目录必须确认：网页弹确认框、服务端不确认返回 409、`/dir` 输入 `y`、启动参数交互确认或 `--confirm-system-drive`。
+- 禁止读写的目录：`.env` 的 `WORKSPACE_DENY_DIRS` 加本项目 `data` 和对话归档目录；在工作目录里面时文件工具和沙盒都看不到。
+- 网页：输入框下的文件夹按钮 → 目录对话框，可手填路径，也可点“浏览…”弹出系统的选择文件夹窗口（`app/services/folder_picker.py`，服务端在本机子进程里用 tkinter 打开，只在本机地址提供，一次一个）。可拖入 UTF-8 文本文件作附件（每条最多 5 个、每个最多 100 万字符，存在对话归档里，模型用 `read_context_artifact` 读）。
+- 每次运行按选中目录启动文件和沙盒服务；不选目录时行为和以前一样。`WORKSPACE_CHOICE=false` 整体关闭。
+- 已知限制：GBK 等非 UTF-8 文本和图片不能当附件；网页上没有目录浏览器（只有系统弹窗）；真实系统弹窗只在用户屏幕上试过，自动测试用的是替身。
+
+**用户自己的差异，永远不进提交**
+- `README.md`；`app/agent/planner.py`、`app/agent/step_executor.py`、`app/agent/tool_calling_step_runner.py` 里的中文注释；删除的 `scripts/benchmark_conversation_memory.py`、`scripts/validate_multi_runner_live.py`、`scripts/validate_summary_context.py`。改这三个代码文件时只能暂存自己的那几处（`git hash-object -w` 加 `git update-index --cacheinfo`），不能整文件暂存。
 
 **工作方式**
 - 只用中文回复，不中英夹杂（路径、命令、代码名除外）。
-- Codex 有额度时：Claude 写方案（`docs/*.md`）并登记，用 Agent 工具 `codex:codex-rescue` 派它实现（`--model gpt-6.1-sol --effort medium`），完成后由 Claude 审查。Codex 额度用完或失败时告诉用户，由 Claude 自己做。小改动、记录和只读检查由 Claude 直接做。
+- Codex 有额度时：Claude 写方案（`docs/*.md`）并登记，用 Agent 工具 `codex:codex-rescue` 派它实现（`--model gpt-6.1-sol --effort medium`），完成后由 Claude 审查。额度用完或失败时告诉用户，由 Claude 自己做。小改动、记录和只读检查由 Claude 直接做。
+- 较大的改动先用工作树开实验分支（`exp/...`），用户试过、确认成功后再并入 `main`（用户 2026-11-10 的要求）。
 - 不推送、不 amend；真实模型、评测和嵌入接口每次都要用户明确授权。
+- 从工作树启动网页时，工作树里没有 `.env`：先把主目录 `.env` 读进当前终端再启动（命令见 common.md 或上一轮记录），对话记录默认存在工作树自己的 `data` 里；要看到以前的会话，设 `CONVERSATION_STORAGE_DIR=D:\tries\agent\data\conversations`。
 
-**下一步任务（按优先级，都要用户决定后才做）**
-1. **追踪（tracing）收尾**：trace-001 已提交 `db13d64`；可选：用户在真实网页上点一次“执行记录”确认，或授权一次带 `--keep-traces` 的评测，用服务商模型名核对中转站。以后的选项（记录原文、OpenTelemetry、实时追踪）见 [方案](docs/tracing_plan.md) 第 8 节，都要用户另行决定。
-2. **选择工作目录**（已实现，在工作树分支 `exp/workspace-choice`，目录 `.claude/worktrees/workspace-choice`，等用户确认后并入 `main`；D-074）。原登记：[方案](docs/workspace_choice_plan.md) 登记为 workspace-plan-001，实现是 workspace-001（planned）。读写共用一个目录，网页会话顶部和命令行 `/dir` 更换；系统盘要确认，服务端校验（409）；拒绝磁盘根、网络路径、系统目录和本项目数据目录；默认关闭（`--choose-workspace`），非本机监听时必须配白名单。会改变 D-051“写入范围只由启动参数决定”。方案第 9 节有六个问题要用户先回答。
-3. 小问题，不急：`--prune` 在目录为磁盘根时的前缀判断；嵌入服务里 `ValueError` 的范围可以再收窄；`--exclude` 补 `/absolute` 和单反斜杠绝对路径的专门测试；系统 TEMP 里 Codex 留下的空目录拒绝删除（不改访问权限）。
+**下一阶段可选任务（都要用户决定后才做）**
+1. **工作目录的后续**：GBK 和图片附件；网页里的目录浏览器（需要一个列目录的接口，要另想安全边界）；把实验工作树删掉。
+2. **追踪的后续**：用户在真实网页上点一次“执行记录”确认；授权一次带 `--keep-traces` 的评测；记录原文、OpenTelemetry、实时追踪见 [追踪方案](docs/tracing_plan.md) 第 8 节。
+3. 小问题，不急：`--prune` 在目录为磁盘根时的前缀判断；嵌入服务里 `ValueError` 的范围可以再收窄；`--exclude` 补 `/absolute` 和单反斜杠绝对路径的专门测试。
 
 **用户已决定不做的**（2026-11-09：“agent 可以解决正常问题就可以”）
-- `side_effects_qa` 不再追：标准答案认为 `remember(item, history=[])` 只改默认参数、不算修改传入参数，模型每次都把它算进去；这是题目对边界情形的定义之争，不是智能体的能力问题。
-- 中转站疑似换上游（`fix_split_amount` 两次失败的首次请求提示令牌只有约 1,500～1,900，正常约 20,190）暂时不解决。
+- `side_effects_qa` 不再追：标准答案认为 `remember(item, history=[])` 只改默认参数、不算修改传入参数，这是题目对边界情形的定义之争。
+- 中转站疑似换上游（个别请求的令牌数异常）暂时不解决。
 
 ## 最新交接：kb-index-cli-003（已提交 `64b2a49`，真实建库完成）
 
