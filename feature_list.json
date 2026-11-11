@@ -198,7 +198,8 @@
       "verification": {
         "command": null,
         "reason": "Scoped integration tests/acceptance must be restored or explicitly added; existing historical suite alone does not certify unfinished recall injection."
-      }
+      },
+      "disposition": "Superseded 2026-11-10 (status-cleanup-001): the remaining assembly and acceptance were done by longterm-memory-001 (done) and verified live in e2e-live-001; status stays partial as the historical record of this entry. Not an active task."
     },
     {
       "id": "harness-001",
@@ -1460,6 +1461,20 @@
         "scope": "静态、导入、确定性测试；两次离线文档预演和基线另外核对，未运行真实服务。",
         "record": "progress.md"
       }
+    },
+    {
+      "id": "status-cleanup-001",
+      "name": "Small leftovers: --prune at a drive root, embedding error scope test, --exclude absolute paths, stale status",
+      "description": "User 2026-11-10 '先清小问题'. --prune builds the source prefix without a doubled slash when the directory is a drive root; a dependency ValueError during an embedding request stays classified as a request failure (kept as is, now tested); --exclude rejects /absolute and \\absolute with dedicated cases; superseded long-term memory entries get a disposition.",
+      "status": "done",
+      "dependencies": [
+        "kb-index-cli-003"
+      ],
+      "acceptance": [
+        "New drive-root prune test fails without the fix and passes with it.",
+        "tests/test_knowledge_cli.py and init.ps1 pass."
+      ],
+      "evidence": "app/knowledge/__main__.py (prefix); tests/test_knowledge_cli.py: drive-root prune x2 (red without the fix), dependency ValueError x2, 4 new invalid --exclude values; 86 passed. init.ps1 PASS 1803 passed, 16 skipped. No live service run; not committed."
     }
   ],
   "cleanup_2026_11_04": {
@@ -1493,7 +1508,8 @@
       "authorized": false,
       "priority": 2,
       "next_action": "Verify and finish optional read-only long-term integration; do not automatically add autonomous writes.",
-      "source": "docs/superpowers/plans/2026-10-21-longterm-agent-integration.md"
+      "source": "docs/superpowers/plans/2026-10-21-longterm-agent-integration.md",
+      "disposition": "Superseded 2026-11-10 (status-cleanup-001): read-only recall plus explicit /remember shipped in longterm-memory-001 and passed e2e-live-001. Nothing left to authorize here."
     },
     {
       "id": "deliverable-format-001",

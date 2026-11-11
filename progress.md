@@ -18,6 +18,12 @@
 
 ## Session Record
 
+### 2026-11-10 — status-cleanup-001：清理小问题
+
+- **Result**：用户“先清小问题”。`app/knowledge/__main__.py` 的 `--prune` 来源前缀先去掉末尾斜杠再补，磁盘根（`C:/`、`/`）不再变成双斜杠。嵌入服务的 `ValueError` 范围经核对不改：只有本服务自己的结果校验 `EmbeddingResponseError` 原样抛出，客户端或依赖在请求中抛的 `ValueError` 归为 `EmbeddingRequestError`，建库命令据此报“调用嵌入接口失败”，分类正确；补测试固定。`--exclude` 补 `/absolute`、`\absolute`、`/harness/history`、`\harness\history` 四个拒绝用例。功能表 `longterm-integration-001` 和待办 `longterm-acceptance` 加 disposition，说明已被 longterm-memory-001 与 e2e-live-001 取代。
+- **验证**：`tests/test_knowledge_cli.py` 86 项通过；把修复临时退回时新增的磁盘根测试 2 项失败，恢复后通过。init.ps1 通过：1803 项通过、16 项跳过（62 秒）。没有连接真实 Milvus 或嵌入接口。
+- **工作树残留**：空文件夹 `.claude/worktrees/workspace-choice` 被进程 86428（07:04 从工作树启动的 `python -m app.api --no-knowledge`）占用；用户“结束并删除”后结束该进程，文件夹和空的 `.claude/worktrees` 已删除。未提交。
+
 ### 2026-11-10 — 收尾：删除实验工作树，网页执行记录真实确认
 
 - **删除工作树**：先用 `cmd /c rmdir` 拆掉工作树里指向主目录 `.venv` 的目录链接，再 `git worktree remove --force`、`git branch -d exp/workspace-choice`；主目录 `.venv` 完好。空文件夹 `.claude/worktrees/workspace-choice` 被 8000 端口上一个从该工作树启动的旧网页服务（07:04 启动）占用，未删。

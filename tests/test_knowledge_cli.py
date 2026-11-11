@@ -379,6 +379,22 @@ def test_prune_dry_run_only_lists_sources_with_directory_boundary(tmp_path):
     assert '只读连接 Milvus' in text and '3 个' in text
 
 
+@pytest.mark.parametrize('confirm', [False, True])
+def test_prune_prefix_works_when_the_directory_is_a_drive_root(tmp_path, confirm):
+    from app.knowledge.__main__ import _prune
+    root = Path(tmp_path.anchor)                       # C:\ on Windows, / elsewhere
+    kept = (root / 'kept.md').resolve().as_posix()
+    gone = (root / 'gone.md').as_posix()
+    store, lines = FakeStore(sources=[kept, gone, '//server/share/x.md']), []
+    removed, chunks, failed = _prune(service(store), root.resolve(), [root / 'kept.md'], confirm, lines.append)
+    assert failed == 0
+    if confirm:
+        assert store.deleted == [gone] and (removed, chunks) == (1, 7)
+    else:
+        assert not store.deleted and '将清理：gone.md' in '\n'.join(lines)
+        assert '1 个过时来源' in '\n'.join(lines)
+
+
 def test_prune_dry_run_connection_failure_is_safe_and_nonzero(tmp_path):
     from app.core.milvus_client import MilvusConnectError
     store, lines = FakeStore(fail_with=MilvusConnectError('secret private')), []
@@ -430,6 +446,21 @@ def test_embedding_request_subclass_preserves_message_and_cause(method):
     prefix = 'batch' if method == 'embed_documents' else 'query'
     assert isinstance(info.value, RuntimeError) and info.value.__cause__ is error
     assert str(info.value) == f'{prefix} embedding request failed: secret private'
+
+
+@pytest.mark.parametrize('method', ['embed_documents', 'embed_query'])
+def test_dependency_value_error_counts_as_a_request_failure(method):
+    """只有本服务自己的结果校验（EmbeddingResponseError）原样抛出；客户端或依赖在请求中抛的
+    其他 ValueError 归为请求失败，建库命令报“调用嵌入接口失败”而不是当成配置或结果错误。"""
+    from app.services.vector_embedding_service import (DashScopeEmbeddings, EmbeddingRequestError,
+                                                       EmbeddingResponseError)
+    error = ValueError('secret private')
+    def create(**kw):
+        raise error
+    embedding = DashScopeEmbeddings('测试', client=SimpleNamespace(embeddings=SimpleNamespace(create=create)))
+    with pytest.raises(EmbeddingRequestError) as info:
+        getattr(embedding, method)(['文本'] if method == 'embed_documents' else '文本')
+    assert info.value.__cause__ is error and not isinstance(info.value, (ValueError, EmbeddingResponseError))
 
 
 def test_embedding_config_subclass_keeps_value_error_and_message():
@@ -668,7 +699,8 @@ def test_exclude_matches_only_leading_path_segments(tmp_path, exclude):
     assert [p.relative_to(tmp_path).as_posix() for p in result] == ['harness/history2/a.md', 'other/harness/history/a.md']
 
 
-@pytest.mark.parametrize('value', ['', '/', 'C:/private', 'C:private', '//server/share', '../history', 'a/../b', 'a\\..\\b'])
+@pytest.mark.parametrize('value', ['', '/', 'C:/private', 'C:private', '//server/share', '../history', 'a/../b', 'a\\..\\b',
+                                   '/absolute', '\\absolute', '/harness/history', '\\harness\\history'])
 def test_invalid_exclude_is_rejected_without_splitting_or_store_access(tmp_path, value):
     with pytest.raises(ValueError):
         VectorIndexService.supported_files(tmp_path, exclude=[value])

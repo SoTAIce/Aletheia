@@ -75,7 +75,8 @@ def _prune(service, root: Path, files: list[Path], confirm: bool, out) -> tuple[
         out(f'清理检查失败：{reason}（{_exception_type(exc)}）')
         return 0, 0, 1
     current = {path.resolve().as_posix() for path in files}
-    prefix = root.as_posix() + '/'
+    # 磁盘根（C:/、/）的 as_posix 已以斜杠结尾，不能再补一个，否则前缀成了 C:// 匹配不到来源。
+    prefix = root.as_posix().rstrip('/') + '/'
     stale = sorted(source for source in sources if source.startswith(prefix) and source not in current)
     if not confirm:
         for source in stale:
