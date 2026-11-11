@@ -8,16 +8,17 @@
 
 ```powershell
 # 启动本地网页（只读，地址 http://127.0.0.1:8000，令牌见 .env 的 WEB_ACCESS_TOKEN）
-.venv\Scripts\python.exe -m app.api --filesystem-root . --no-knowledge
+# 目录要写绝对路径（D-074 起相对路径 `.` 会被拒绝）；也可以不加 --filesystem-root，在网页上用文件夹按钮选
+.venv\Scripts\python.exe -m app.api --filesystem-root D:\tries\agent --no-knowledge
 
 # 普通模式默认用单一循环（D-072）；启动时改回按计划用下面这条，网页上也可逐条消息选择“按计划 / 单一循环”
-.venv\Scripts\python.exe -m app.api --filesystem-root . --no-knowledge --single-runner plan
+.venv\Scripts\python.exe -m app.api --filesystem-root D:\tries\agent --no-knowledge --single-runner plan
 
 # 允许写文件（只能写进指定目录）
-.venv\Scripts\python.exe -m app.api --filesystem-root . --write-root .\output --no-knowledge
+.venv\Scripts\python.exe -m app.api --filesystem-root D:\tries\agent --write-root D:\tries\agent\output --no-knowledge
 
 # 端口被占用时换一个端口
-.venv\Scripts\python.exe -m app.api --filesystem-root . --no-knowledge --port 8001
+.venv\Scripts\python.exe -m app.api --filesystem-root D:\tries\agent --no-knowledge --port 8001
 ```
 
 - 关闭：在运行它的终端里按 `Ctrl+C`。

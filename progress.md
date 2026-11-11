@@ -18,6 +18,12 @@
 
 ## Session Record
 
+### 2026-11-10 — 收尾：删除实验工作树，网页执行记录真实确认
+
+- **删除工作树**：先用 `cmd /c rmdir` 拆掉工作树里指向主目录 `.venv` 的目录链接，再 `git worktree remove --force`、`git branch -d exp/workspace-choice`；主目录 `.venv` 完好。空文件夹 `.claude/worktrees/workspace-choice` 被 8000 端口上一个从该工作树启动的旧网页服务（07:04 启动）占用，未删。
+- **执行记录**：用户授权并亲自在网页（`main` 代码，8001 端口）用真实模型发一条消息，点开“执行记录”显示正常。审计文件经 `python -m app.agent.trace --json` 解析：版本 2，complete=true，dropped=0，状态 completed，2 次模型调用、1 次工具调用，输入 46064、输出 398 令牌，120.3 秒。
+- **文档**：`common.md` 的网页启动命令改为绝对路径（D-074 起 `--filesystem-root .` 会被拒绝）。本轮未运行 init.ps1（没有改代码）。
+
 ### 2026-11-10 — workspace-001：选择工作目录、系统盘确认、禁止目录、拖拽附件（分支 `exp/workspace-choice`）
 
 - **Result**：按方案和用户的七条回答实现（D-074）。所有目录走 `app/services/workspace.py` 的同一套检查；系统盘目录必须确认（网页对话框、`/dir` 输入 `y`、启动参数交互确认或 `--confirm-system-drive`），服务端也校验；`WORKSPACE_DENY_DIRS` 和本项目数据目录禁止读写，在工作目录里时文件工具和沙盒都看不到；网页文件夹按钮、目录对话框、拖拽 UTF-8 文本附件；命令行 `/dir`。

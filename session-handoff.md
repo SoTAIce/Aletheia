@@ -4,7 +4,7 @@
 
 **当前状态**
 - `main` 已包含追踪（trace-001，`db13d64`，D-073）和选择工作目录（workspace-001，D-074）。工作目录在实验分支 `exp/workspace-choice` 上做完，用户在网页上用真实模型试过并提了两条意见（要系统弹窗选文件夹；工作树里看不到以前的会话），修完后快进并入 `main`。都**未推送**。
-- 实验工作树 `.claude/worktrees/workspace-choice` 还在，分支内容已全部在 `main` 里，可以删掉（删前确认里面没有要留的东西，它的 `data/` 里只有试用时的会话）。
+- 实验工作树和分支 `exp/workspace-choice` 已于 2026-11-10 删除（先拆掉指向主目录 `.venv` 的目录链接，主目录环境完好）。只剩空文件夹 `.claude/worktrees/workspace-choice` 当时被进程占用没删掉，下次可直接删。**以后删工作树前先拆 `.venv` 链接**（`cmd /c rmdir <工作树>\.venv`），不要连同链接一起递归删除。
 - `feature_list.json` 的 active_feature=null。init.ps1 通过：1795 项通过、16 项跳过（2026-11-10）。基线清单 [baseline-2026-11-09-kb3.json](docs/harness/history/baseline-2026-11-09-kb3.json)，本轮未刷新。
 - 知识库：Milvus 集合 `biz` 里 61 个来源、844 块。Milvus **不会自启**；重启电脑后先开 Docker Desktop，再运行 `docker compose -f deploy/milvus/compose.yaml up -d`，见 common.md。
 
@@ -26,8 +26,8 @@
 - 从工作树启动网页时，工作树里没有 `.env`：先把主目录 `.env` 读进当前终端再启动（命令见 common.md 或上一轮记录），对话记录默认存在工作树自己的 `data` 里；要看到以前的会话，设 `CONVERSATION_STORAGE_DIR=D:\tries\agent\data\conversations`。
 
 **下一阶段可选任务（都要用户决定后才做）**
-1. **工作目录的后续**：GBK 和图片附件；网页里的目录浏览器（需要一个列目录的接口，要另想安全边界）；把实验工作树删掉。
-2. **追踪的后续**：用户在真实网页上点一次“执行记录”确认；授权一次带 `--keep-traces` 的评测；记录原文、OpenTelemetry、实时追踪见 [追踪方案](docs/tracing_plan.md) 第 8 节。
+1. **工作目录的后续**：GBK 和图片附件；网页里的目录浏览器（需要一个列目录的接口，要另想安全边界）。
+2. **追踪的后续**：~~用户在真实网页上点一次“执行记录”确认~~（2026-11-10 已完成：用户用真实模型在 8001 端口的网页上发了一条消息，点开执行记录显示正常；审计文件用 `python -m app.agent.trace --json` 解析为版本 2、记录完整、丢弃 0，2 次模型调用、1 次工具调用、约 4.6 万输入令牌、120 秒）；授权一次带 `--keep-traces` 的评测；记录原文、OpenTelemetry、实时追踪见 [追踪方案](docs/tracing_plan.md) 第 8 节。
 3. 小问题，不急：`--prune` 在目录为磁盘根时的前缀判断；嵌入服务里 `ValueError` 的范围可以再收窄；`--exclude` 补 `/absolute` 和单反斜杠绝对路径的专门测试。
 
 **用户已决定不做的**（2026-11-09：“agent 可以解决正常问题就可以”）
