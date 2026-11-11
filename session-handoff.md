@@ -3,7 +3,7 @@
 ## 新会话从这里开始（2026-11-10，选择工作目录已完成并并入 main）
 
 **当前状态**
-- `main` 已包含追踪（trace-001，`db13d64`，D-073）和选择工作目录（workspace-001，D-074）。工作目录在实验分支 `exp/workspace-choice` 上做完，用户在网页上用真实模型试过并提了两条意见（要系统弹窗选文件夹；工作树里看不到以前的会话），修完后快进并入 `main`。都**未推送**。
+- `main` 已包含追踪（trace-001，`db13d64`，D-073）和选择工作目录（workspace-001，D-074）。工作目录在实验分支 `exp/workspace-choice` 上做完，用户在网页上用真实模型试过并提了两条意见（要系统弹窗选文件夹；工作树里看不到以前的会话），修完后快进并入 `main`。2026-11-10 经用户授权已推送到 `origin/main`（到 `ae5440b`，用户自己的未提交差异不在其中）。
 - 实验工作树和分支 `exp/workspace-choice` 已于 2026-11-10 删除（先拆掉指向主目录 `.venv` 的目录链接，主目录环境完好）。只剩空文件夹 `.claude/worktrees/workspace-choice` 当时被进程占用没删掉，下次可直接删。**以后删工作树前先拆 `.venv` 链接**（`cmd /c rmdir <工作树>\.venv`），不要连同链接一起递归删除。
 - `feature_list.json` 的 active_feature=null。init.ps1 通过：1795 项通过、16 项跳过（2026-11-10）。基线清单 [baseline-2026-11-09-kb3.json](docs/harness/history/baseline-2026-11-09-kb3.json)，本轮未刷新。
 - 知识库：Milvus 集合 `biz` 里 61 个来源、844 块。Milvus **不会自启**；重启电脑后先开 Docker Desktop，再运行 `docker compose -f deploy/milvus/compose.yaml up -d`，见 common.md。

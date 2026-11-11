@@ -5,7 +5,7 @@
 ## Current Verified State
 
 - **最新验收（2026-11-09）**：kb-index-cli-003 已提交为 `64b2a49`，真实建库完成（61 个文件、844 块，失败 0，与切块结果逐条一致）；init.ps1 94 个 Python 文件、1720 项通过、16 项跳过。
-- **仓库状态**：D:	riesgent，HEAD 64b2a49，未推送；工作区保留用户差异和本轮记录（含 common.md 新增的 Milvus 启动一节），未提交，active_feature=null。
+- **仓库状态**（2026-11-10 更新）：D:\tries\agent，`main` 已推送到 `origin/main`（`ae5440b`）；以下为 11-09 时的记录：工作区保留用户差异和本轮记录（含 common.md 新增的 Milvus 启动一节），未提交，active_feature=null。
 - **标准验收路径**：powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1；基线核对见 docs/harness/baseline.md。该检查不验证真实模型、外部服务或容器。
 - **当前限制与下一步**：追踪 trace-001 已实现、未提交（D-073）；普通模式默认是单一循环（D-072，已提交 `45291d9`）；init.ps1 1756 项通过、16 项跳过；完整任务列表见 session-handoff.md 顶部。Milvus 不自启，启动命令见 common.md。
 
