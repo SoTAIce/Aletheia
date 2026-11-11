@@ -121,14 +121,15 @@ class VectorIndexService:
                 except Exception as exc:
                     result.increment_fail_count()
                     result.add_failed_file(str(path), str(exc))
-                    logger.exception("Failed to index file: {}", path)
+                    # 只记异常类型：异常原文可能带文档内容或服务商返回（D-033）。
+                    logger.error("Failed to index file: {} ({})", path, type(exc).__name__)
 
             result.success = result.fail_count == 0
             if result.fail_count:
                 result.error_message = f"{result.fail_count} file(s) failed to index"
         except Exception as exc:
             result.error_message = str(exc)
-            logger.exception("Directory indexing failed")
+            logger.error("Directory indexing failed ({})", type(exc).__name__)
         finally:
             result.end_time = datetime.now()
         return result

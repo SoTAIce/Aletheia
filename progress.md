@@ -18,6 +18,12 @@
 
 ## Session Record
 
+### 2026-11-10 — status-cleanup-002：两处遗留小问题
+
+- **Result**：用户“接着修”。`app/services/vector_store_manager.py` 的 `list_documents`（`app/tools/knowledge_tool.py` 建关键词索引时调用）改用 `query_iterator` 逐批读取，迭代器在 `finally` 里关闭；去掉按 `num_entities` 的条数核对（压缩前它仍计入已删记录，删过块后会误报；offset 加 limit 还有 16384 上限）。连接方式不变（仍是可建集合的 `connect()`）。`app/services/vector_index_service.py` 的 `index_directory` 两处 `logger.exception` 改为只记异常类型（D-033）；返回结果里的失败信息不变。
+- **验证**：新增 3 项测试（逐批读取且不信实体统计、失败时关闭迭代器、目录建库日志不含异常原文和堆栈），换回旧代码时 3 项都失败。`tests/test_knowledge_cli.py` 89 项通过；init.ps1 通过：1806 项通过、16 项跳过（62 秒）。没有连接真实 Milvus。
+- **未做**：建库与清理并发没有事务保证，属设计限制，不改。
+
 ### 2026-11-10 — status-cleanup-001：清理小问题
 
 - **Result**：用户“先清小问题”。`app/knowledge/__main__.py` 的 `--prune` 来源前缀先去掉末尾斜杠再补，磁盘根（`C:/`、`/`）不再变成双斜杠。嵌入服务的 `ValueError` 范围经核对不改：只有本服务自己的结果校验 `EmbeddingResponseError` 原样抛出，客户端或依赖在请求中抛的 `ValueError` 归为 `EmbeddingRequestError`，建库命令据此报“调用嵌入接口失败”，分类正确；补测试固定。`--exclude` 补 `/absolute`、`\absolute`、`/harness/history`、`\harness\history` 四个拒绝用例。功能表 `longterm-integration-001` 和待办 `longterm-acceptance` 加 disposition，说明已被 longterm-memory-001 与 e2e-live-001 取代。

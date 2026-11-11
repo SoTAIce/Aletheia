@@ -84,6 +84,68 @@ def test_index_directory_uses_the_same_file_list(tmp_path):
     assert all('/.venv/' not in s and '/.git/' not in s for s in store.replaced)
 
 
+def test_index_directory_logs_only_exception_types(tmp_path):
+    from loguru import logger
+    logs = []
+    sink = logger.add(lambda message: logs.append(str(message)))
+    try:
+        result = service(FakeStore(fail_with=RuntimeError('secret private text'))).index_directory(
+            str(workspace(tmp_path)))
+        service(FakeStore()).index_directory(str(tmp_path / 'missing'))
+    finally:
+        logger.remove(sink)
+    text = '\n'.join(logs)
+    assert result.fail_count == 2 and 'IndexStageError' in text and 'ValueError' in text
+    assert 'secret' not in text and 'Traceback' not in text and 'missing' not in text
+
+
+def test_list_documents_iterates_without_trusting_entity_count():
+    """实体统计偏大（压缩前仍算已删记录）也不报错；超过一批时全部读到，迭代器关闭。"""
+    from app.services.vector_store_manager import VectorStoreManager
+    rows = [{'id': f'id{n}', 'content': f'块 {n}', 'metadata': {'_source': '/docs/a.md'}} for n in range(5)]
+    events = []
+    class Collection:
+        num_entities = 99
+        def load(self):
+            pass
+        def query(self, **kwargs):
+            pytest.fail('不应再用 offset 分页查询')
+        def query_iterator(self, *, expr, output_fields, batch_size):
+            pages = [rows[i:i + batch_size] for i in range(0, len(rows), batch_size)] + [[]]
+            events.append(('迭代', expr, tuple(output_fields), batch_size))
+            class Iterator:
+                def next(self):
+                    return pages.pop(0)
+                def close(self):
+                    events.append(('关闭',))
+            return Iterator()
+    class Client:
+        COLLECTION_NAME = '测试'
+        def connect(self, **kwargs):
+            pass
+        def get_collection(self):
+            return Collection()
+    documents = VectorStoreManager(Client()).list_documents(batch_size=2)
+    assert [d.page_content for d in documents] == [f'块 {n}' for n in range(5)]
+    assert documents[0].metadata == {'_source': '/docs/a.md', 'chunk_id': 'id0'}
+    assert events == [('迭代', 'id != ""', ('id', 'content', 'metadata'), 2), ('关闭',)]
+
+
+def test_list_documents_closes_the_iterator_on_failure():
+    from app.services.vector_store_manager import VectorStoreManager
+    closed = []
+    class Iterator:
+        def next(self):
+            raise ConnectionError('断开')
+        def close(self):
+            closed.append(True)
+    collection = SimpleNamespace(load=lambda: None, query_iterator=lambda **kw: Iterator())
+    client = SimpleNamespace(COLLECTION_NAME='测试', connect=lambda **kw: None, get_collection=lambda: collection)
+    with pytest.raises(ConnectionError):
+        VectorStoreManager(client).list_documents()
+    assert closed == [True]
+
+
 def test_the_default_is_a_dry_run_that_touches_no_store(tmp_path):
     store, lines = FakeStore(), []
     code = run(args(str(workspace(tmp_path))), service(store), lines.append)

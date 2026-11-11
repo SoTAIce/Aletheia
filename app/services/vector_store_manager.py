@@ -149,33 +149,32 @@ class VectorStoreManager:
         return [(document, float(distance)) for document, distance in matches]
 
     def list_documents(self, batch_size: int = 1000) -> list[Document]:
-        """Load the current collection snapshot for an in-memory lexical index."""
+        """Load the current collection snapshot for an in-memory lexical index.
+
+        和 list_sources 一样用查询迭代器逐批读取：num_entities 在压缩前仍计入已删记录，
+        offset 加 limit 又有 16384 的窗口上限，两者都会让大集合或删过块的集合读不全或误报。
+        """
         self._client_manager.connect()
         collection = self._client_manager.get_collection()
         collection.load()
-        total = int(collection.num_entities)
         documents: list[Document] = []
-        offset = 0
-        while offset < total:
-            rows = collection.query(
-                expr='id != ""',
-                output_fields=["id", "content", "metadata"],
-                limit=min(max(1, int(batch_size)), total - offset),
-                offset=offset,
-            )
-            if not rows:
-                break
-            for row in rows:
-                metadata = dict(row.get("metadata") or {})
-                metadata.setdefault("chunk_id", str(row.get("id", "")))
-                documents.append(
-                    Document(page_content=str(row.get("content", "")), metadata=metadata)
-                )
-            offset += len(rows)
-        if len(documents) != total:
-            raise RuntimeError(
-                f"loaded {len(documents)} lexical documents from {total} collection entities"
-            )
+        iterator = collection.query_iterator(
+            expr='id != ""', output_fields=["id", "content", "metadata"],
+            batch_size=max(1, int(batch_size)),
+        )
+        try:
+            while True:
+                rows = iterator.next()
+                if not rows:
+                    break
+                for row in rows:
+                    metadata = dict(row.get("metadata") or {})
+                    metadata.setdefault("chunk_id", str(row.get("id", "")))
+                    documents.append(
+                        Document(page_content=str(row.get("content", "")), metadata=metadata)
+                    )
+        finally:
+            iterator.close()
         return documents
 
     def close(self) -> None:

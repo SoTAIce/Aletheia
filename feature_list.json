@@ -1475,6 +1475,20 @@
         "tests/test_knowledge_cli.py and init.ps1 pass."
       ],
       "evidence": "app/knowledge/__main__.py (prefix); tests/test_knowledge_cli.py: drive-root prune x2 (red without the fix), dependency ValueError x2, 4 new invalid --exclude values; 86 passed. init.ps1 PASS 1803 passed, 16 skipped. No live service run; not committed."
+    },
+    {
+      "id": "status-cleanup-002",
+      "name": "list_documents iterates the collection; index_directory logs exception types only",
+      "description": "User 2026-11-10 '接着修'. VectorStoreManager.list_documents (the keyword index load) uses query_iterator like list_sources instead of num_entities plus offset paging, which miscounts after deletes and stops at the 16384 offset window; index_directory logs only exception types (D-033).",
+      "status": "done",
+      "dependencies": [
+        "status-cleanup-001"
+      ],
+      "acceptance": [
+        "New tests fail on the old code and pass on the new.",
+        "init.ps1 passes."
+      ],
+      "evidence": "tests/test_knowledge_cli.py +3 tests (red on old code), 89 passed; init.ps1 PASS 1806 passed, 16 skipped. No live Milvus run; not committed."
     }
   ],
   "cleanup_2026_11_04": {
