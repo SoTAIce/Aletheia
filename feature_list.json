@@ -1530,6 +1530,34 @@
         "Bench team and single loop tune not below 3a."
       ],
       "evidence": "Codex until its quota ran out, finished and reviewed by Claude; tests migrated per plan 9.2; init.ps1 PASS 1807 passed, 16 skipped. Live (user '跑评测'): team tune 11/11, 78 calls, 1,837,245 tokens (output/bench-tune-team-3b.json); single loop 10/11, 28 calls (output/bench-tune-loop-3b.json). Committed bab704a."
+    },
+    {
+      "id": "loop-delegate-plan-001",
+      "name": "Plan: on-demand read-only delegation inside the single agent loop",
+      "description": "User 2026-11-10: the agent itself should decide when to delegate, modelled on Claude Code, with careful trigger timing to avoid wasting tokens. docs/loop_delegate_plan.md: a read-only explore member (fresh context, conclusion only, depth 1); host rules (off by default, at most 2 per task, not in the first round, not near the budget end) plus when-to/when-not-to tool guidance; bench on the tune set and two new probe tasks.",
+      "status": "done",
+      "dependencies": [
+        "stage3-cleanup-001"
+      ],
+      "acceptance": [
+        "Plan names trigger rules, files, tests, bench criteria and the user's open questions."
+      ],
+      "evidence": "docs/loop_delegate_plan.md; registered in docs/DOCUMENT_INDEX.md. User answered section 9 '都按建议' (2026-11-10). Not committed."
+    },
+    {
+      "id": "loop-delegate-001",
+      "name": "On-demand read-only delegation inside the single agent loop",
+      "description": "docs/loop_delegate_plan.md section 10: delegate(task, thoroughness) host tool of the single loop (--delegate, off by default): MemberSpawner shared with the team, ExploreDelegation host rules (2 per task, not in round 1, not after 75% of rounds, 4000-char task, quick/medium/thorough = 4/8/12 member rounds, 16 calls, 120 s), fresh read-only member context, bench counts and two probe tasks.",
+      "status": "partial",
+      "dependencies": [
+        "loop-delegate-plan-001"
+      ],
+      "acceptance": [
+        "Without --delegate the single loop's tools and prompt are unchanged; team mode unchanged.",
+        "Host rules and member context per plan 4.1 and 4.3, tested with stand-in models.",
+        "Live: tune with --delegate passes >= 10/11, tokens <= 1.1x 3b loop (606,738), delegations <= 2; probes delegate and stay correct."
+      ],
+      "evidence": "Codex stalled 71 min with no edits and was cancelled; implemented by Claude. tests/test_loop_delegate.py (15), tests/test_bench_tasks.py probe checks; init.ps1 PASS 1827 passed, 16 skipped. Live bench not run (needs authorization). Not committed. Live (user '跑评测', 2026-11-11): tune single loop --delegate 10/11, 511,221 tokens (3b 606,738), 25 calls, 0 delegations (output/bench-tune-loop-delegate.json). Probes: both pass with and without --delegate; probe_config_keys delegated twice (thorough) at 897,740 vs 145,401 tokens without; probe_event_flow no delegation (output/bench-probe-*.json). Plan section 11: keep off by default."
     }
   ],
   "cleanup_2026_11_04": {

@@ -140,7 +140,7 @@ class RagAgentService:
         longterm_recall_limit: int = 5,
         longterm_timeout_seconds: float = 3.0,
         execution_mode: str = 'single', team_options=None, hooks=None,
-        single_runner: str = 'plan', loop_options=None,
+        single_runner: str = 'plan', loop_options=None, delegate: bool = False,
         workspace_servers=None, workspace_policy=None, default_workspace: str | None = None,
     ) -> None:
         self.streaming = streaming
@@ -170,6 +170,10 @@ class RagAgentService:
             raise TypeError('loop_options must be LoopOptions')
         self._single_runner = single_runner
         self._loop_options = loop_options or LoopOptions()
+        # On-demand read-only delegation inside the single loop (loop-delegate-001); off by default.
+        if type(delegate) is not bool:
+            raise TypeError('delegate must be a bool')
+        self._delegate = delegate
         self._team_options = team_options or (DelegationOptions() if execution_mode == 'team' else None)
         self._routes: dict[tuple[object, str], object] = {}   # task -> ModeChoice made at its start (D-026)
         self._task_options: dict[tuple[object, str], dict] = {}   # task -> run options chosen at its start (D-051)
@@ -582,9 +586,16 @@ class RagAgentService:
                             elif loop:
                                 from app.agent.agent_loop import AgentLoopRunner, LoopResumeStore
                                 store = LoopResumeStore()  # one per runtime, retained by its factory on rebind
-                                def factory(deps):
-                                    return AgentLoopRunner(deps.model, deps.tool_registry, self._loop_options,
-                                                           deps.context_manager, store)
+                                if self._delegate:
+                                    from app.agent.delegation import ExploreLoopRunner
+                                    tally = {'delegations': 0}   # per task, kept across rebinds
+                                    def factory(deps):
+                                        return ExploreLoopRunner(deps.model, deps.tool_registry, self._loop_options,
+                                                                 deps.context_manager, store, tally=tally)
+                                else:
+                                    def factory(deps):
+                                        return AgentLoopRunner(deps.model, deps.tool_registry, self._loop_options,
+                                                               deps.context_manager, store)
                                 runner_options['runner_factory'] = factory
                                 runner_timeout = self._loop_options.timeout_seconds
                             if route == 'team' or loop:

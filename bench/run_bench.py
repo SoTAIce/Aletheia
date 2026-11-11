@@ -30,7 +30,10 @@ _SAFE_FAILURE = re.compile(r'^(Planning failed: )?[A-Za-z]+(Error|Exception)(: [
 _ROUTE = re.compile(r'Route decision: (\{[^\n]*\})')
 
 
-SPLITS = ('tune', 'holdout')
+SPLITS = ('tune', 'holdout', 'probe')
+# Probe tasks check that delegation is used when it should be (loop-delegate-001); --split all
+# leaves them out, so the tuning and held-out numbers stay comparable.
+_ALL_SPLITS = ('tune', 'holdout')
 
 
 def load_tasks(names, split='tune'):
@@ -47,7 +50,8 @@ def load_tasks(names, split='tune'):
         task['dir'] = path.parent
         tasks[task['id']] = task
     if names == ['all']:
-        return [t for t in tasks.values() if split == 'all' or t.get('split', 'tune') == split]
+        return [t for t in tasks.values() if (t.get('split', 'tune') in _ALL_SPLITS if split == 'all'
+                                              else t.get('split', 'tune') == split)]
     unknown = [n for n in names if n not in tasks]
     if unknown:
         raise SystemExit(f'unknown task(s): {", ".join(unknown)}')
@@ -127,11 +131,19 @@ def usage_fields(record):
         calls = [c for c in usage.get('calls') or () if isinstance(c, dict)]
         if calls:
             # Per provider call: tokens, and the tools the loop's model asked for in reply (loop-trial-001).
-            fields['calls'] = [{k: c[k] for k in ('prompt', 'completion', 'requested') if k in c} for c in calls]
+            fields['calls'] = [{k: c[k] for k in ('prompt', 'completion', 'requested', 'member') if k in c} for c in calls]
             tagged = [c['requested'] for c in calls if isinstance(c.get('requested'), list)]
             if tagged:
                 fields['todo_calls'] = sum(1 for names in tagged if 'todo' in names)
                 fields['todo_only_calls'] = sum(1 for names in tagged if names and set(names) == {'todo'})
+            members = [c.get('member') for c in calls if isinstance(c.get('member'), str)]
+            requested = sum(c['requested'].count('delegate') for c in calls
+                            if isinstance(c.get('requested'), list) and not isinstance(c.get('member'), str))
+            if members or requested:
+                # Started members, the loop's delegate requests (refused ones too) and member calls.
+                fields['delegations'] = len(set(members))
+                fields['delegate_requests'] = requested
+                fields['delegate_calls'] = len(members)
     steps = record.get('steps')
     if isinstance(steps, list):
         tools = [c for s in steps if isinstance(s, dict) for c in s.get('tools') or () if isinstance(c, dict)]
@@ -154,7 +166,7 @@ SANDBOX_HINT = ('写完后先写测试，再用 run_tests 或 run_python 在沙�
 
 
 def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=False, team_timeout=None,
-            single_runner='loop', trace_dir=None):
+            single_runner='loop', trace_dir=None, delegate=False):
     write = write or sandbox
     # Answer tasks are graded on the final answer even when write and sandbox tools are offered;
     # offering them is what lets auto routing consider the team (D-026).
@@ -164,6 +176,8 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
     root.mkdir()
     try:
         for name in task['files']:
+            # Probe tasks keep files in subdirectories (relative, '/'-separated, checked by the tests).
+            (root / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(task['dir'] / name, root / name)
         env = dict(os.environ, TAVILY_API_KEY='', PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8',
                    ALETHEIA_TEAM_TRACE='1',
@@ -193,6 +207,8 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             # Always explicit, so the report's runner is what ran whatever the CLI default is (D-072);
             # auto uses it when it routes to single mode.
             cmd += ['--single-runner', single_runner]
+            if delegate:
+                cmd.append('--delegate')
         teamish = mode in ('team', 'auto')   # auto may route to the team (D-026)
         if team_timeout is not None and teamish:
             cmd += ['--team-timeout', str(team_timeout)]
@@ -220,6 +236,8 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
                'result_source': 'result_json' if record is not None else 'stdout'}
         if mode == 'single':
             row['runner'] = single_runner
+        if delegate and mode in ('single', 'auto'):
+            row['delegate'] = True
         if record is not None:
             row.update(usage_fields(record))
         route = _ROUTE.search(stderr)
@@ -360,6 +378,8 @@ def main(argv=None):
     parser.add_argument('--single-runner', choices=['plan', 'loop'], default='loop',
                         help='how single (and auto-routed single) mode runs: one agent loop (default, D-072), '
                              'or plan then steps')
+    parser.add_argument('--delegate', action='store_true',
+                        help='let the single loop delegate read-only research (loop-delegate-001)')
     parser.add_argument('--write', action='store_true',
                         help='let the agent write the deliverable file into its TEMP root and grade that file')
     args = parser.parse_args(argv)
@@ -371,7 +391,7 @@ def main(argv=None):
     planned = len(tasks) * len(args.modes) * args.runs
     plan = (f'{planned} agent run(s): tasks={[t["id"] for t in tasks]} modes={args.modes} runs={args.runs} '
             f'splits={sorted({t.get("split", "tune") for t in tasks})} '
-            f'single_runner={args.single_runner} '
+            f'single_runner={args.single_runner} delegate={args.delegate} '
             f'delivery={"file" if args.write or args.sandbox else "answer"} sandbox={args.sandbox}')
     if not args.confirm_live:
         over = f' (exceeds --max-runs {args.max_runs}; a live run would be refused)' if planned > args.max_runs else ''
@@ -387,7 +407,7 @@ def main(argv=None):
                 for index in range(1, args.runs + 1):
                     rows.append(run_one(task, mode, index, args.timeout, args.keep_answers, args.write,
                                         args.sandbox, args.team_timeout,
-                                        args.single_runner, args.keep_traces))
+                                        args.single_runner, args.keep_traces, args.delegate))
                     print(json.dumps(rows[-1], ensure_ascii=False), file=sys.stderr, flush=True)
     finally:
         # The MCP stdio child does not inherit PYTHONDONTWRITEBYTECODE (DECISIONS D-011).

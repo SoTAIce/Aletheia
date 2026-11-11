@@ -6,8 +6,10 @@ import re
 from dataclasses import dataclass, replace
 
 from app.agent.agent_loop import AgentLoopRunner, HostTool, HostToolResult, LoopOptions
+from app.agent.agent_loop import RUNNER_ID as LOOP_RUNNER_ID
 from app.agent.builtin_hooks import PassingRunGate
 from app.agent.hooks import HookSet, current_hooks, pausable_deadline, trace_scope, using_hooks
+from app.agent.run_meter import current_meter
 from app.agent.step_models import ToolDefinition
 from app.agent.step_runner import StepRunError
 from app.agent.team.diagnostics import failure_details, failure_types
@@ -103,6 +105,29 @@ def _evidence(seen):
             last_run = {'tool': result.tool_name, 'summary': result.content.splitlines()[0][:200]
                         if result.content else ''}
     return written, last_run
+
+
+class MemberSpawner:
+    """Builds and runs one fresh member loop over observed grants (the team and explore share it).
+
+    A member has its own messages and budget, no ask_user and no delegation tools; every result
+    of a granted tool is recorded in seen as it happens (D-023)."""
+
+    def __init__(self, model, registry, context_manager=None):
+        self.model, self.registry, self.context_manager = model, registry, context_manager
+
+    def build(self, tools, limits, instructions, host_tools=()):
+        registry, seen = ToolRegistry(), []
+        for tool_name in sorted(tools):
+            registry.register(_Observed(self.registry.get(tool_name), tool_name, seen))
+        runner = AgentLoopRunner(self.model, registry, limits, self.context_manager,
+            host_tools=host_tools, allow_ask_user=False, instructions=instructions, finish_hooks=False)
+        return runner, seen
+
+    @staticmethod
+    async def run(runner, context, name):
+        with trace_scope('member', member=name):
+            return await runner.run(context)
 
 
 def _tool(name, description, properties, required):
@@ -228,9 +253,6 @@ class DelegatingLoopRunner:
         run.members += 1
         run.budget['delegations'] += 1
         name = f'{role}-{run.members}'
-        registry, seen = ToolRegistry(), []
-        for tool_name in sorted(tools):
-            registry.register(_Observed(self.registry.get(tool_name), tool_name, seen))
         decision = {'value': 'revise', 'problems': []}
 
         async def decide(arguments):
@@ -248,14 +270,12 @@ class DelegatingLoopRunner:
                  'problems': {'type': 'array', 'items': {'type': 'string'}}},
                  'required': ['decision', 'problems']})
             host_tools = (HostTool(definition, decide),)
-        runner = AgentLoopRunner(self.model, registry,
-            LoopOptions(o.worker_tool_rounds, o.worker_tool_calls, o.timeout_seconds), self.context_manager,
-            host_tools=host_tools, allow_ask_user=False, instructions=self._worker_brief(task, role),
-            finish_hooks=False)
+        spawner = MemberSpawner(self.model, self.registry, self.context_manager)
+        runner, seen = spawner.build(tools, LoopOptions(o.worker_tool_rounds, o.worker_tool_calls, o.timeout_seconds),
+                                     self._worker_brief(task, role), host_tools)
         entry = {'member': name, 'role': role, 'tools': sorted(tools)}
         try:
-            with trace_scope('member', member=name):
-                output = await runner.run(context)
+            output = await spawner.run(runner, context, name)
         except StepRunError as exc:
             failure = failure_types(failure_details(exc))
             report = {'member': name, 'status': 'error', 'failure': failure}
@@ -349,3 +369,181 @@ class DelegatingLoopRunner:
         finally:
             self.format_repair_count += lead.format_repair_count
 
+
+# On-demand delegation inside the single loop (docs/loop_delegate_plan.md, loop-delegate-001).
+DELEGATE = 'delegate'
+THOROUGHNESS_ROUNDS = {'quick': 4, 'medium': 8, 'thorough': 12}
+
+
+@dataclass(frozen=True, slots=True)
+class ExploreOptions:
+    max_delegations: int = 2
+    member_tool_calls: int = 16
+    member_timeout_seconds: float = 120
+    # Offered from the second request on, and only while fewer rounds than this share are used.
+    max_round_share: float = 0.75
+    max_task_chars: int = 4000
+    report_chars: int = 3000
+
+    def __post_init__(self):
+        for name in ('max_delegations', 'member_tool_calls', 'max_task_chars', 'report_chars'):
+            if type(getattr(self, name)) is not int or getattr(self, name) < 1:
+                raise ValueError(f'{name} must be a positive integer')
+        for name in ('member_timeout_seconds', 'max_round_share'):
+            value = getattr(self, name)
+            if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f'{name} must be finite and positive')
+        if self.max_round_share > 1:
+            raise ValueError('max_round_share must be at most 1')
+
+
+EXPLORE_INSTRUCTIONS = 'delegate is only for wide research across many files; most tasks do not need it.'
+
+_DELEGATE_DESCRIPTION = (
+    'Start a fresh read-only research member. It has not seen your conversation, can only read, '
+    'and returns only its conclusion, so the files it reads stay out of your context. '
+    'Use it when you must search many files or deep directories and do not know which ones '
+    'matter, when you must trace a call chain or data flow across several modules whose '
+    'contents you will not need afterwards, or for two or three independent research parts '
+    'that each need many files. Do NOT use it: when you know the file path (use read_file); '
+    'to search two or three files, or for anything three tool calls can do; when you have '
+    'already read the relevant files; for work that edits files or needs back-and-forth; to '
+    'hand over the whole task or to re-check work you just did; or only "to be safe". '
+    'Write a self-contained task: what to find, where to look, and what to return (form and '
+    'length, for example "list the functions that call X with file paths, at most 20 lines"). '
+    'Trust the conclusion: do not reread the files it read. Edits and test runs stay with you. '
+    'thoroughness: quick, medium (default) or thorough.')
+
+DELEGATE_DEFINITION = ToolDefinition(DELEGATE, _DELEGATE_DESCRIPTION, {
+    'type': 'object', 'properties': {
+        'task': {'type': 'string', 'description': 'Self-contained research task and the form of the answer'},
+        'thoroughness': {'type': 'string', 'enum': list(THOROUGHNESS_ROUNDS)}},
+    'required': ['task']})
+
+
+def _explore_brief(task):
+    return ('You are a read-only research member delegated by the main agent. You start fresh and have '
+            'not seen its conversation; the assignment below is all you know. You cannot change files. '
+            'Read what the assignment needs, not everything. Finish with plain text: your conclusion '
+            'in the form and length the assignment asks for, with file paths as evidence; say plainly '
+            'what you could not find.\nAssignment:\n' + task)
+
+
+def _member_context(context, task):
+    """The member sees the assignment as its goal and the host constraints, nothing of the
+    conversation: no pinned contexts, earlier results or answers (plan section 4.3)."""
+    return replace(context, active_goal=task, pinned_contexts=(), intermediate_results=(),
+                   last_observation=None, open_question=(), resolved_questions=())
+
+
+class ExploreDelegation:
+    """The delegate host tool of the single loop: read-only members under host rules (plan 4.1).
+    One instance serves one task run; its count is the task's delegation count."""
+
+    def __init__(self, model, tool_registry, options: ExploreOptions | None = None, context_manager=None,
+                 tally=None):
+        if not isinstance(tool_registry, ToolRegistry):
+            raise TypeError('tool_registry must be a ToolRegistry')
+        options = options or ExploreOptions()
+        if not isinstance(options, ExploreOptions):
+            raise TypeError('options must be ExploreOptions')
+        self.options = options
+        available = frozenset(d.name for d in tool_registry.list_definitions())
+        self.member_tools = READ_TOOLS & available
+        self.spawner = MemberSpawner(model, tool_registry, context_manager)
+        # Shared by every binding of one task, so a resumed task keeps its count.
+        self.tally = tally if tally is not None else {'delegations': 0}
+        self.format_repair_count = 0
+
+    @property
+    def delegations(self):
+        return self.tally['delegations']
+
+    def offer(self, rounds, loop_options):
+        # Not before the loop has looked itself, and not close to the end of its budget.
+        return 1 <= rounds < self.options.max_round_share * loop_options.max_tool_rounds
+
+    @staticmethod
+    def _emit(**fields):
+        from app.agent.hooks import current_span
+        current_hooks().emit({'type': DELEGATE, 'parent_id': current_span(), **fields})
+
+    def _refuse(self, reason, message, thoroughness=None):
+        self._emit(outcome='refused', reason=reason, thoroughness=thoroughness)
+        return HostToolResult('HOST: ' + message)
+
+    async def delegate(self, context, arguments):
+        o = self.options
+        level = arguments.get('thoroughness')
+        level = 'medium' if level in (None, '') else level
+        if level not in THOROUGHNESS_ROUNDS:
+            return self._refuse('thoroughness', 'thoroughness must be quick, medium or thorough.')
+        if self.delegations >= o.max_delegations:
+            return self._refuse('limit', f'all {o.max_delegations} delegations of this task are used; '
+                                'continue the work yourself.', level)
+        task = arguments.get('task')
+        if not isinstance(task, str) or not task.strip():
+            return self._refuse('task', 'task must be a nonempty string.', level)
+        task = task.strip()
+        if len(task) > o.max_task_chars:
+            return self._refuse('task_length', f'task must be at most {o.max_task_chars} characters; '
+                                'state what to find and what to return, not the whole context.', level)
+        if not self.member_tools:
+            return self._refuse('no_tools', 'no read tools are available to a member; continue yourself.', level)
+        self.tally['delegations'] += 1
+        name = f'explore-{self.delegations}'
+        limits = LoopOptions(THOROUGHNESS_ROUNDS[level], o.member_tool_calls, o.member_timeout_seconds)
+        runner, seen = self.spawner.build(self.member_tools, limits, _explore_brief(task))
+        self._emit(outcome='started', member=name, thoroughness=level)
+        meter = current_meter()
+        logged = len(meter.call_log) if meter is not None else 0
+        report = {'member': name}
+        try:
+            async with asyncio.timeout(o.member_timeout_seconds):
+                output = await self.spawner.run(runner, _member_context(context, task), name)
+        except (StepRunError, TimeoutError) as exc:
+            # Exception type names only, never provider text or model output.
+            report.update(status='error', failure=(failure_types(failure_details(exc))
+                                                   if isinstance(exc, StepRunError) else type(exc).__name__))
+            report['note'] = 'the member ended without a conclusion; continue the work yourself'
+        else:
+            report.update(status='succeeded', result=output.content[:o.report_chars])
+        finally:
+            self.format_repair_count += runner.format_repair_count
+            if meter is not None:
+                # Host marker: which provider calls a member made (bench delegate_calls).
+                for entry in meter.call_log[logged:]:
+                    entry['member'] = name
+        read = [r.path for r in seen if isinstance(r, _Seen) and r.tool_name == 'read_file'
+                and r.success and isinstance(r.path, str)]
+        report['files_read'] = list(dict.fromkeys(read))[:50]
+        report['tool_calls'] = sum(isinstance(r, _Seen) for r in seen)
+        report['delegations_remaining'] = o.max_delegations - self.delegations
+        self._emit(outcome=report['status'], member=name, tool_calls=report['tool_calls'])
+        return HostToolResult(json.dumps(report, ensure_ascii=False))
+
+
+class ExploreLoopRunner:
+    """The single loop with the delegate host tool (loop-delegate-001); otherwise the same loop."""
+
+    runner_id = LOOP_RUNNER_ID
+
+    def __init__(self, model, tool_registry, loop_options=None, context_manager=None, resume_store=None,
+                 options: ExploreOptions | None = None, tally=None):
+        self.explore = ExploreDelegation(model, tool_registry, options, context_manager, tally)
+        self._context = None
+
+        async def invoke(arguments):
+            return await self.explore.delegate(self._context, arguments)
+
+        self.loop = AgentLoopRunner(model, tool_registry, loop_options, context_manager, resume_store,
+                                    host_tools=(HostTool(DELEGATE_DEFINITION, invoke, self.explore.offer),),
+                                    instructions=EXPLORE_INSTRUCTIONS)
+
+    @property
+    def format_repair_count(self):
+        return self.loop.format_repair_count + self.explore.format_repair_count
+
+    async def run(self, context):
+        self._context = context
+        return await self.loop.run(context)

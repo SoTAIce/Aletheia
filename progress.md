@@ -18,6 +18,18 @@
 
 ## Session Record
 
+### 2026-11-11 — loop-delegate-001：单一循环按需委派（实现）
+
+- **Result**：Codex 71 分钟无输出、未改文件，已取消，由 Claude 实现方案第 5、6 节；记录见 [docs/loop_delegate_plan.md](docs/loop_delegate_plan.md) 第 10 节。新增 `--delegate`（默认关）、`ExploreDelegation`/`MemberSpawner`/`ExploreLoopRunner`、宿主工具按轮次提供、评测委派计数、两道 `probe` 探针题。
+- **Verification**：`init.ps1` PASS，1827 通过、16 跳过；新增 `tests/test_loop_delegate.py` 15 项。
+- **Live bench**（用户“跑评测”）：调参集开委派 10/11，511,221 令牌（3b 为 606,738），委派 0 次；探针题开、关都 6/6，但 `probe_config_keys` 开委派时委派 2 次，令牌 897,740，不开时只要 145,401。结论见方案第 11 节：默认保持关闭。
+- **Not done**：未提交。
+
+### 2026-11-10 — loop-delegate-plan-001：单一循环按需委派方案
+
+- **Result**：用户认为团队应由智能体自己判断是否委派，要求参考 Claude Code 写方案并把握触发时机。查了 dsh（`subagent_spawn` 工具、团队插件）和 Claude Code（`Agent` 工具、Explore 等内置子智能体、全新上下文、嵌套与工具限制、不该用的情况），写成 [docs/loop_delegate_plan.md](docs/loop_delegate_plan.md)。
+- **Not done**：未实现；没有改代码，没有真实模型运行；未提交。
+
 ### 2026-11-10 — stage3-plan-001：第 3 阶段方案与团队基线
 
 - **方案**：[docs/stage3_team_delegate_plan.md](docs/stage3_team_delegate_plan.md)；用户“都按建议”回答第 9 节五问。

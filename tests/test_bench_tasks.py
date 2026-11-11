@@ -13,8 +13,9 @@ import pytest
 from bench.graders import grade_answer_json, grade_python, static_guard, summarize
 from bench.run_bench import load_tasks
 
-TASKS = load_tasks(['all'], split='all')
+TASKS = load_tasks(['all'], split='all') + load_tasks(['all'], split='probe')
 SPLITS = ('tune', 'holdout')
+PROBE = [t for t in TASKS if t['split'] == 'probe']
 CATEGORIES = ('qa', 'implement', 'fix', 'frontend')
 HIDDEN = ('checker', 'expected', 'reference')
 PYTHON = [t for t in TASKS if t['grader'] == 'python_checks']
@@ -29,16 +30,20 @@ def _id(task):
 @pytest.mark.parametrize('task', TASKS, ids=_id)
 def test_task_shape(task):
     assert task['id'] == task['dir'].name
-    assert task['split'] in SPLITS
+    assert task['split'] in (*SPLITS, 'probe')
     assert task['category'] in CATEGORIES
     assert task['grader'] in ('answer_json', 'python_checks', 'html_todo')
     assert task.get('expected_route', 'single') in ('single', 'team')
     assert task['files'] and len(set(task['files'])) == len(task['files'])
     for name in task['files']:
-        assert '/' not in name and '\\' not in name and (task['dir'] / name).is_file()
+        parts = name.split('/')
+        # Only probe tasks have subdirectories; never absolute, backslashes or '..'.
+        assert len(parts) == 1 or task['split'] == 'probe', name
+        assert '\\' not in name and ':' not in name and all(p not in ('', '.', '..') for p in parts), name
+        assert (task['dir'] / name).is_file()
     hidden = [task[key] for key in HIDDEN if key in task]
     assert not set(hidden) & set(task['files']), 'hidden files must never be copied to the agent'
-    present = {p.name for p in task['dir'].iterdir()}
+    present = {p.relative_to(task['dir']).as_posix() for p in task['dir'].rglob('*') if p.is_file()}
     assert present == {'task.json', *task['files'], *hidden}, 'stray files in the task directory'
 
 
@@ -109,3 +114,13 @@ def test_held_out_tasks_run_only_when_asked(capsys):
     assert "splits=['holdout']" in out
     with pytest.raises(SystemExit):
         run_bench.load_tasks(['all'], 'test')
+
+
+def test_probe_tasks_are_wide_and_kept_apart():
+    """Probes (loop-delegate-001) need many files across directories, and --split all leaves them out."""
+    assert {t['id'] for t in PROBE} == {'probe_config_keys', 'probe_event_flow'}
+    for task in PROBE:
+        assert len(task['files']) >= 30 and len({n.rsplit('/', 1)[0] for n in task['files'] if '/' in n}) >= 4
+        assert task['category'] == 'qa' and task.get('delivery') == 'answer'
+    assert not [t for t in load_tasks(['all'], split='all') if t['split'] == 'probe']
+    assert [t['id'] for t in load_tasks(['probe_event_flow'])] == ['probe_event_flow']

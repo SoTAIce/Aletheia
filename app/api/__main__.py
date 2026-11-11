@@ -84,7 +84,7 @@ async def serve(args) -> int:
                                if choice else None),
             workspace_policy=policy, default_workspace=write_root or filesystem_root,
             include_knowledge=not args.no_knowledge, execution_mode=args.execution_mode,
-            single_runner=args.single_runner,
+            single_runner=args.single_runner, delegate=args.delegate,
             team_options=team_options, step_timeout_seconds=step_timeout_for(args.sandbox, None),
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
         ))
@@ -118,6 +118,8 @@ def build_parser():
     parser.add_argument('--no-knowledge', action='store_true', help='Disable RAG when no knowledge store is configured')
     parser.add_argument('--execution-mode', choices=['single', 'team', 'auto'], default='single')
     parser.add_argument('--single-runner', choices=['plan', 'loop'], default='loop')
+    parser.add_argument('--delegate', action='store_true',
+                        help='Let the single loop delegate wide read-only research (off by default)')
     return parser
 
 

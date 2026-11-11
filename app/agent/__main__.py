@@ -309,6 +309,7 @@ async def main(args) -> int:
             step_timeout_seconds=step_timeout_for(sandbox, team_options),
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
             single_runner=getattr(args, 'single_runner', 'loop'),
+            delegate=getattr(args, 'delegate', False),
         ))
         if args.goal is None or getattr(args, 'interactive', False):
             return await interactive(service, args, memory=memory)
@@ -353,6 +354,9 @@ def build_parser():
                              'auto: host rules, then one model call, pick per task (D-026)')
     parser.add_argument('--single-runner', choices=['plan', 'loop'], default='loop',
                         help="How single mode runs: one agent loop (default, D-072), or plan then steps")
+    parser.add_argument('--delegate', action='store_true',
+                        help='Let the single loop delegate wide read-only research to fresh members '
+                             '(off by default, loop-delegate-001)')
     parser.add_argument('--sandbox', action='store_true',
                         help='Let the agent run workspace code/tests in the Docker sandbox (needs --write-root)')
     parser.add_argument('--team-timeout', type=float, help='Team time budget in seconds (default 180)')

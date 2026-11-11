@@ -31,6 +31,7 @@
 3. ~~小问题~~（2026-11-10 status-cleanup-001 已完成，未提交）：`--prune` 磁盘根前缀已修；嵌入服务的 `ValueError` 经核对保持现状（依赖在请求中抛的 `ValueError` 归为请求失败，这是正确分类），补测试固定；`--exclude` 的 `/absolute`、单反斜杠绝对路径已有专门测试；功能表里长期记忆的两条过时登记已加说明。空文件夹 `.claude/worktrees/workspace-choice` 已删除（用户同意后结束了占用它的旧网页服务，进程 86428）。
    另两处遗留（status-cleanup-002，已完成）：`VectorStoreManager.list_documents`（关键词检索启动时全量读取）改用查询迭代器，不再依赖含已删记录的 `num_entities` 和 16384 的 offset 窗口；`index_directory` 的失败日志只记异常类型。剩下的只有设计限制：建库与清理并发无事务保证。
 4. **架构第 3 阶段**：方案已写成 [stage3_team_delegate_plan.md](docs/stage3_team_delegate_plan.md)（stage3-plan-001，2026-11-10），用户“都按建议”；团队基线 7/11（问答题被旧完成条件误拦，见方案 10.1）；3a 已实现并审查（stage3-team-loop-001，init.ps1 1851 通过），3a 评测：团队新实现 9/11（基线 7/11，代码类同为 6/7），单一循环 10/11，达到进入 3b 的标准（方案 10.2）；3a 已提交 `cefcd2d`；3b 已完成未提交（方案 9.2、D-075，init.ps1 1807 通过），3b 评测团队 11/11、单一循环 10/11（方案 10.3），第 3 阶段达标；3b 与 `AGENTS.md` 两条不变量的改写已提交 `bab704a`（未推送）。下一步候选：第 4 阶段（精简任务状态、拆服务层、删规划—执行骨架，届时一并删 `StepRoutingError`）。
+5. **单一循环按需委派**：方案 [loop_delegate_plan.md](docs/loop_delegate_plan.md)（loop-delegate-plan-001），用户“都按建议”；已实现（loop-delegate-001，方案第 10 节；Codex 卡住后由 Claude 完成），init.ps1 1827 通过，未提交。评测已跑（方案第 11 节）：调参集开委派 10/11、令牌 0.84 倍、0 次委派；探针题不开委派也都答对，开了反而贵 6 倍。建议默认关闭、不替代 `auto` 和团队模式；要继续先找真正需要委派的题。
 
 **用户已决定不做的**（2026-11-09：“agent 可以解决正常问题就可以”）
 - `side_effects_qa` 不再追：标准答案认为 `remember(item, history=[])` 只改默认参数、不算修改传入参数，这是题目对边界情形的定义之争。

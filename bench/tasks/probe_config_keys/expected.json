@@ -1,0 +1,39 @@
+{
+  "read_keys": [
+    "cache.backend",
+    "cache.ttl",
+    "db.host",
+    "db.pool_size",
+    "db.port",
+    "feature.new_checkout",
+    "http.proxy",
+    "http.retries",
+    "http.timeout",
+    "http.user_agent",
+    "jobs.concurrency",
+    "jobs.max_attempts",
+    "jobs.poll_seconds",
+    "log.level",
+    "mail.sender",
+    "mail.smtp_host",
+    "payments.currency",
+    "payments.provider",
+    "search.page_size"
+  ],
+  "unused_keys": [
+    "log.format",
+    "search.max_results",
+    "storage.bucket"
+  ],
+  "undefined_keys": [
+    "http.proxy",
+    "jobs.max_attempts"
+  ],
+  "timeout_readers": [
+    "shop/api/server.py",
+    "shop/integrations/payments_gateway.py",
+    "shop/integrations/shipping.py",
+    "shop/util/http.py"
+  ],
+  "most_read_key": "db.host"
+}

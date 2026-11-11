@@ -183,9 +183,14 @@ class HostToolResult:
 
 @dataclass(frozen=True, slots=True)
 class HostTool:
-    """A trusted loop action, kept outside the workspace tool registry."""
+    """A trusted loop action, kept outside the workspace tool registry.
+
+    offer, when set, is called before each model request as offer(rounds, options) and says
+    whether the tool is in that request (loop-delegate-001); a tool left out is unavailable
+    for that turn. None offers it in every request."""
     definition: ToolDefinition
     invoke: object
+    offer: object = None
 
 
 class AgentLoopRunner:
@@ -242,6 +247,7 @@ class AgentLoopRunner:
         control_names = {d.name for d in controls}
         tools = offered + controls + tuple(t.definition for t in self._host_tools.values())
         names = {d.name for d in offered} | set(self._host_tools)
+        gated = any(t.offer is not None for t in self._host_tools.values())
         system = _system(options)
         if not self._allow_ask_user:
             # Members report to the lead and the lead answers the user: both say what is missing.
@@ -267,6 +273,11 @@ class AgentLoopRunner:
         while True:
             used = prior_calls + len(calls) + host_calls
             spent = rounds >= options.max_tool_rounds or used >= options.max_tool_calls
+            if gated:
+                # Host rules decide per request which host tools the model sees (loop-delegate-001).
+                shown = [t for t in self._host_tools.values() if t.offer is None or t.offer(rounds, options)]
+                tools = offered + controls + tuple(t.definition for t in shown)
+                names = {d.name for d in offered} | {t.definition.name for t in shown}
             request_tools = ToolsShownOnly(tools) if spent else tools
             meter = current_meter()
             logged = len(meter.call_log) if meter is not None else 0

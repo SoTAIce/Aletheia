@@ -1,0 +1,33 @@
+{
+  "paid_handlers": [
+    "stock.ship_stock",
+    "invoices.create_invoice",
+    "payments.record_payment",
+    "loyalty.award_points"
+  ],
+  "paid_events": [
+    "invoice.created",
+    "ledger.entry",
+    "ledger.posted",
+    "mail.sent",
+    "order.paid",
+    "points.awarded",
+    "shipment.booked",
+    "shipment.requested",
+    "tax.computed"
+  ],
+  "paid_handler_runs": 13,
+  "unhandled_events": [
+    "fraud.checked",
+    "ledger.exported",
+    "order.reminder",
+    "partner.notified",
+    "stock.reserved",
+    "tax.computed"
+  ],
+  "unregistered_handlers": [
+    "experimental.notify_partner",
+    "legacy_rewards.double_points",
+    "legacy_rewards.expire_points"
+  ]
+}
