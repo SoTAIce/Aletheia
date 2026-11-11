@@ -1571,7 +1571,7 @@
       "acceptance": [
         "Plan names steps, files, compatibility, bench criteria and the user's open questions."
       ],
-      "evidence": "docs/stage4_plan.md; registered in docs/DOCUMENT_INDEX.md. User answered section 7 '都按建议' (2026-11-11). Not committed."
+      "evidence": "docs/stage4_plan.md; registered in docs/DOCUMENT_INDEX.md. User answered section 7 '都按建议' (2026-11-11). Committed e6a9856."
     },
     {
       "id": "stage4a-001",
@@ -1584,7 +1584,22 @@
       "acceptance": [
         "Existing tests pass unchanged; query_result at most 80 lines; user files untouched."
       ],
-      "evidence": "RunAssembler by Codex (stalled again after it, job record gone); rest by Claude with a line-by-line equivalence check. tests/test_run_assembler.py (6). init.ps1 PASS 1833 passed, 16 skipped. No live run (not needed per plan section 6). Not committed."
+      "evidence": "RunAssembler by Codex (stalled again after it, job record gone); rest by Claude with a line-by-line equivalence check. tests/test_run_assembler.py (6). init.ps1 PASS 1833 passed, 16 skipped. No live run (not needed per plan section 6). Committed e6a9856."
+    },
+    {
+      "id": "stage4b-001",
+      "name": "Stage 4b: loop and team run in LoopRun over RunState, off the plan skeleton",
+      "description": "docs/stage4_plan.md section 9: app/models/run_state.py (RunState, RunMemory), app/agent/loop_run.py (LoopRun keeps lock, rebind invalidation, cancel guard, version check, budget, step timeout with pausable deadline, side-effect watch, execution limit, failure kinds, plan/step events and trace spans), wired in RunAssembler and _open_task; plan mode stays on AgentRuntime until 4c.",
+      "status": "done",
+      "dependencies": [
+        "stage4a-001"
+      ],
+      "acceptance": [
+        "tests/test_loop_run_equivalence.py: old and new paths match on results, step log, receipts, events and model requests for every case in section 9.4.",
+        "Existing tests pass unchanged.",
+        "Live tune: single loop >= 10/11 and team >= 11/11 (--write --sandbox), tokens and calls not higher than 3b."
+      ],
+      "evidence": "docs/stage4_plan.md section 10. 4b-1 and 4b-2 by Codex (8 and 12 min, no stall), reviewed by Claude; 4b-3 wiring by Claude. tests/test_run_state.py, tests/test_loop_run.py (14), tests/test_loop_run_equivalence.py (67), tests/test_run_assembler.py (+1); 4 existing wiring tests switched their AgentRuntime fake to LoopRun. init.ps1 PASS 2084 passed, 16 skipped. Live (user '跑评测'): single loop 9/11, 502,898 tokens, 25 calls; team 9/11, 1,571,633 tokens, 78 calls (3b: 10/11 and 11/11). Extra failures (config_merge_qa top_keys in both modes, todo_html in team) had first prompts of ~6,400 tokens instead of ~20,000+, the provider-side overhead gap also seen before 4b (loop-delegate run, D-072); other prompts match 3b within 0.5%. Rerun (user '重跑两题', 1 run each): single loop config_merge_qa and todo_html pass; team config_merge_qa passes, todo_html fails enter_key_and_trim again with normal overhead; combined single loop 11/11, team 10/11. config_merge_qa passed with an even lower first prompt (~2,200), so the overhead gap does not explain the failures; corrected in plan section 11.1 as unstable checks. Committed on user's '提交 4b'."
     }
   ],
   "cleanup_2026_11_04": {

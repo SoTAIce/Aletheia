@@ -147,6 +147,11 @@ class FakeRuntime:
         self.planner, self.memory, self.registry, self.options = planner, memory, registry, options
         FakeRuntime.created.append(self)
 
+    @classmethod
+    def loop(cls, memory, model, registry, **options):
+        # Stage 4b: loop and team tasks are built as LoopRun(memory, model, registry, step_description=...).
+        return cls(None, model, memory, registry, **options)
+
     async def run(self, **kwargs):
         status = FakeRuntime.status
         return AgentRunResult(self.memory.task_state.task_id, status, 'done', (), 1, 0)
@@ -156,6 +161,7 @@ def _service(monkeypatch, model, status=TaskStatus.COMPLETED, **kw):
     from app.services import rag_agent_service as module
     FakeRuntime.created, FakeRuntime.status = [], status
     monkeypatch.setattr(module, 'AgentRuntime', FakeRuntime)
+    monkeypatch.setattr(module, 'LoopRun', FakeRuntime.loop)
     return module.RagAgentService(model=model, mcp_servers=(), include_knowledge=False, **kw)
 
 
@@ -196,7 +202,7 @@ async def test_fixed_modes_keep_their_runner_and_log_a_user_decision(monkeypatch
     service = _service(monkeypatch, Model(), execution_mode='team', team_options=SANDBOX)
     async with service:
         await service.query_result('anything', 's')
-    assert isinstance(FakeRuntime.created[0].planner, TeamPlanner)
+    assert FakeRuntime.created[0].options['step_description'] == TeamPlanner.STEP
     assert '"source": "user", "rule": "team"' in caplog.text
 
 

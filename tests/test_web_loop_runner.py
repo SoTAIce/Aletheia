@@ -148,18 +148,19 @@ async def test_explicit_team_does_not_use_loop_even_if_runner_choice_is_loop(mon
     from app.services import rag_agent_service as module
     seen = []
 
-    def runtime(planner, model, memory, registry, **options):
-        seen.append((planner, options))
+    def runtime(memory, model, registry, **options):
+        # Stage 4b: a team task is built as LoopRun(memory, model, registry, step_description=...).
+        seen.append((options.pop('step_description'), options))
         return SimpleNamespace(run=AsyncMock(return_value=AgentRunResult(
             memory.task_state.task_id, TaskStatus.COMPLETED, 'done', (), 1, 0)))
 
-    monkeypatch.setattr(module, 'AgentRuntime', runtime)
+    monkeypatch.setattr(module, 'LoopRun', runtime)
     service, _, _ = make_service(execution_mode='team')
     async with service:
         result = await service.query_result('Review', 's', single_runner='loop')
     assert result.status is TaskStatus.COMPLETED
-    planner, options = seen[0]
-    assert type(planner) is TeamPlanner
+    step, options = seen[0]
+    assert step == TeamPlanner.STEP
     from app.agent.delegation import DelegatingLoopRunner
     from app.agent.step_runner import RunnerDependencies, RunnerLimits
     from app.tools.tool_registry import ToolRegistry

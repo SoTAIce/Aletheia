@@ -39,6 +39,11 @@ class FakeRuntime:
         self.planner, self.memory, self.registry, self.options = planner, memory, registry, options
         FakeRuntime.created.append(self)
 
+    @classmethod
+    def loop(cls, memory, model, registry, **options):
+        # Stage 4b: loop and team tasks are built as LoopRun(memory, model, registry, step_description=...).
+        return cls(None, model, memory, registry, **options)
+
     async def run(self, **kwargs):
         return AgentRunResult(self.memory.task_state.task_id, TaskStatus.COMPLETED, 'done', (), 1, 0)
 
@@ -56,6 +61,7 @@ class FakeLongterm:
 def fake_runtime(monkeypatch):
     FakeRuntime.created = []
     monkeypatch.setattr(module, 'AgentRuntime', FakeRuntime)
+    monkeypatch.setattr(module, 'LoopRun', FakeRuntime.loop)
     return FakeRuntime.created
 
 
@@ -104,7 +110,7 @@ async def test_a_message_may_pick_the_team_in_a_single_default_service(fake_runt
         await svc.query_result('implement it', 's', execution_mode='team', on_event=events.append)
         await svc.query_result('what is it?', 's')
     team, single = fake_runtime
-    assert isinstance(team.planner, TeamPlanner) and not isinstance(single.planner, TeamPlanner)
+    assert team.options['step_description'] == TeamPlanner.STEP and not isinstance(single.planner, TeamPlanner)
     assert callable(team.options['runner_factory'])
     assert team.options['step_timeout_seconds'] >= SANDBOX.timeout_seconds + 5   # widened for the team only
     assert 'runner_factory' not in single.options

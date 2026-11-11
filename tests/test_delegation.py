@@ -204,12 +204,13 @@ async def test_service_uses_delegating_loop_factory_and_one_step_runtime(monkeyp
     from app.models.taskstate import TaskStatus
     import app.services.rag_agent_service as service_module
     captured = {}
-    original = service_module.AgentRuntime
+    # Stage 4b: a team task runs in LoopRun with the same factory and limits as before.
+    original = service_module.LoopRun
     def runtime(*args, **kwargs):
         instance = original(*args, **kwargs)
         captured.update(kwargs, instance=instance)
         return instance
-    monkeypatch.setattr(service_module, 'AgentRuntime', runtime)
+    monkeypatch.setattr(service_module, 'LoopRun', runtime)
     model = AsyncMock()
     model.generate.return_value = text('answer')
     async with RagAgentService(model=model, planner_model=AsyncMock(), mcp_servers=(),

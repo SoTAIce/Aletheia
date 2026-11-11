@@ -1,6 +1,39 @@
-# Current Session Handoff — 2026-11-10
+# Current Session Handoff — 2026-11-11
 
-## 新会话从这里开始（2026-11-10，选择工作目录已完成并并入 main）
+## 新会话从这里开始（2026-11-11，第 4 阶段 4b 已提交）
+
+**当前状态**
+- `main` 已推送到 `origin/main`（2026-11-11，用户“帮我上传GitHub”，到 `14cd9ca` 重写 README）；4b 随后在本地提交，未推送。
+- 4b（stage4b-001）已实现、已审查，用户“提交 4b”后已提交：
+  - 循环和团队任务改在 `app/agent/loop_run.py` 的 `LoopRun` 上运行，状态放在 `app/models/run_state.py` 的 `RunState`/`RunMemory` 里；规划模式仍走 `AgentRuntime`，到 4c 再删；
+  - 接线在 `app/services/run_assembler.py`（`loop_run_factory`）和 `app/services/rag_agent_service.py`（`_open_task`、`_execute`）；
+  - 新测试：`tests/test_run_state.py`、`tests/test_loop_run.py`（14 项）、`tests/test_loop_run_equivalence.py`（67 项新旧路径对照，以旧代码为准）；改了 4 项接线测试（`test_delegation.py`、`test_route_selection.py`、`test_run_options.py`、`test_web_loop_runner.py`），让替身同时顶替 `LoopRun`；
+  - init.ps1 通过：2084 项通过、16 项跳过。
+- 4b 评测（方案 [stage4_plan.md](docs/stage4_plan.md) 第 11 节和 11.1 节）：
+  - 调参集单一循环 9/11、团队 9/11；
+  - 重跑两题后合并计算，单一循环 11/11、团队 10/11（3b 是 10/11 和 11/11）；团队 `todo_html` 仍错在 `enter_key_and_trim`，是这道题本身的波动；
+  - 看不出回退。原先“失败是因为提示开销缺失”的判断不成立，已在 11.1 更正。
+- 本轮暂存的文件要排除用户自己的差异（见下面“用户自己的差异”）。4b 的提交范围是上面列的代码和测试文件，加上 `docs/stage4_plan.md`、`feature_list.json`、`progress.md`、`session-handoff.md`。`run_assembler.py` 和 `rag_agent_service.py` 不属于用户，可以整文件暂存。
+- 提交前核对用户三个文件的哈希前 16 位，应保持不变（`README.md` 已按用户 2026-11-11 的决定重写并提交，不再算用户的差异；用户原来的版本备份在 scratchpad 的 `README.user-backup.md`）：
+  - `planner.py`：`a2ce0f91c476ea47`
+  - `step_executor.py`：`86f8ca77ebd86d96`
+  - `tool_calling_step_runner.py`：`f61016aabfffe6bd`
+
+**剩下的任务（用户 2026-11-11 说“剩下任务稍后再做”）**
+1. ~~问用户是否提交 4b~~（已提交）。
+2. 4c：删除规划模式和规划—执行骨架（方案第 4～7 节）。动手之前：
+   - 用户要先自己保存 `planner.py`、`step_executor.py`、`tool_calling_step_runner.py` 三份中文笔记，确认保存好了才能删；
+   - 先把要删、要改的测试清单给用户看，用户同意后再动；
+   - 同时改写 `AGENTS.md` 第一条不变量（用户已同意），顺带删掉 `StepRoutingError`；
+   - 先写 4c 详细设计（方案新一节），再由 Codex 实现。
+3. 4d：模型档案，暂时推迟。
+4. 4b 的提交还没推送，推送要用户另外授权。
+
+**Codex 的用法（本轮经验）**
+- 用 Agent 工具派 `codex:codex-rescue`，任务说明开头加 `--background --fresh`，不加 `--model`/`--effort`（读 `~/.codex/config.toml`）。
+- 任务拆小（4b-1、4b-2 分别 8 和 12 分钟完成）；派出后挂监视：任务结束，或日志 20 分钟不更新就通知；它曾两次卡在 `node_repl`。取消要在 PowerShell 里做。
+
+## 上一轮交接（2026-11-10，选择工作目录已完成并并入 main）
 
 **当前状态**
 - `main` 已包含追踪（trace-001，`db13d64`，D-073）和选择工作目录（workspace-001，D-074）。工作目录在实验分支 `exp/workspace-choice` 上做完，用户在网页上用真实模型试过并提了两条意见（要系统弹窗选文件夹；工作树里看不到以前的会话），修完后快进并入 `main`。2026-11-10 经用户授权已推送到 `origin/main`（到 `ae5440b`，用户自己的未提交差异不在其中）。
@@ -16,11 +49,11 @@
 - 已知限制：GBK 等非 UTF-8 文本和图片不能当附件；网页上没有目录浏览器（只有系统弹窗）；真实系统弹窗只在用户屏幕上试过，自动测试用的是替身。
 
 **用户自己的差异，永远不进提交**
-- `README.md`；`app/agent/planner.py`、`app/agent/step_executor.py`、`app/agent/tool_calling_step_runner.py` 里的中文注释；删除的 `scripts/benchmark_conversation_memory.py`、`scripts/validate_multi_runner_live.py`、`scripts/validate_summary_context.py`。改这三个代码文件时只能暂存自己的那几处（`git hash-object -w` 加 `git update-index --cacheinfo`），不能整文件暂存。
+- `app/agent/planner.py`、`app/agent/step_executor.py`、`app/agent/tool_calling_step_runner.py` 里的中文注释；删除的 `scripts/benchmark_conversation_memory.py`、`scripts/validate_multi_runner_live.py`、`scripts/validate_summary_context.py`。改这三个代码文件时只能暂存自己的那几处（`git hash-object -w` 加 `git update-index --cacheinfo`），不能整文件暂存。
 
 **工作方式**
 - 只用中文回复，不中英夹杂（路径、命令、代码名除外）。
-- Codex 有额度时：Claude 写方案（`docs/*.md`）并登记，用 Agent 工具 `codex:codex-rescue` 派它实现（`--model gpt-6.1-sol --effort medium`），完成后由 Claude 审查。额度用完或失败时告诉用户，由 Claude 自己做。小改动、记录和只读检查由 Claude 直接做。
+- Codex 有额度时：Claude 写方案（`docs/*.md`）并登记，用 Agent 工具 `codex:codex-rescue` 派它实现（不加 `--model`/`--effort`，读用户配置），完成后由 Claude 审查。额度用完或失败时告诉用户，由 Claude 自己做。小改动、记录和只读检查由 Claude 直接做。
 - 较大的改动先用工作树开实验分支（`exp/...`），用户试过、确认成功后再并入 `main`（用户 2026-11-10 的要求）。
 - 不推送、不 amend；真实模型、评测和嵌入接口每次都要用户明确授权。
 - 从工作树启动网页时，工作树里没有 `.env`：先把主目录 `.env` 读进当前终端再启动（命令见 common.md 或上一轮记录），对话记录默认存在工作树自己的 `data` 里；要看到以前的会话，设 `CONVERSATION_STORAGE_DIR=D:\tries\agent\data\conversations`。
@@ -32,7 +65,7 @@
    另两处遗留（status-cleanup-002，已完成）：`VectorStoreManager.list_documents`（关键词检索启动时全量读取）改用查询迭代器，不再依赖含已删记录的 `num_entities` 和 16384 的 offset 窗口；`index_directory` 的失败日志只记异常类型。剩下的只有设计限制：建库与清理并发无事务保证。
 4. **架构第 3 阶段**：方案已写成 [stage3_team_delegate_plan.md](docs/stage3_team_delegate_plan.md)（stage3-plan-001，2026-11-10），用户“都按建议”；团队基线 7/11（问答题被旧完成条件误拦，见方案 10.1）；3a 已实现并审查（stage3-team-loop-001，init.ps1 1851 通过），3a 评测：团队新实现 9/11（基线 7/11，代码类同为 6/7），单一循环 10/11，达到进入 3b 的标准（方案 10.2）；3a 已提交 `cefcd2d`；3b 已完成未提交（方案 9.2、D-075，init.ps1 1807 通过），3b 评测团队 11/11、单一循环 10/11（方案 10.3），第 3 阶段达标；3b 与 `AGENTS.md` 两条不变量的改写已提交 `bab704a`（未推送）。下一步候选：第 4 阶段（精简任务状态、拆服务层、删规划—执行骨架，届时一并删 `StepRoutingError`）。
 5. **单一循环按需委派**：方案 [loop_delegate_plan.md](docs/loop_delegate_plan.md)（loop-delegate-plan-001），用户“都按建议”；已实现（loop-delegate-001，方案第 10 节；Codex 卡住后由 Claude 完成），init.ps1 1827 通过，未提交。评测已跑（方案第 11 节）：调参集开委派 10/11、令牌 0.84 倍、0 次委派；探针题不开委派也都答对，开了反而贵 6 倍。建议默认关闭、不替代 `auto` 和团队模式；要继续先找真正需要委派的题。已提交 `a0aa489`。
-6. **架构第 4 阶段**：方案 [stage4_plan.md](docs/stage4_plan.md)（stage4-plan-001，2026-11-11）：4a 拆服务层 → 4b 循环脱离骨架 → 4c 删除规划模式和骨架（会删掉用户写了中文笔记的 `planner.py`、`step_executor.py`、`tool_calling_step_runner.py`，并改写 `AGENTS.md` 第一条不变量）→ 4d 模型档案推迟。用户“都按建议”（做 4c 前用户自己先保存三份笔记）。4a 已完成未提交（stage4a-001，方案第 8 节，init.ps1 1833 通过）；下一步 4b（`LoopRun`、`RunState`，需调参集单一循环和团队评测）。
+6. **架构第 4 阶段**：方案 [stage4_plan.md](docs/stage4_plan.md)（stage4-plan-001，2026-11-11）：4a 拆服务层 → 4b 循环脱离骨架 → 4c 删除规划模式和骨架（会删掉用户写了中文笔记的 `planner.py`、`step_executor.py`、`tool_calling_step_runner.py`，并改写 `AGENTS.md` 第一条不变量）→ 4d 模型档案推迟。用户“都按建议”（做 4c 前用户自己先保存三份笔记）。4a 已提交 `e6a9856`（stage4a-001，方案第 8 节，init.ps1 1833 通过）。4b 详细设计已写成方案第 9 节（stage4b-001），分 4b-1 `run_state.py`、4b-2 `loop_run.py` 加新旧路径对照测试、4b-3 接线三块；已实现（方案第 10 节，init.ps1 2084 通过），未提交。评测（方案第 11 节）：单一循环 9/11、团队 9/11；重跑两题后合并为单一循环 11/11、团队 10/11（团队 `todo_html` 仍错在 `enter_key_and_trim`，属于这道题的波动）。原先“失败因提示开销缺失”的判断不成立，已在 11.1 更正。下一步 4c（开工前用户先保存三份笔记）。
 
 **用户已决定不做的**（2026-11-09：“agent 可以解决正常问题就可以”）
 - `side_effects_qa` 不再追：标准答案认为 `remember(item, history=[])` 只改默认参数、不算修改传入参数，这是题目对边界情形的定义之争。

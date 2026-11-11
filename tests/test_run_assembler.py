@@ -95,3 +95,39 @@ async def test_a_resumed_task_keeps_its_route_and_rebinds():
 def test_query_result_stays_small():
     lines = inspect.getsource(RagAgentService.query_result).splitlines()
     assert len(lines) <= 80, len(lines)
+
+
+async def test_the_service_runs_loop_and_team_tasks_in_loop_run_and_plan_tasks_in_the_runtime(monkeypatch):
+    """Stage 4b wiring: loop and team tasks own a RunMemory and run in LoopRun; plan mode is unchanged."""
+    from unittest.mock import AsyncMock
+    from app.agent.loop_run import LoopRun
+    from app.agent.runtime import AgentRuntime
+    from app.agent.step_models import ModelTurn
+    from app.models.run_state import RunMemory
+    from app.models.working_memory import WorkingMemory
+    import app.services.rag_agent_service as module
+    built = []
+    for name, cls in (('LoopRun', LoopRun), ('AgentRuntime', AgentRuntime)):
+        def spy(*args, _cls=cls, **kwargs):
+            instance = _cls(*args, **kwargs)
+            built.append(instance)
+            return instance
+        monkeypatch.setattr(module, name, spy)
+
+    class Planner:
+        async def generate(self, prompt):
+            return '{"steps": ["answer"], "reason": "one step"}'
+
+    for kwargs in ({'single_runner': 'loop'}, {'execution_mode': 'team', 'team_options': DelegationOptions()},
+                   {'single_runner': 'plan'}):
+        model = AsyncMock()
+        model.generate.return_value = ModelTurn('answer' if 'single_runner' not in kwargs or kwargs['single_runner'] != 'plan'
+                                                else '{"status": "succeeded", "content": "answer", "reason": null}')
+        async with RagAgentService(model=model, planner_model=Planner(), mcp_servers=(), include_knowledge=False,
+                                   memory_directory='', **kwargs) as service:
+            result = await service.query_result('Explain it', 's')
+        assert result.content == 'answer', kwargs
+    loop, team, planned = built
+    assert type(loop) is LoopRun and isinstance(loop.memory, RunMemory)
+    assert type(team) is LoopRun and isinstance(team.memory, RunMemory)
+    assert type(planned) is AgentRuntime and isinstance(planned.memory, WorkingMemory)

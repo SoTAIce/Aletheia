@@ -1,6 +1,6 @@
 # 第 4 阶段：拆服务层、循环独立运行、删除规划—执行骨架（修改方案）
 
-日期：2026-11-11。状态：**用户已确认第 7 节；4a 已实现，未提交**（stage4-plan-001；4a 为 stage4a-001，见第 8 节）。
+日期：2026-11-11。状态：**用户已确认第 7 节；4a 已提交 `e6a9856`；4b 已实现并评测（第 10、11 节），未提交**（stage4-plan-001；4a 为 stage4a-001）。
 来源：用户 2026-11-11“提交吧，之后开启第四阶段”。依据是当前代码（`a0aa489`）、[架构梳理](architecture_review.md) 第 3、5、6 节和第 3 阶段的结果（[stage3_team_delegate_plan.md](stage3_team_delegate_plan.md) 第 10 节）。
 
 ## 1. 第 4 阶段原定内容和现在的情况
@@ -55,13 +55,14 @@
 - 新增 `app/agent/loop_run.py`：
   - `RunState` 只保存循环要用的字段：任务编号、目标和目标修订号、状态、约束、固定上下文、已回答的问题、待办、用量、结果；
   - `LoopRun` 负责执行：单一循环、团队、按需委派都直接在 `LoopRun` 里跑，不再经过固定一步计划、`Executor` 和 `StepExecutor`。
-- 结果对象（`TaskResult`）的字段保持不变，`execution_count` 固定为 1，`replan_count` 为 0。阻塞后续跑沿用 `LoopResumeStore`。
+- 结果对象（`AgentRunResult`）的字段保持不变。阻塞后续跑沿用 `LoopResumeStore`。
 - 事件流兼容：网页的执行树（`app.js`）按 `plan`、`step` 事件画图。循环路径继续发一个只有一步的 `plan` 事件和 `step` 事件，字段不变，前端不用改。
 - 规划模式这一步不动，仍走旧骨架；所以 `TaskState`、`WorkingMemory` 和骨架在 4b 期间都还在，只是循环路径不用它们。
+- 详细设计见第 9 节（2026-11-11 补写）。上面三条的细节以第 9 节为准。
 - 验收：
   - 调参集单一循环、团队各跑 1 次，不低于 3b（单一循环 10/11，团队 11/11）；
   - 循环路径的令牌和调用次数不升；
-  - 阻塞续跑、取消、超时、重新绑定、预算的测试都改为测 `LoopRun`。
+  - 新旧两条路径的逐项对照测试全部一致（第 9.5 节）。现有测试不改就能通过；宿主保证测试的迁移留到 4c。
 
 ### 4c 删除规划模式和骨架（要你先决定第 7 节第 1、2 问）
 
@@ -152,4 +153,204 @@ Codex 做完 `RunAssembler` 后又卡住了 20 多分钟（同样停在 `node_re
 - 等价性用脚本逐行核对：新旧两版里，原有语句一条不少，只多了方法签名和调用这类衔接代码。唯一改写的一处是 `if existing is not None:`，改成了提前返回。锁的范围、先持久化输入再做外部调用的顺序、异常类型和消息文字都不变。
 - 现有测试一项没改，全部通过。新增 `tests/test_run_assembler.py`（6 项），其中一项限制 `query_result` 不超过 80 行。`init.ps1` 结果：1833 项通过、16 项跳过。
 - 没有跑真实模型评测：行为不变由测试保证，方案第 6 节写明 4a 不需要评测。
+
+
+## 9. 4b 详细设计（2026-11-11）
+
+依据：`runtime.py`、`step_executor.py`、`working_memory.py`、`taskstate.py`、`rag_agent_service.py`、`run_assembler.py`、`tool_loader.py`、`knowledge_registry_tool.py`、`app/api/runs.py`、`app/api/static/app.js`、`bench/run_bench.py`，均为当前代码（`e6a9856`）。
+
+### 9.1 现在循环路径实际经过什么
+
+单一循环和团队走同一条路径：
+
+`AgentRuntime.run` → `_run`。具体经过：
+1. `TaskState.start_planning` 进入规划状态；
+2. 调用 `LoopPlanner` 或 `TeamPlanner`，它们不调模型，只返回固定的一步；
+3. `Executor.accept_plan` 安装这一步；
+4. `StepExecutor.execute`：生成执行令牌，构建上下文，运行执行器，校验并规范化输出，提交结果；
+5. `TaskState.complete_task`，最后由 `_result` 生成结果。
+
+循环路径的 `max_replans` 被固定为 0（第 3 阶段），所以“重新规划”永远走不到，只会变成上限失败。实际起作用的宿主保证如下，4b 必须原样保留：
+
+| 保证 | 现在在哪 | 循环路径上的具体表现 |
+|---|---|---|
+| 一次只跑一个 | `AgentRuntime._lock` | 同一任务并发调用 `run` 时排队 |
+| 重新绑定作废 | `_BoundRunner.invalidate` | 重新绑定后，旧绑定迟到的输出或失败抛 `StaleExecutionError` |
+| 取消后不提交 | `_BoundRunner.run` | 请求取消后，执行器即使返回结果或失败，也一律当作取消 |
+| 版本校验 | `StepExecutor` 的执行令牌 | 执行器运行期间任务状态被别处改动，就抛 `StaleExecutionError` |
+| 预算 | `RunMeter.budget_problem`，`meter.bound` | 执行前预算已用完，失败类型为 `budget`；单步时限不超过剩余时间 |
+| 单步时限 | `asyncio.timeout(step_timeout)` 加 `pausable_deadline` | 时限 = max(服务的单步时限, 执行器时限 + 5)；等用户确认的时间不计入（D-061） |
+| 副作用不重放 | `SideEffectWatch` | 写入或运行抛异常时失败类型为 `side_effect`；超时前已写入或运行，同样是 `side_effect` |
+| 执行次数上限 | `max_executions` | 跨续跑累计，达到上限失败类型为 `limit` |
+| 失败分类 | `_run` 里的各个 `except` | 见 9.4 的对照表 |
+| 输出校验 | `StepExecutor._validate_runner_output` | 内容去掉首尾空白，来源编号必须是资源表里登记过的 |
+| 追踪和事件 | `root_span`、`trace_scope('plan'/'step')`，以及 `plan`、`step` 事件 | 网页执行树、追踪查看器和评测的 `steps` 字段都读它们 |
+
+### 9.2 新增的状态：`app/models/run_state.py`
+
+`TaskState` 的状态机要求先有计划才能完成任务（`complete_task` 要求所有步骤都已完成），所以不能直接用在没有计划的循环上。新增两个小类：
+
+- `RunState`：一个循环任务的权威状态。字段：
+  - `task_id`、`user_id`、`active_goal`、`goal_revision`（固定为 1，循环不支持中途改目标）；
+  - `status`：沿用 `TaskStatus`，只用到 CREATED、RUNNING、BLOCKED、COMPLETED、FAILED 五个值；
+  - `state_version`；
+  - `constraints`、`pinned_contexts`：沿用 `Constraint`、`PinnedContext`；
+  - 问题列表：沿用 `OpenQuestion`，放在一个只有 `open_questions` 字段的 `scratchpad` 视图里；
+  - 失败记录：只留最后一条消息。
+
+  方法只有服务层和循环用到的：`pin_content`、`add_constraint`、`resolve_question`、`fail_task`、`start`、`block`、`complete`、`snapshot`。字段名和异常类型都与 `TaskState` 一致，例如在已完成的任务上调用 `pin_content`，同样抛 `InvalidStateTransitionError`。
+- `RunMemory`：只有 `task_state`（即 `RunState`）和 `resources`（沿用 `Resources`）两个属性。服务层、`open_tool_registry` 和 `KnowledgeRegistryTool` 都只读这两个属性，所以它们不用改。
+
+### 9.3 新增的运行：`app/agent/loop_run.py`
+
+`LoopRun(state_memory, model, registry, *, runner_factory, runner_id, step_description, max_executions, step_timeout_seconds, context_manager)`：
+
+- 构造和 `rebind(planner, model, registry, *, context_manager)` 的签名与 `AgentRuntime` 相同（`planner` 参数忽略），绑定逻辑直接复用 `_BoundRunner` 和 `SideEffectWatch`。
+- `run(*, on_event=None)`：
+  1. 加锁；挂上 `CallbackHook`、`root_span`；发出 `task_start` 事件。
+  2. 进入计量范围：用调用方的计量，没有就新建一个。
+  3. 如果有未回答的阻塞问题，返回 BLOCKED（与现在的 `pause_for_questions` 分支相同）。
+  4. 如果预算已用完，失败，类型为 `budget`。
+  5. 执行次数达到上限，失败，类型为 `limit`。
+  6. 发出 `plan` 事件，并开一个 `plan` 区间：
+     - 首次运行时 `revision` 为 1；
+     - 续跑时为 2，与现在“回答后重新规划”的事件逐字相同；
+     - `steps` 是 `LoopPlanner.STEP` 或 `TeamPlanner.STEP`，`step_ids` 是这一轮新生成的步骤编号。
+  7. 执行次数加 1，重置副作用监视，开 `step` 区间，在时限和 `pausable_deadline` 里运行绑定的执行器。传给执行器的 `StepExecutionContext` 和现在 `StepExecutor.build_context` 生成的逐字段相同，包括 `current_step`、`plan_revision`、`final_step=True`。
+  8. 执行器返回后：
+     - 用与 `StepExecutor._validate_runner_output` 相同的规则校验并规范化输出；
+     - 检查状态版本：自己写入之外，状态还被改过，就抛 `StaleExecutionError`；
+     - 再按结果走成功、阻塞或失败；
+     - 记录步骤日志，发出 `step` 事件。
+  9. 生成 `AgentRunResult`：`steps` 里的回执字段与现在相同，`execution_count` 跨续跑累计，`replan_count` 为 0，`usage` 和 `step_log` 照旧。
+  10. 发出 `task_end` 事件。
+- 不支持 `AgentRuntime` 的 `conversation=` 参数。那是给底层调用的兼容入口，服务层不传，循环路径也从未用过。
+- 不再固定 `available_tools` 工具清单：循环的 `_context_message` 本来就把它过滤掉了，请求内容不变。
+
+### 9.4 结果对照（必须与现在逐字一致）
+
+| 情况 | 现在的结果 | 4b |
+|---|---|---|
+| 纯文本完成 | COMPLETED，内容为去掉首尾空白的答案 | 同 |
+| `ask_user` | BLOCKED，内容为问题；登记一个阻塞问题，`step_id` 为当前步骤 | 同 |
+| 续跑 | 回答写入问题后再运行一次：`plan` 事件的 `revision` 为 2，`execution_count` 为 2 | 同 |
+| `ToolRoundLimitError` 或其他 `StepRunError`（含不可用工具） | FAILED `limit`，“Agent replanning limit reached; last failure: …”，末尾是失败记录（类型前缀规则与 `StepExecutor` 相同） | 同 |
+| 读取类工具抛异常 | 同上，失败类型为 `limit` | 同 |
+| 写入或运行抛异常 | FAILED `side_effect` | 同 |
+| `StepFormatError` | FAILED `format` | 同 |
+| `StepModelError`（含 `TeamError`、超时） | FAILED `model` | 同 |
+| 规则拒绝调用 | FAILED `policy` | 同 |
+| 团队超时 | FAILED `timeout`，“Team execution timed out; …” | 同 |
+| 上下文溢出恢复超时 | FAILED `timeout` | 同 |
+| 超时前已写入或运行 | FAILED `side_effect` | 同 |
+| 只读工具运行时超时 | FAILED `limit`，末尾带超时说明 | 同 |
+| 执行器契约错误等其他异常 | FAILED `internal`，“Execution failed: 类型名” | 同 |
+| 取消 | 抛 `CancelledError`，任务状态记为失败 | 同 |
+| 重新绑定后迟到的结果 | 抛 `StaleExecutionError` | 同 |
+
+### 9.5 怎么证明一致：新旧路径逐项对照
+
+4b 期间旧路径还在（规划模式要用），所以可以把同一个替身模型脚本分别交给两条路径跑，逐项比较。新增 `tests/test_loop_run_equivalence.py`：
+
+- 旧路径：`AgentRuntime` 加 `LoopPlanner`/`TeamPlanner`，执行器工厂和限额与 `RunAssembler` 现在给的相同。
+- 新路径：`LoopRun` 加 `RunMemory`。
+- 比较的内容：
+  - 结果的 `status`、`content`、`failure_kind`、`execution_count`、`replan_count`；
+  - `step_log`，去掉耗时和编号；
+  - 回执，去掉编号和版本；
+  - `task_start`、`plan`、`step`、`task_end` 事件序列，以及区间种类，同样去掉编号和时间；
+  - 发给模型的每一次请求（消息和工具列表）。
+- 场景：9.4 表里的每一行，再加上单一循环开 `--delegate`、团队 `require_passing_run`、只读任务、`max_executions` 达到上限、预算用完、等待确认的时间不计入时限。
+
+这组测试是 4b 的主要验收依据。现有测试不改也要全部通过：它们一部分仍测旧路径，另一部分经服务层，会自动走新路径。
+
+### 9.6 接到服务层
+
+- `RagAgentService._open_task`：新任务在 `options['runner'] == 'loop'` 或 `options['mode'] == 'team'` 时建 `RunMemory`，否则建 `WorkingMemory`。`auto` 加 `plan` 的组合可能路由到团队，这时仍用 `WorkingMemory`，走旧路径，4c 删除规划模式后这个组合就不存在了。
+- `RunAssembler.run`：内存是 `RunMemory` 且执行方式是团队或单一循环时，建 `LoopRun`；否则照旧建 `AgentRuntime`。规划器不再构造（`LoopPlanner`/`TeamPlanner` 只剩步骤文字，留到 4c 再删）。
+- 续跑、`_live_blocked`、`resumable` 读的 `runtime.memory.task_state.status` 和 `scratchpad.open_questions`，在 `RunState` 上同样存在，不用改。
+
+### 9.7 实现分块（每块单独测试，可以单独交给 Codex）
+
+1. **4b-1** `run_state.py`，加单元测试。不接线，不改任何现有文件。
+2. **4b-2** `loop_run.py`，加 9.5 的对照测试。不接线。
+3. **4b-3** 服务层和 `RunAssembler` 接线；现有测试全部通过；跑 `init.ps1`。
+4. **评测**（需要你授权）：调参集单一循环 11 次，团队 11 次（`--write --sandbox`，同 3b）。
+
+每块派给 Codex 时都挂监视，20 分钟没有新日志就收下已完成的部分，剩下的由 Claude 接手。
+
+### 9.8 这次不做
+
+- 删除 `planner.py`、`executor.py`、`step_executor.py`、`tool_calling_step_runner.py`、`TaskState` 的计划状态机，以及续跑时 `revision` 变 2 这个奇怪的事件：都留到 4c。
+- 循环中途改目标（`goal_revision` 大于 1）：现在循环路径也不支持，保持不支持。
+
+## 10. 4b 实现记录（2026-11-11，stage4b-001）
+
+用户的四个未提交文件开工前后 sha256 一致；`runtime.py` 未改动。
+
+- **4b-1**（Codex，8 分钟，没有卡住）：新增 `app/models/run_state.py`（`RunState`、`RunStateSnapshot`、`RunMemory`）。异常类型和文字与 `TaskState` 同名方法逐字相同；回答完最后一个阻塞问题后，状态由 BLOCKED 回到 READY。新增 `tests/test_run_state.py`。
+- **4b-2**（Codex，12 分钟，没有卡住）：
+  - 新增 `app/agent/loop_run.py` 的 `LoopRun`，复用 `runtime.py` 的 `_BoundRunner`、`AgentRunResult`、失败分类辅助函数和 `SideEffectWatch`；输出校验从 `StepExecutor` 复制过来，没有导入 `step_executor`。
+  - `RunState.block` 补记 `Observation`，和旧路径一致：重新开始时上下文里有 `last_observation`。
+  - 新增 `tests/test_loop_run_equivalence.py`，67 项新旧路径对照测试，比较结果、步骤日志、回执、完整事件序列和每一次模型请求；新增 `tests/test_loop_run.py`，14 项单元测试。
+  - Claude 逐行审查：成功后再查预算、超时时先在内部取消再在外部分类、三条路径上的版本校验、续跑时 `revision` 为 2，都与旧代码一致。
+- **对照测试确认、并按原样保留的旧行为**（4c 再决定要不要改）：
+  - 规划前执行次数用尽，失败类型是 `internal`；执行前的另一处检查，失败类型是 `limit`；
+  - 成功提交后还会再查一次预算，所以可能保留了成功回执，任务最终却是 `budget` 失败；
+  - 执行期间资源选择发生变化，失败类型是 `internal`；
+  - 回答问题后续跑，`revision` 为 2。
+- **4b-3**（Claude）：
+  - `RagAgentService._open_task`：新任务在 `runner == 'loop'` 或 `mode == 'team'` 时建 `RunMemory`。
+  - `RunAssembler.run`：内存是 `RunMemory` 时建 `LoopRun`（`step_description` 取 `LoopPlanner.STEP` 或 `TeamPlanner.STEP`，限额和执行器工厂不变），不再构造规划器；否则照旧建 `AgentRuntime`。服务层传入 `loop_run_factory=LoopRun`，供测试替换。
+  - 有 4 项现有测试必须跟着改，原因相同：它们用替身顶替服务层的 `AgentRuntime`，来检查团队或循环是怎么构造的，现在构造的是 `LoopRun`。替身同时顶替 `LoopRun`，原来查规划器类型的断言改成查 `step_description`：
+    - `tests/test_delegation.py::test_service_uses_delegating_loop_factory_and_one_step_runtime`；
+    - `tests/test_route_selection.py::test_fixed_modes_keep_their_runner_and_log_a_user_decision`；
+    - `tests/test_run_options.py` 里两项（替身夹具共用）；
+    - `tests/test_web_loop_runner.py::test_explicit_team_does_not_use_loop_even_if_runner_choice_is_loop`。
+  - `tests/test_run_assembler.py` 新增 1 项：确认单一循环和团队用 `LoopRun` 加 `RunMemory`，规划模式用 `AgentRuntime` 加 `WorkingMemory`。
+- `init.ps1` 结果：2084 项通过、16 项跳过。
+- 评测见第 11 节。未提交。
+
+## 11. 4b 评测（2026-11-11，用户“跑评测”）
+
+真实模型，每题 1 次，参数与 3b 相同。单一循环只交答案；团队写文件并开沙盒。两组同时运行，所以耗时偏长。输出：`output/bench-tune-loop-4b.json`、`output/bench-tune-team-4b.json` 和对应的 `traces-*`。
+
+| | 4b | 3b |
+|---|---|---|
+| 单一循环通过 | 9/11 | 10/11 |
+| 单一循环令牌 / 调用 | 502,898 / 25 | 606,738 / 28 |
+| 团队通过 | 9/11 | 11/11 |
+| 团队令牌 / 调用 | 1,571,633 / 78 | 1,837,245 / 78 |
+
+通过数没有达到第 3 节的标准。两种模式都失败在同样两道题、同样两项检查上：`config_merge_qa` 的 `top_keys`，和 `todo_html` 的 `enter_key_and_trim`。
+
+判断为服务商一侧的波动，不是 4b 造成的，依据有三条：
+
+1. **失败的运行少了固定开销。** 平时每次请求约有 2 万令牌的固定开销（D-063），失败的这几次运行，第一次请求只有约 6,400 提示令牌：
+   - 单一循环和团队的 `config_merge_qa`，分别是 6,396 和 6,375（3b 通过时是 27,545 和 27,121）；
+   - 团队的 `todo_html` 是 6,360（3b 是 20,771）。
+   追踪记下的回复模型名都是 `gpt-6.1-sol`，没有变化。D-072 记录过同样的现象。
+2. **4b 之前就出现过。** 按需委派那轮评测（`a0aa489`，当时还没有 4b 的代码），`config_merge_qa` 第一次请求也是 6,420 提示令牌，同样以 `top_keys` 失败。
+3. **请求本身没变。** 其余各题第一次请求的提示令牌与 3b 相差不到 0.5%（例如 `billing_qa` 是 20,783 对 20,784）；67 项对照测试也证明，新旧路径发给模型的请求逐字相同。
+
+单一循环的 `todo_html`，第一次请求是正常的 20,165 令牌，失败的检查项与 3b 相同（3b 那次也没过），属于这道题本身的波动。
+
+结论：4b 的代码改动，在调参集上看不出回退。如果要拿可比的通过数，可以在提示开销正常时，单独重跑 `config_merge_qa` 和 `todo_html` 两种模式各 1 次，共 4 次真实调用。
+
+### 11.1 重跑两题（2026-11-11，用户“重跑两题”）
+
+`config_merge_qa` 和 `todo_html` 在两种模式下各重跑 1 次，依次运行，参数同上。输出：`output/bench-rerun-loop-4b.json`、`output/bench-rerun-team-4b.json` 和对应的 `traces-rerun-*`。
+
+| | 通过 | 令牌 / 调用 | 第一次请求的提示令牌 |
+|---|---|---|---|
+| 单一循环 `config_merge_qa` | 是 | 5,442 / 2 | 2,175 |
+| 单一循环 `todo_html` | 是 | 43,797 / 2 | 20,159 |
+| 团队 `config_merge_qa` | 是 | 11,036 / 4 | 2,163 |
+| 团队 `todo_html` | 否（`enter_key_and_trim`） | 326,303 / 12 | 20,773 |
+
+**更正上面第 1 条判断。** 这次 `config_merge_qa` 两种模式第一次请求的提示令牌更低（约 2,200），却都通过了。可见固定开销缺失只是服务商一侧的另一种状态，和 `top_keys` 失败没有因果关系；上面把失败归因于开销缺失，依据不足。较稳妥的说法是：这两项检查本身就不稳定，第 2、3 条依据（4b 之前就出现过；新旧路径请求逐字相同）仍然成立。
+
+团队的 `todo_html` 这次提示开销正常，仍以 `enter_key_and_trim` 失败；这一项在 3b 单一循环、开沙盒的单一循环评测（loop-sandbox-check-001）里都失败过，属于这道题本身的波动。
+
+合并计算（原 9 题加重跑的 2 题）：单一循环 11/11，团队 10/11。结论不变：4b 在调参集上看不出回退。
 

@@ -30,6 +30,8 @@ from app.models.conversation_memory import (
 from app.agent.step_models import StepExecutionReceipt, ToolCall, ToolResult
 from app.models.taskstate import TaskState, TaskStatus
 from app.models.working_memory import WorkingMemory, StaleExecutionError
+from app.models.run_state import RunMemory, RunState
+from app.agent.loop_run import LoopRun
 from app.tools.tool_loader import local_mcp_servers, open_tool_registry
 from app.services.conversation_archive import ConversationArchive
 from app.services.context_manager import ContextManager
@@ -509,7 +511,7 @@ class RagAgentService:
             memory = runtime.memory
             options = self._task_options.get((key, resume_task_id))
         else:
-            memory = WorkingMemory(TaskState(user_id or session_id, question))
+            memory = None
             options = None
         if options is None:
             options = {'mode': execution_mode or self._execution_mode,
@@ -518,6 +520,13 @@ class RagAgentService:
                        'memory': (self._longterm_memory is not None) if use_memory is None else use_memory}
             if self._workspace_servers is not None:
                 options['workspace'] = workspace       # None: the startup directory and its servers
+        if memory is None:
+            # Loop and team tasks run in LoopRun over a RunState (stage 4b); auto with the plan
+            # runner may still route to the team and keeps the planned path until stage 4c.
+            if options['runner'] == 'loop' or options['mode'] == 'team':
+                memory = RunMemory(RunState(user_id or session_id, question))
+            else:
+                memory = WorkingMemory(TaskState(user_id or session_id, question))
         return runtime, memory, options, question_id
 
     async def _publish_input(self, conversation, turn, turn_id, outcome_key):
@@ -595,7 +604,7 @@ class RagAgentService:
                     key=key, task=task, question=question, options=options, runtime=runtime,
                     planner_model=planner_model, model=model, memory=memory, registry=registry,
                     context_manager=context_manager, audit=audit, on_event=on_event,
-                    runtime_factory=AgentRuntime,
+                    runtime_factory=AgentRuntime, loop_run_factory=LoopRun,
                 )
                 if key in self._spent_tokens:
                     self._spent_tokens[key] += _total_tokens(result.usage)

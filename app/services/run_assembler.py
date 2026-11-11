@@ -32,7 +32,8 @@ class RunAssembler:
         return planner_model
 
     async def run(self, *, key, task, question, options, runtime, planner_model,
-                  model, memory, registry, context_manager, audit, on_event, runtime_factory):
+                  model, memory, registry, context_manager, audit, on_event, runtime_factory,
+                  loop_run_factory=None):
         # The mode is chosen once per task and kept when a blocked task resumes (D-026).
         choice = self._routes.get((key, task.task_id)) if runtime is not None else None
         team_options = self._team_options
@@ -57,7 +58,14 @@ class RunAssembler:
         registry = task_registry(registry, choice.read_only)
         # The team owns the whole task through one fixed plan step (DECISIONS D-019).
         loop = route == 'single' and options['runner'] == 'loop'
-        if route == 'team':
+        from app.models.run_state import RunMemory
+        # Loop and team tasks own a RunMemory and run in LoopRun, off the plan skeleton (stage 4b).
+        direct = isinstance(memory, RunMemory)
+        if direct and not (route == 'team' or loop):
+            raise RuntimeError('a loop task cannot run as a planned task')
+        if direct:
+            planner = None
+        elif route == 'team':
             from app.agent.agent_loop import TeamPlanner
             planner = TeamPlanner(planner_model, max_steps=1, context_manager=context_manager)
         elif loop:
@@ -93,8 +101,16 @@ class RunAssembler:
                 # One task step must outlast its runner; a replan would repeat its work.
                 limits['step_timeout_seconds'] = max(limits['step_timeout_seconds'], runner_timeout + 5)
                 limits['max_replans'] = 0
-            runtime = runtime_factory(planner, model, memory, registry,
-                                   **limits, **runner_options, context_manager=context_manager)
+            if direct:
+                from app.agent.agent_loop import LoopPlanner, TeamPlanner
+                from app.agent.loop_run import LoopRun
+                build = loop_run_factory or LoopRun
+                runtime = build(memory, model, registry,
+                                step_description=(TeamPlanner if route == 'team' else LoopPlanner).STEP,
+                                **limits, **runner_options, context_manager=context_manager)
+            else:
+                runtime = runtime_factory(planner, model, memory, registry,
+                                       **limits, **runner_options, context_manager=context_manager)
         else:
             runtime.rebind(planner, model, registry, context_manager=context_manager)
         result = await runtime.run(on_event=on_event)

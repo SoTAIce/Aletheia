@@ -18,11 +18,19 @@
 
 ## Session Record
 
+### 2026-11-11 — stage4b-001：循环脱离规划—执行骨架
+
+- **Result**：`RunState`/`RunMemory`（Codex）、`LoopRun` 加 67 项新旧路径对照测试（Codex，Claude 审查）、服务层与 `RunAssembler` 接线（Claude）；单一循环和团队任务不再经过 `Planner`/`Executor`/`StepExecutor`/`TaskState`。记录见 [docs/stage4_plan.md](docs/stage4_plan.md) 第 10 节。
+- **Verification**：`init.ps1` PASS，2084 通过、16 跳过；4 项现有接线测试的替身改为顶替 `LoopRun`。
+- **Live bench**（用户“跑评测”）：单一循环 9/11、团队 9/11（3b 为 10/11、11/11），令牌和调用不升。多出的失败 4b 之前的按需委派评测也出现过。重跑两题（用户“重跑两题”，各模式 1 次）：单一循环两题都过，团队 `config_merge_qa` 过、`todo_html` 仍错在 `enter_key_and_trim`；合并为单一循环 11/11、团队 10/11。重跑时 `config_merge_qa` 首个请求开销更低却通过，原先“失败因提示开销缺失”的判断已在方案 11.1 更正，改为这两项检查本身不稳定。
+- **Not done**：4c、4d 未开始。已按用户“提交 4b”提交，未推送。
+
 ### 2026-11-11 — stage4a-001：拆服务层
 
 - **Result**：用户“都按建议”确认第 4 阶段方案。`RunAssembler`（Codex 完成后又卡住）加上 `query_result` 拆成 8 个私有方法（Claude），276 行降到 50 行，行为不变；记录见 [docs/stage4_plan.md](docs/stage4_plan.md) 第 8 节。
 - **Verification**：现有测试未改全部通过；新增 `tests/test_run_assembler.py` 6 项；`init.ps1` PASS，1833 通过、16 跳过。用户四个文件 sha256 前后一致。
-- **Not done**：未提交；下一步 4b。
+- **Committed**：`e6a9856`。
+- **4b 设计**：方案第 9 节（stage4b-001，planned）：`RunState`/`RunMemory`、`LoopRun`、结果对照表、新旧路径逐项对照测试、分 4b-1/4b-2/4b-3 三块实现。
 
 ### 2026-11-11 — stage4-plan-001：第 4 阶段方案
 
