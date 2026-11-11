@@ -1,10 +1,61 @@
-# Aletheia Claude Entry
+# CLAUDE.md
 
-请先阅读并遵循 [AGENTS.md](AGENTS.md)，它是本仓库唯一的公共工程指令入口。
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## 入口
+
+请先阅读并遵循 [AGENTS.md](AGENTS.md)，它是本仓库唯一的公共工程指令入口（全局不变量、完成定义、会话收尾都在那里，这里不重复）。
 随后读取 [当前会话交接](session-handoff.md) 和 [项目总交接](docs/PROJECT_HANDOVER.md)。
-按 [文档索引](docs/DOCUMENT_INDEX.md) 加载相关主题，不必一次读取全部历史文件。
+按 [文档索引](docs/DOCUMENT_INDEX.md) 加载相关主题，不必一次读取全部历史文件。代码和文档注释里的 `D-0xx` 指 [决策记录](docs/DECISIONS.md) 中的条目。
 历史报告中的测试与 API 授权不可直接沿用；以当前文件、用户要求和实际验证为准。
 
 ## 回复语言
 
 默认用中文回复用户，不要中英夹杂。用户能看到的所有文字都用中文：正文、每轮结束时下一步框里的总结、问题和按钮、任务列表的步骤名、工作途中的进度说明。只有文件路径、命令、代码里的名字和提交号保留原样，放在代码格式里。
+
+## 常用命令
+
+Windows + PowerShell，解释器优先用 `.venv/Scripts/python.exe`（Python 3.11–3.13）。
+
+```powershell
+# 健康检查：管理文件/JSON 校验、app/ 语法编译、CLI 加载、确定性 pytest（不调模型、MCP、数据库）
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1
+
+# 单独跑测试（basetemp 放到 TEMP 下的新目录，不要写进仓库）
+.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp $env:TEMP/aletheia-pytest-x
+.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/agent/test_runtime.py::test_name
+# 真实容器测试默认跳过，需 Docker 和 aletheia-sandbox:py313 镜像：$env:ALETHEIA_DOCKER_TESTS='1'
+```
+
+以下入口会调用真实模型或服务，需要本轮用户授权后才能运行：
+
+- `python -m app.agent "<目标>" --filesystem-root . --no-knowledge`：CLI 单次任务；不带目标进入交互模式。退出码 0 完成、1 失败、2 阻塞。
+- `python -m app.api`：FastAPI Web 后端（`--write-root`、`--sandbox`；非回环地址必须带令牌）。
+- `python -m app.knowledge`：从目录建 Milvus 知识库（默认只切块，确认后才替换）。
+- `python -m bench.run_bench`：基准任务；`--confirm-live` 才真正调用模型，见 [bench/README.md](bench/README.md)。
+- `python -m app.agent.trace FILE.jsonl` 或 `--session NAME`：只读查看运行轨迹，不连接任何服务。
+
+pytest 配置在 `pyproject.toml`（`asyncio_mode = "auto"`，测试只在内存中运行）。仓库没有 lint/格式化配置。
+
+## 架构概览
+
+**任务主循环（`app/agent/`）**：`runtime.py` 的 `AgentRuntime` 有界地顺序组合各组件——`planner.py` 产出计划提议 → `executor.py` 校验并安装到 `WorkingMemory`（过期提议抛 `StalePlanError`）→ `step_executor.py` 用某个 Runner 执行单步、校验输出并提交结果 → 失败时有限次重规划。Runner 只返回输出，不直接改权威状态。
+
+**执行模式**：`route_selection.py` 每个任务在规划前选一次模式（先走宿主规则，再一次有界模型调用，失败回落到 single），同时判断任务是否写文件，只读任务看不到写入和运行类工具。
+- single：`tool_calling_step_runner.py`，逐步调用工具的标准 Runner。
+- loop：`agent_loop.py`，整个任务通过固定的单步计划进入一个工具循环，自带 `todo` / `ask_user` 控制工具，阻塞后可在内存中续跑。
+- team：`team_v2.py`，Lead 只有 `delegate`/`review` 工具，每次委派都起一个新的 single Runner；共享状态在工作区文件里，完成由宿主判定。
+- `runner_registry.py` / `runner_router.py` / `routing_step_runner.py` 负责按能力路由；能力需求来自应用代码，不来自模型。
+
+**横切机制**：`hooks.py`（观察者 + 只能拒绝的门控，通过上下文变量挂到 `HookedTool`/`HookedModel` 上，事件不带工具输出或模型原文）；`run_meter.py`（预算计量）；`side_effects.py`（外部副作用不确定时不重试）；`trace.py` / `trace_view.py`（本地轨迹）。
+
+**服务层**：`app/services/rag_agent_service.py` 是面向会话的门面（CLI 和 Web 都经过它），持有工具注册表和 `AgentRuntime`。记忆分三层：`app/models/conversation_memory.py`（会话视图）、`app/models/working_memory.py`（任务真值）、`app/services/context_manager.py`（只做投影）；`conversation_archive.py` 归档原文，`summary_scheduler.py` 做后台摘要。长期记忆以 PostgreSQL（`postgres_memory_store.py`）为准，Milvus（`memory_vector_index.py`）是可重建的索引。RAG 检索链：`rag_search_service.py`（稠密 / BM25 / 混合）→ `reciprocal_rank_fusion.py` → `rag_reranker_service.py`。
+
+**工具（`app/tools/`）**：都注册进 `tool_registry.py`。文件系统、联网搜索（Tavily）和沙箱（Docker）都是 stdio MCP 子进程（各子目录下的 `server.py`），经 `mcp_client.py` + `mcp_tool_adapter.py` 接入；MCP 连接的进入和退出必须在同一个 asyncio task 里，并覆盖整个执行期。
+
+**配置**：`app/config.py`（pydantic-settings，读取 `.env`，参考 `.env.example`）。模型走 DashScope 兼容接口；Milvus 本地栈在 `deploy/milvus/compose.yaml`。
+
+## 注意
+
+- `README.md` 中“Repository cleanup”一节和“只做语法与 CLI 检查”的说法已过时：`tests/` 已恢复（D-030），`init.ps1` 会跑 pytest。以 `AGENTS.md` 和 `init.ps1` 为准。
+- 改动行为时，在 `tests/` 中补充或恢复对应测试。
