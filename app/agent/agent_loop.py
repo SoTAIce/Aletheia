@@ -176,11 +176,27 @@ class LoopResumeStore:
         return (paused, answers[-1]) if answers else None
 
 
+@dataclass(frozen=True, slots=True)
+class HostToolResult:
+    """A host reply; a non-None answer requests task completion through the finish gates."""
+    content: str
+    answer: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class HostTool:
+    """A trusted loop action, kept outside the workspace tool registry."""
+    definition: ToolDefinition
+    invoke: object
+
+
 class AgentLoopRunner:
     """One loop over the whole task: model and tools until a plain-text answer."""
 
     def __init__(self, model, tool_registry: ToolRegistry, options: LoopOptions | None = None,
-                 context_manager=None, resume_store: LoopResumeStore | None = None):
+                 context_manager=None, resume_store: LoopResumeStore | None = None, *,
+                 host_tools=(), allow_ask_user=True, instructions=None, finish_state=None,
+                 finish_hooks=True):
         if not callable(getattr(model, 'generate', None)):
             raise TypeError('model must provide generate()')
         if not isinstance(tool_registry, ToolRegistry):
@@ -189,6 +205,12 @@ class AgentLoopRunner:
         self._options = options or LoopOptions()
         self._manager = CompactingManager(context_manager) if context_manager is not None else None
         self._store = resume_store
+        host_tools = tuple(host_tools)
+        self._host_tools = {t.definition.name: t for t in host_tools}
+        if len(self._host_tools) != len(host_tools) or set(self._host_tools) & CONTROL_TOOLS:
+            raise ValueError('host tools must have unique non-control names')
+        self._allow_ask_user, self._instructions = allow_ask_user, instructions
+        self._finish_state, self._finish_hooks = finish_state, finish_hooks
         self.format_repair_count = 0
         self.todo: list[dict] = []
         self.resumed = False
@@ -214,10 +236,20 @@ class AgentLoopRunner:
         if not isinstance(context, StepExecutionContext):
             raise TypeError('context must be a StepExecutionContext')
         options = self._options
-        offered = tuple(d for d in self._registry.list_definitions() if d.name not in CONTROL_TOOLS)
-        tools = offered + CONTROL_DEFINITIONS
-        names = {d.name for d in offered}
-        messages = [SystemMessage(_system(options)), UserMessage(_context_message(context))]
+        offered = tuple(d for d in self._registry.list_definitions()
+                        if d.name not in CONTROL_TOOLS and d.name not in self._host_tools)
+        controls = tuple(d for d in CONTROL_DEFINITIONS if self._allow_ask_user or d.name != ASK_USER)
+        control_names = {d.name for d in controls}
+        tools = offered + controls + tuple(t.definition for t in self._host_tools.values())
+        names = {d.name for d in offered} | set(self._host_tools)
+        system = _system(options)
+        if not self._allow_ask_user:
+            # Members report to the lead and the lead answers the user: both say what is missing.
+            system = system.replace('call ask_user with one direct question',
+                                    'say in your final answer exactly what information is missing')
+        if self._instructions:
+            system += '\n\n' + self._instructions
+        messages = [SystemMessage(system), UserMessage(_context_message(context))]
         calls, results, refs, seen = [], [], [], set()
         rounds = arg_repairs = unavailable_replies = empty_replies = prior_calls = 0
         restored = self._store.take(context) if self._store is not None else None
@@ -230,8 +262,10 @@ class AgentLoopRunner:
                 {'success': True, 'content': answer, 'error': None, 'source_refs': []}, ensure_ascii=False)))
             self._refuse(messages, paused.skipped, 'not executed: the user was asked first; call it again if needed')
         wrap_up_sent = False
+        finish_rejected = False
+        host_calls = 0
         while True:
-            used = prior_calls + len(calls)
+            used = prior_calls + len(calls) + host_calls
             spent = rounds >= options.max_tool_rounds or used >= options.max_tool_calls
             request_tools = ToolsShownOnly(tools) if spent else tools
             meter = current_meter()
@@ -250,7 +284,7 @@ class AgentLoopRunner:
                 raise StepRunnerContractError('model.generate() must return a ModelTurn')
             if meter is not None:
                 # Host-checked names only: a name the model made up is logged as 'unavailable'.
-                meter.tag_calls_since(logged, [c.tool_name if c.tool_name in names or c.tool_name in CONTROL_TOOLS
+                meter.tag_calls_since(logged, [c.tool_name if c.tool_name in names or c.tool_name in control_names
                                                else 'unavailable' for c in turn.tool_calls
                                                if isinstance(c, ToolCall)])
 
@@ -262,6 +296,15 @@ class AgentLoopRunner:
                     empty_replies += 1
                     self.format_repair_count += 1
                     messages.append(SystemMessage('HOST: reply with the final answer as plain text, or call a tool.'))
+                    continue
+                decision = await self._before_finish(context)
+                if not decision.allow:
+                    if finish_rejected:
+                        from app.agent.team.models import TeamError
+                        raise TeamError('team acceptance gate not met')
+                    finish_rejected = True
+                    messages.append(turn.to_assistant_message())
+                    messages.append(SystemMessage('HOST: ' + decision.reason))
                     continue
                 return self._output(text, StepOutcome.SUCCEEDED, None, calls, results, refs)
 
@@ -286,7 +329,7 @@ class AgentLoopRunner:
                     'the results you already have, and say what is missing.'))
                 continue
 
-            asked = next((c for c in turn.tool_calls if c.tool_name == ASK_USER), None)
+            asked = next((c for c in turn.tool_calls if self._allow_ask_user and c.tool_name == ASK_USER), None)
             if asked is not None:
                 question = asked.arguments.get('question')
                 if isinstance(question, str) and question.strip():
@@ -299,7 +342,7 @@ class AgentLoopRunner:
                     return self._output(question, StepOutcome.BLOCKED, question, calls, results, refs)
 
             unavailable = [c.tool_name for c in turn.tool_calls
-                           if c.tool_name not in names and c.tool_name not in CONTROL_TOOLS]
+                           if c.tool_name not in names and c.tool_name not in control_names]
             if unavailable or asked is not None:
                 # Nothing in the batch runs; tell the model in this round, a few times at most (D-032).
                 if unavailable_replies >= _REPAIRS:
@@ -307,7 +350,7 @@ class AgentLoopRunner:
                     raise StepRunError(f'Model requested unavailable tool: {problem}', tuple(refs))
                 unavailable_replies += 1
                 rounds += 1
-                error = (f'tool {unavailable[0]} is not available; available tools: {sorted(names | CONTROL_TOOLS)}'
+                error = (f'tool {unavailable[0]} is not available; available tools: {sorted(names | control_names)}'
                          if unavailable else 'ask_user needs a nonempty question')
                 self._refuse(messages, turn.tool_calls, 'not executed: ' + error)
                 continue
@@ -323,10 +366,26 @@ class AgentLoopRunner:
                         {'success': items is not None, 'content': 'checklist saved' if items is not None else '',
                          'error': problem, 'source_refs': []}, ensure_ascii=False)))
                     continue
-                if prior_calls + len(calls) >= options.max_tool_calls:
+                if prior_calls + len(calls) + host_calls >= options.max_tool_calls:
                     messages.append(ToolMessage(call.call_id, json.dumps(
                         {'success': False, 'content': '', 'error': 'not executed: the tool budget is used up',
                          'source_refs': []}, ensure_ascii=False)))
+                    continue
+                if call.tool_name in self._host_tools:
+                    host_calls += 1
+                    reply = await self._host_tools[call.tool_name].invoke(call.arguments)
+                    if not isinstance(reply, HostToolResult):
+                        raise StepRunnerContractError('host tool must return HostToolResult')
+                    messages.append(ToolMessage(call.call_id, reply.content))
+                    if reply.answer is not None:
+                        decision = await self._before_finish(context)
+                        if decision.allow:
+                            return self._output(reply.answer, StepOutcome.SUCCEEDED, None, calls, results, refs)
+                        if finish_rejected:
+                            from app.agent.team.models import TeamError
+                            raise TeamError('team acceptance gate not met')
+                        finish_rejected = True
+                        messages.append(SystemMessage('HOST: ' + decision.reason))
                     continue
                 try:
                     result = await self._registry.invoke(call)
@@ -341,6 +400,22 @@ class AgentLoopRunner:
                 if self._manager is not None:
                     view = await self._manager.project_tool_result(result)
                 messages.append(ToolMessage(result.call_id, json.dumps(view, ensure_ascii=False)))
+
+    async def _before_finish(self, context):
+        from app.agent.hooks import ALLOW, BEFORE_FINISH, current_hooks, current_span
+        hooks = current_hooks()
+        if not self._finish_hooks or (self._finish_state is None and
+                not any(BEFORE_FINISH in g.events for g in hooks.gates)):
+            return ALLOW
+        state = self._finish_state() if self._finish_state is not None else {}
+        # Explicit fields prevent a caller from accidentally tracing model text.
+        event = {'type': BEFORE_FINISH, 'task_id': context.task_id, 'parent_id': current_span(),
+                 'writes': int(state.get('writes', 0)),
+                 'passing_run_after_last_write': state.get('passing_run_after_last_write') is True,
+                 'review_after_last_write': state.get('review_after_last_write') is True}
+        hooks.emit(event)
+        decision, _ = await hooks.gate(event)
+        return decision
 
     @staticmethod
     def _refuse(messages, tool_calls, error):

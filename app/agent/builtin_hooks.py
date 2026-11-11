@@ -128,3 +128,20 @@ class ConversationTokenCap:
         if used >= self.cap:
             return Decision.deny(f'this conversation has used its token allowance ({used} of {self.cap} tokens)')
         return ALLOW
+
+
+class PassingRunGate:
+    """Team completion uses only evidence observed by the host in this run."""
+
+    name = 'passing_run'
+    events = frozenset({'before_finish'})
+
+    def __init__(self, *, require_passing_run=False, review=False):
+        self.require_passing_run, self.review = require_passing_run, review
+
+    async def check(self, event: dict) -> Decision:
+        if self.require_passing_run and event['writes'] > 0 and not event['passing_run_after_last_write']:
+            return Decision.deny('completion requires a passing run after the last write')
+        if self.review and not event['review_after_last_write']:
+            return Decision.deny('completion requires reviewer approval after the last write')
+        return ALLOW

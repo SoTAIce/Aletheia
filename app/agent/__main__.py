@@ -308,7 +308,7 @@ async def main(args) -> int:
             max_executions=args.max_executions, max_replans=args.max_replans,
             conversation_compressor=compressor,
             execution_mode=getattr(args, 'execution_mode', 'single'),
-            team_options=team_options,
+            team_options=team_options, team_impl=getattr(args, 'team_impl', 'v2'),
             step_timeout_seconds=step_timeout_for(sandbox, team_options),
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
             single_runner=getattr(args, 'single_runner', 'loop'),
@@ -358,6 +358,8 @@ def build_parser():
                         help="How single mode runs: one agent loop (default, D-072), or plan then steps")
     parser.add_argument('--sandbox', action='store_true',
                         help='Let the agent run workspace code/tests in the Docker sandbox (needs --write-root)')
+    parser.add_argument('--team-impl', choices=['v2', 'loop'], default='v2',
+                        help='Team implementation for the stage 3a comparison (default v2)')
     parser.add_argument('--team-timeout', type=float, help='Team time budget in seconds (default 180)')
     parser.add_argument('--team-acceptance', action='store_true',
                         help='Team V2 with --sandbox: independent acceptance tests decide completion (D-020/D-022)')

@@ -18,11 +18,25 @@
 
 ## Session Record
 
+### 2026-11-10 — stage3-plan-001：第 3 阶段方案与团队基线
+
+- **方案**：[docs/stage3_team_delegate_plan.md](docs/stage3_team_delegate_plan.md)；用户“都按建议”回答第 9 节五问。
+- **团队基线（用户授权，真实模型）**：调参集团队模式、写文件加沙盒各 1 次，7/11，95 次调用，2,002,917 令牌，806 秒；报告 `output/bench-tune-team-baseline.json`，追踪 `output/traces-team-baseline/`。三道问答题都因完成条件在没有写入时也要求一次通过的运行而失败（旧实现缺陷），`todo_html` 错在 `enter_key_and_trim`。方案第 3.3 节据此改为“有写入才要求通过的运行”，判断标准改为代码类 7 题不低于 6/7、总数不低于 7/11（第 10.1 节）。
+- **下一步**：派 Codex 实现 3a。未提交。
+
+### 2026-11-10 — stage3-team-loop-001（3a）：实现与审查
+
+- **Result**：Codex 按方案实现 3a（见方案 9.1 节）；Claude 审查：范围符合，用户四个文件差异行数不变，`team_v2.py` 未改；改正负责人提示里一句不成立的话并补测试。
+- **验证**：init.ps1 1851 项通过、16 项跳过（Codex 沙箱里 1 项因读不了 `USERPROFILE` 失败，本机重跑通过）。没有真实模型运行。
+- **下一步**：经用户授权跑 3a 评测：调参集团队模式 `--team-impl loop --write --sandbox` 1 次、单一循环调参集 1 次。未提交。
+- **Live（用户“跑评测”）**：团队新实现 9/11（代码类 6/7 同基线，问答类 3/4），92 次调用、1,996,491 令牌、763 秒；单一循环 10/11，26 次调用、520,667 令牌、199 秒。两者都错在 `config_merge_qa` 的 `top_keys`，单一循环此前 8 次都通过，判断为模型波动，未重跑确认。达到进入 3b 的标准（方案 10.2）。
+
 ### 2026-11-10 — status-cleanup-002：两处遗留小问题
 
 - **Result**：用户“接着修”。`app/services/vector_store_manager.py` 的 `list_documents`（`app/tools/knowledge_tool.py` 建关键词索引时调用）改用 `query_iterator` 逐批读取，迭代器在 `finally` 里关闭；去掉按 `num_entities` 的条数核对（压缩前它仍计入已删记录，删过块后会误报；offset 加 limit 还有 16384 上限）。连接方式不变（仍是可建集合的 `connect()`）。`app/services/vector_index_service.py` 的 `index_directory` 两处 `logger.exception` 改为只记异常类型（D-033）；返回结果里的失败信息不变。
 - **验证**：新增 3 项测试（逐批读取且不信实体统计、失败时关闭迭代器、目录建库日志不含异常原文和堆栈），换回旧代码时 3 项都失败。`tests/test_knowledge_cli.py` 89 项通过；init.ps1 通过：1806 项通过、16 项跳过（62 秒）。没有连接真实 Milvus。
 - **未做**：建库与清理并发没有事务保证，属设计限制，不改。
+- **Live（用户在自己终端运行，Milvus 2.6.9 本机）**：`list_documents` 读出 844 块、61 个来源，与建库记录一致；`--exclude harness/history --prune` 预演：63 个文件、895 块，0 个过时来源，没有删除。两项都只读、没调嵌入接口；现有块数碰不到这次修的边界，真实运行只说明没改坏。知识库落后于当前文档（未建入 2 个新文件、部分文件块数变化），是否 `--confirm` 重建待用户决定。
 
 ### 2026-11-10 — status-cleanup-001：清理小问题
 

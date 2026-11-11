@@ -3,7 +3,7 @@
 Two kinds:
 - observers (``Hook.observe``) receive host-authored event dicts; they are synchronous, must
   not block, and their errors never affect the task;
-- gates (``Gate.check``) run before a model call or a tool call and may only allow or deny;
+- gates (``Gate.check``) run before a model call, tool call or task finish and may only allow or deny;
   an error or a timeout counts as a denial.
 
 The hooks of a run travel in a context variable (as the run meter does), so the wrappers
@@ -35,11 +35,12 @@ logger = logging.getLogger(__name__)
 TASK_START, TASK_END = 'task_start', 'task_end'
 BEFORE_MODEL, AFTER_MODEL = 'before_model', 'after_model'
 BEFORE_TOOL, AFTER_TOOL = 'before_tool', 'after_tool'
+BEFORE_FINISH = 'before_finish'
 PLAN, STEP = 'plan', 'step'
 SCOPE_START, SCOPE_END = 'scope_start', 'scope_end'
 EVENT_TYPES = frozenset({TASK_START, TASK_END, BEFORE_MODEL, AFTER_MODEL, BEFORE_TOOL, AFTER_TOOL, PLAN, STEP,
-                         SCOPE_START, SCOPE_END})
-GATE_EVENTS = frozenset({BEFORE_MODEL, BEFORE_TOOL})
+                         SCOPE_START, SCOPE_END, BEFORE_FINISH})
+GATE_EVENTS = frozenset({BEFORE_MODEL, BEFORE_TOOL, BEFORE_FINISH})
 
 GATE_TIMEOUT_SECONDS = 5.0
 # Argument values kept in a tool event when they are short scalars: locations and bounds, never

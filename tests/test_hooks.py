@@ -215,3 +215,36 @@ def test_the_service_refuses_something_that_is_not_a_hook_set(tmp_path):
     with pytest.raises(TypeError):
         RagAgentService(model=AsyncMock(), mcp_servers=(), include_knowledge=False,
                         memory_directory=tmp_path, hooks=[Recorder()])
+
+
+@pytest.mark.parametrize('failure', ['error', 'timeout'])
+async def test_before_finish_is_a_gate_and_fails_closed(failure, caplog):
+    from types import SimpleNamespace
+    from app.agent.hooks import BEFORE_FINISH, EVENT_TYPES, GATE_EVENTS
+    assert BEFORE_FINISH in EVENT_TYPES & GATE_EVENTS
+    async def check(event):
+        if failure == 'timeout':
+            await asyncio.sleep(10)
+        raise ValueError('private provider text')
+    hooks = HookSet(gates=(SimpleNamespace(name='finish', events={BEFORE_FINISH}, check=check),),
+                    gate_timeout=0.001)
+    decision, name = await hooks.gate({'type': BEFORE_FINISH})
+    assert not decision.allow and name == 'finish'
+    assert 'private provider text' not in caplog.text
+
+
+@pytest.mark.parametrize('required,review,writes,passed,approved,allowed', [
+    (True, False, 0, False, False, True),
+    (True, False, 1, False, False, False),
+    (True, False, 1, True, False, True),
+    (False, False, 1, False, False, True),
+    (False, True, 0, False, False, False),
+    (True, True, 1, True, False, False),
+    (True, True, 1, True, True, True),
+])
+async def test_passing_run_gate_uses_only_this_runs_host_evidence(required, review, writes, passed, approved, allowed):
+    from app.agent.builtin_hooks import PassingRunGate
+    gate = PassingRunGate(require_passing_run=required, review=review)
+    decision = await gate.check({'writes': writes, 'passing_run_after_last_write': passed,
+                                 'review_after_last_write': approved})
+    assert decision.allow is allowed

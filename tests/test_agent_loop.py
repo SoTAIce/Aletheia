@@ -289,3 +289,83 @@ def test_the_cli_accepts_the_runner_flag():
     from app.agent.__main__ import parse_args
     assert parse_args(['goal', '--single-runner', 'plan']).single_runner == 'plan'
     assert parse_args(['goal']).single_runner == 'loop'
+
+
+async def test_host_tool_can_finish_without_registry_or_another_model_call():
+    from app.agent.agent_loop import HostTool, HostToolResult
+    runner, model, read, context = setup([call('h', 'delegate')])
+    host = HostTool(ToolDefinition('delegate', 'delegate', {'type': 'object'}),
+                    AsyncMock(return_value=HostToolResult('report', answer='member answer')))
+    runner = AgentLoopRunner(model, runner._registry, host_tools=(host,))
+    output = await runner.run(context)
+    assert output.content == 'member answer' and model.generate.await_count == 1
+    assert read.invoke.await_count == 0 and output.tool_calls == ()
+    assert 'delegate' in [d.name for d in model.generate.await_args.args[1]]
+    assert 'delegate' not in [d.name for d in runner._registry.list_definitions()]
+
+
+async def test_without_ask_user_the_prompt_says_to_name_what_is_missing():
+    """Lead and members cannot ask the user: the prompt must not mention ask_user or a lead above them."""
+    runner, model, read, context = setup([text('answer')])
+    runner = AgentLoopRunner(model, runner._registry, allow_ask_user=False)
+    await runner.run(context)
+    messages, tools = model.generate.await_args.args
+    system = messages[0].content
+    assert 'call ask_user' not in system and 'what information is missing' in system
+    assert ASK_USER not in [d.name for d in tools]
+
+
+async def test_no_host_tools_preserves_messages_and_controls():
+    runner, model, read, context = setup([call('a'), text('answer')])
+    events = []
+    with using_hooks(HookSet((SimpleNamespace(observe=events.append),))):
+        output = await runner.run(context)
+    assert output.content == 'answer' and output.tool_calls[0].call_id == 'a'
+    assert [d.name for d in model.generate.await_args.args[1]] == ['read', TODO, ASK_USER]
+    assert events == []
+
+
+@pytest.mark.parametrize('twice', [False, True])
+async def test_before_finish_denial_prompts_once_then_fails(twice):
+    from app.agent.hooks import ALLOW, Decision
+    from app.agent.team.models import TeamError
+    check = AsyncMock(side_effect=[Decision.deny('run required'),
+                                   Decision.deny('run required') if twice else ALLOW])
+    gate = SimpleNamespace(name='finish', events=frozenset({'before_finish'}), check=check)
+    runner, model, read, context = setup([text('private draft'), text('final')])
+    with using_hooks(HookSet(gates=(gate,))):
+        if twice:
+            with pytest.raises(TeamError, match='team acceptance gate not met'):
+                await runner.run(context)
+        else:
+            assert (await runner.run(context)).content == 'final'
+    sent = model.generate.await_args_list[-1].args[0]
+    assert 'HOST:' in sent[-1].content and 'run required' in sent[-1].content
+    assert 'private draft' not in json.dumps(check.await_args.args[0])
+
+
+async def test_host_calls_in_one_batch_obey_call_budget():
+    from app.agent.agent_loop import HostTool, HostToolResult
+    runner, model, read, context = setup([ModelTurn(tool_calls=(
+        ToolCall('h1', 'delegate', {}), ToolCall('h2', 'delegate', {}))), text('answer')])
+    invoke = AsyncMock(return_value=HostToolResult('report'))
+    host = HostTool(ToolDefinition('delegate', 'delegate', {'type': 'object'}), invoke)
+    runner = AgentLoopRunner(model, runner._registry, LoopOptions(max_tool_calls=1), host_tools=(host,))
+    await runner.run(context)
+    assert invoke.await_count == 1
+
+
+async def test_host_finish_cannot_bypass_another_finish_gate():
+    from app.agent.agent_loop import HostTool, HostToolResult
+    from app.agent.hooks import Decision
+    from app.agent.team.models import TeamError
+    runner, model, read, context = setup([call('h', 'delegate'), text('again')])
+    host = HostTool(ToolDefinition('delegate', 'delegate', {'type': 'object'}),
+                    AsyncMock(return_value=HostToolResult('report', answer='member')))
+    runner = AgentLoopRunner(model, runner._registry, host_tools=(host,))
+    gate = SimpleNamespace(name='deny', events={'before_finish'},
+                           check=AsyncMock(return_value=Decision.deny('host rule')))
+    with using_hooks(HookSet(gates=(gate,))):
+        with pytest.raises(TeamError, match='team acceptance gate not met'):
+            await runner.run(context)
+    assert model.generate.await_count == 2

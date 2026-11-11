@@ -1488,7 +1488,34 @@
         "New tests fail on the old code and pass on the new.",
         "init.ps1 passes."
       ],
-      "evidence": "tests/test_knowledge_cli.py +3 tests (red on old code), 89 passed; init.ps1 PASS 1806 passed, 16 skipped. No live Milvus run; not committed."
+      "evidence": "tests/test_knowledge_cli.py +3 tests (red on old code), 89 passed; init.ps1 PASS 1806 passed, 16 skipped. Committed 0f92d5c. Live read-only (user terminal, local Milvus): list_documents returned 844 chunks from 61 sources, matching the last build; --prune dry run listed 0 stale sources. The current size cannot reach the fixed edge cases, so live runs only show nothing broke."
+    },
+    {
+      "id": "stage3-plan-001",
+      "name": "Plan for architecture stage 3: the team as a delegate tool inside the agent loop",
+      "description": "User 2026-11-10 '先进行架构第三阶段方案确定吧'. docs/stage3_team_delegate_plan.md: the loop is the team lead, delegate/review are host tools, members are sub-loops; completion via a new before_finish gate (PassingRunGate); 3a keeps the old team behind --team-impl for a bench comparison, 3b removes team_v2.py, the runner registry and routing; a fresh team baseline comes first.",
+      "status": "done",
+      "dependencies": [
+        "loop-default-001"
+      ],
+      "acceptance": [
+        "Plan names files, steps, tests, records, compatibility impact and the user's open questions."
+      ],
+      "evidence": "docs/stage3_team_delegate_plan.md; registered in docs/DOCUMENT_INDEX.md. Plan only: no code changed, no live run, not committed."
+    },
+    {
+      "id": "stage3-team-loop-001",
+      "name": "Stage 3a: the team lead as an agent loop with host delegation tools, behind --team-impl",
+      "description": "docs/stage3_team_delegate_plan.md 3a. app/agent/delegation.py (DelegatingLoopRunner); AgentLoopRunner host tools, allow_ask_user, before_finish; PassingRunGate only when the run wrote files; team_impl v2|loop (default v2) in the service, CLI and bench. Old team unchanged.",
+      "status": "done",
+      "dependencies": [
+        "stage3-plan-001"
+      ],
+      "acceptance": [
+        "Without host tools or finish gates the loop behaves as before.",
+        "Bench: team code tasks not below 6/7 and total not below 7/11 against the baseline in plan 10.1."
+      ],
+      "evidence": "Implemented by Codex, reviewed by Claude; 45 new tests; init.ps1 PASS 1851 passed, 16 skipped. Live (user '跑评测'): team loop 9/11 (code 6/7 as baseline, QA 3/4 after the gate fix), 92 calls, 1,996,491 tokens, 763 s (output/bench-tune-team-loop-3a.json); single loop 10/11, 26 calls (output/bench-tune-loop-3a.json); both missed config_merge_qa top_keys. Meets the 3b criterion. Not committed."
     }
   ],
   "cleanup_2026_11_04": {
@@ -1545,6 +1572,13 @@
       "priority": 2,
       "next_action": "Steps 1-4 done (single 2/2 with sandbox). Remaining sandbox work only if needed: frontend testing in the image.",
       "source": "docs/sandbox_execution_design.md"
+    },
+    {
+      "id": "hooks-fail-closed-001",
+      "authorized": false,
+      "priority": 2,
+      "next_action": "After stage3 3a lands (avoid editing hooks.py alongside Codex): (1) fail closed when no HookSet is set on paths that offer tools or call the run model (today an unset context is EMPTY = allow all; all entry points set it, background summaries use a separate compressor outside the token cap); (2) decide whether approvals should show what will be written (args_summary carries only lengths, so the user approves blind); (3) note that gate-then-invoke relies on sequential tool calls and must be rechecked if tool calls ever run in parallel. Race review 2026-11-10 found no live race: gates run sequentially per run, ApprovalGate locks and rechecks, one active run per session.",
+      "source": "Claude review 2026-11-10 (user asked about permission checks and racing hooks)"
     }
   ]
 }

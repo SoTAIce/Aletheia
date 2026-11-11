@@ -148,7 +148,7 @@ class RagAgentService:
         runner_registry: RunnerRegistry | None = None, routing_policy: RoutingPolicy | None = None,
         runner_requirements: RequirementsProvider | None = None,
         execution_mode: str = 'single', team_options=None, hooks=None,
-        single_runner: str = 'plan', loop_options=None,
+        single_runner: str = 'plan', loop_options=None, team_impl: str = 'v2',
         workspace_servers=None, workspace_policy=None, default_workspace: str | None = None,
     ) -> None:
         self.streaming = streaming
@@ -171,6 +171,11 @@ class RagAgentService:
             raise TypeError('team_options must be DelegationOptions')
         if (execution_mode != 'single' or team_options is not None) and runner_registry is not None:
             raise ValueError('use register_delegating_team_runner for custom registry assembly')
+        if team_impl not in ('v2', 'loop'):
+            raise ValueError('team_impl must be v2 or loop')
+        if team_impl == 'loop' and team_options is not None and team_options.acceptance_tests:
+            raise ValueError('team_impl loop does not support acceptance_tests')
+        self._team_impl = team_impl
         self._execution_mode = execution_mode
         # How single mode runs (loop-trial-001): 'plan' plans then executes steps; 'loop' is one
         # agent loop entered through a fixed one-step plan (docs/architecture_review.md stage 1).
@@ -596,6 +601,8 @@ class RagAgentService:
                                 # A team step must outlast the team's own timeout.
                                 limits['step_timeout_seconds'] = max(limits['step_timeout_seconds'],
                                                                      team_options.timeout_seconds + 5)
+                                if self._team_impl == 'loop':
+                                    limits['max_replans'] = 0
                             elif loop:
                                 from app.agent.agent_loop import loop_requirements, register_agent_loop_runner
                                 from app.agent.runner_registry import default_runner_registry
@@ -784,7 +791,10 @@ class RagAgentService:
 
     def _team_registry(self, options=None):
         from app.agent.runner_registry import default_runner_registry
-        from app.agent.team_v2 import register_delegating_team_runner
+        if self._team_impl == 'loop':
+            from app.agent.delegation import register_delegating_loop_runner as register_delegating_team_runner
+        else:
+            from app.agent.team_v2 import register_delegating_team_runner
         registry = default_runner_registry()
         register_delegating_team_runner(registry, options=options or self._team_options)
         return registry

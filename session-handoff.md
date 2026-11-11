@@ -30,7 +30,7 @@
 2. **追踪的后续**：~~用户在真实网页上点一次“执行记录”确认~~（2026-11-10 已完成：用户用真实模型在 8001 端口的网页上发了一条消息，点开执行记录显示正常；审计文件用 `python -m app.agent.trace --json` 解析为版本 2、记录完整、丢弃 0，2 次模型调用、1 次工具调用、约 4.6 万输入令牌、120 秒）；授权一次带 `--keep-traces` 的评测；记录原文、OpenTelemetry、实时追踪见 [追踪方案](docs/tracing_plan.md) 第 8 节。
 3. ~~小问题~~（2026-11-10 status-cleanup-001 已完成，未提交）：`--prune` 磁盘根前缀已修；嵌入服务的 `ValueError` 经核对保持现状（依赖在请求中抛的 `ValueError` 归为请求失败，这是正确分类），补测试固定；`--exclude` 的 `/absolute`、单反斜杠绝对路径已有专门测试；功能表里长期记忆的两条过时登记已加说明。空文件夹 `.claude/worktrees/workspace-choice` 已删除（用户同意后结束了占用它的旧网页服务，进程 86428）。
    另两处遗留（status-cleanup-002，已完成）：`VectorStoreManager.list_documents`（关键词检索启动时全量读取）改用查询迭代器，不再依赖含已删记录的 `num_entities` 和 16384 的 offset 窗口；`index_directory` 的失败日志只记异常类型。剩下的只有设计限制：建库与清理并发无事务保证。
-4. **架构第 3 阶段**：团队模式改为单一循环下的 `delegate` 工具，验收门槛改为拦截型钩子，删执行器注册表与路由（`docs/architecture_review.md` 第 6 节）；先写方案。
+4. **架构第 3 阶段**：方案已写成 [stage3_team_delegate_plan.md](docs/stage3_team_delegate_plan.md)（stage3-plan-001，2026-11-10），用户“都按建议”；团队基线 7/11（问答题被旧完成条件误拦，见方案 10.1）；3a 已实现并审查（stage3-team-loop-001，init.ps1 1851 通过），3a 评测：团队新实现 9/11（基线 7/11，代码类同为 6/7），单一循环 10/11，达到进入 3b 的标准（方案 10.2）；下一步提交 3a，再做 3b。
 
 **用户已决定不做的**（2026-11-09：“agent 可以解决正常问题就可以”）
 - `side_effects_qa` 不再追：标准答案认为 `remember(item, history=[])` 只改默认参数、不算修改传入参数，这是题目对边界情形的定义之争。
