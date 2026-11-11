@@ -18,12 +18,23 @@
 
 ## Session Record
 
+### 2026-11-11 — stage4a-001：拆服务层
+
+- **Result**：用户“都按建议”确认第 4 阶段方案。`RunAssembler`（Codex 完成后又卡住）加上 `query_result` 拆成 8 个私有方法（Claude），276 行降到 50 行，行为不变；记录见 [docs/stage4_plan.md](docs/stage4_plan.md) 第 8 节。
+- **Verification**：现有测试未改全部通过；新增 `tests/test_run_assembler.py` 6 项；`init.ps1` PASS，1833 通过、16 跳过。用户四个文件 sha256 前后一致。
+- **Not done**：未提交；下一步 4b。
+
+### 2026-11-11 — stage4-plan-001：第 4 阶段方案
+
+- **Result**：按需委派已提交 `a0aa489`（用户“那提交吧”）。第 4 阶段方案写成 [docs/stage4_plan.md](docs/stage4_plan.md)：4a 拆服务层、4b 循环脱离骨架、4c 删除规划模式和骨架、4d 模型档案推迟。
+- **Not done**：等用户回答第 7 节五问；未改代码，未提交方案。
+
 ### 2026-11-11 — loop-delegate-001：单一循环按需委派（实现）
 
 - **Result**：Codex 71 分钟无输出、未改文件，已取消，由 Claude 实现方案第 5、6 节；记录见 [docs/loop_delegate_plan.md](docs/loop_delegate_plan.md) 第 10 节。新增 `--delegate`（默认关）、`ExploreDelegation`/`MemberSpawner`/`ExploreLoopRunner`、宿主工具按轮次提供、评测委派计数、两道 `probe` 探针题。
 - **Verification**：`init.ps1` PASS，1827 通过、16 跳过；新增 `tests/test_loop_delegate.py` 15 项。
 - **Live bench**（用户“跑评测”）：调参集开委派 10/11，511,221 令牌（3b 为 606,738），委派 0 次；探针题开、关都 6/6，但 `probe_config_keys` 开委派时委派 2 次，令牌 897,740，不开时只要 145,401。结论见方案第 11 节：默认保持关闭。
-- **Not done**：未提交。
+- **Committed**：`a0aa489`。
 
 ### 2026-11-10 — loop-delegate-plan-001：单一循环按需委派方案
 

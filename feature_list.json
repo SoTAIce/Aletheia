@@ -1542,7 +1542,7 @@
       "acceptance": [
         "Plan names trigger rules, files, tests, bench criteria and the user's open questions."
       ],
-      "evidence": "docs/loop_delegate_plan.md; registered in docs/DOCUMENT_INDEX.md. User answered section 9 '都按建议' (2026-11-10). Not committed."
+      "evidence": "docs/loop_delegate_plan.md; registered in docs/DOCUMENT_INDEX.md. User answered section 9 '都按建议' (2026-11-10). Committed a0aa489."
     },
     {
       "id": "loop-delegate-001",
@@ -1557,7 +1557,34 @@
         "Host rules and member context per plan 4.1 and 4.3, tested with stand-in models.",
         "Live: tune with --delegate passes >= 10/11, tokens <= 1.1x 3b loop (606,738), delegations <= 2; probes delegate and stay correct."
       ],
-      "evidence": "Codex stalled 71 min with no edits and was cancelled; implemented by Claude. tests/test_loop_delegate.py (15), tests/test_bench_tasks.py probe checks; init.ps1 PASS 1827 passed, 16 skipped. Live bench not run (needs authorization). Not committed. Live (user '跑评测', 2026-11-11): tune single loop --delegate 10/11, 511,221 tokens (3b 606,738), 25 calls, 0 delegations (output/bench-tune-loop-delegate.json). Probes: both pass with and without --delegate; probe_config_keys delegated twice (thorough) at 897,740 vs 145,401 tokens without; probe_event_flow no delegation (output/bench-probe-*.json). Plan section 11: keep off by default."
+      "evidence": "Codex stalled 71 min with no edits and was cancelled; implemented by Claude. tests/test_loop_delegate.py (15), tests/test_bench_tasks.py probe checks; init.ps1 PASS 1827 passed, 16 skipped. Live bench not run (needs authorization). Live (user '跑评测', 2026-11-11): tune single loop --delegate 10/11, 511,221 tokens (3b 606,738), 25 calls, 0 delegations (output/bench-tune-loop-delegate.json). Probes: both pass with and without --delegate; probe_config_keys delegated twice (thorough) at 897,740 vs 145,401 tokens without; probe_event_flow no delegation (output/bench-probe-*.json). Plan section 11: keep off by default. Committed a0aa489."
+    },
+    {
+      "id": "stage4-plan-001",
+      "name": "Plan: architecture stage 4 (service split, loop run without the plan skeleton, remove plan mode)",
+      "description": "User 2026-11-11 '之后开启第四阶段'. docs/stage4_plan.md: 4a SessionService/RunAssembler split without behaviour change; 4b LoopRun/RunState so loop and team skip the fixed one-step plan, Executor and StepExecutor; 4c remove plan mode, the skeleton and TaskState plan machinery (deletes the user's annotated planner/step_executor/tool_calling_step_runner, rewrites AGENTS.md invariant 1); 4d model profiles deferred.",
+      "status": "done",
+      "dependencies": [
+        "stage3-cleanup-001",
+        "loop-delegate-001"
+      ],
+      "acceptance": [
+        "Plan names steps, files, compatibility, bench criteria and the user's open questions."
+      ],
+      "evidence": "docs/stage4_plan.md; registered in docs/DOCUMENT_INDEX.md. User answered section 7 '都按建议' (2026-11-11). Not committed."
+    },
+    {
+      "id": "stage4a-001",
+      "name": "Stage 4a: split the service layer (RunAssembler and private steps of query_result)",
+      "description": "docs/stage4_plan.md section 8: app/services/run_assembler.py RunAssembler owns route choice, read-only narrowing, planner and runner factories, limits and runtime build/rebind/run; RagAgentService.query_result split into eight private methods, 276 to 50 lines, behaviour unchanged.",
+      "status": "done",
+      "dependencies": [
+        "stage4-plan-001"
+      ],
+      "acceptance": [
+        "Existing tests pass unchanged; query_result at most 80 lines; user files untouched."
+      ],
+      "evidence": "RunAssembler by Codex (stalled again after it, job record gone); rest by Claude with a line-by-line equivalence check. tests/test_run_assembler.py (6). init.ps1 PASS 1833 passed, 16 skipped. No live run (not needed per plan section 6). Not committed."
     }
   ],
   "cleanup_2026_11_04": {

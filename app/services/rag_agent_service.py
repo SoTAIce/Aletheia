@@ -20,7 +20,6 @@ from mcp import StdioServerParameters
 from openai import AsyncOpenAI
 
 from app.agent.openai_compatible_tool_calling_model import OpenAICompatibleToolCallingModel
-from app.agent.planner import Planner
 from app.agent.planning_model import PlanningModel
 from app.agent.runtime import AgentRunResult, AgentRuntime
 from app.config import config
@@ -33,7 +32,8 @@ from app.models.taskstate import TaskState, TaskStatus
 from app.models.working_memory import WorkingMemory, StaleExecutionError
 from app.tools.tool_loader import local_mcp_servers, open_tool_registry
 from app.services.conversation_archive import ConversationArchive
-from app.services.context_manager import ContextManager, ContextManagedModel
+from app.services.context_manager import ContextManager
+from app.services.run_assembler import RunAssembler
 from app.services.summary_scheduler import SummaryScheduler
 from app.tools.context_archive_tool import ContextArchiveTool
 
@@ -111,14 +111,6 @@ WORKSPACE_CHANGED_NOTE = ('The working directory of this conversation has change
 def _check_choice(name, value) -> None:
     if value is not None and type(value) is not bool:
         raise ValueError(f'{name} must be true, false or None')
-
-
-def _without_writes(options):
-    """Team options for a task whose writes are off: the same as starting without a write root (D-051)."""
-    from dataclasses import replace
-    from app.agent.route_selection import READ_ONLY_HIDDEN
-    return replace(options, allowed_tools=options.allowed_tools - READ_ONLY_HIDDEN,
-                   require_passing_run=False)
 
 
 
@@ -200,6 +192,12 @@ class RagAgentService:
                                                   if step_timeout_seconds is None else step_timeout_seconds),
                             planning_timeout_seconds=(config.agent_planning_timeout_seconds
                                                       if planning_timeout_seconds is None else planning_timeout_seconds))
+        self._run_assembler = RunAssembler(
+            team_options=self._team_options, loop_options=self._loop_options, delegate=self._delegate,
+            limits=self._limits, planner_model_injected=planner_model is not None,
+            routes=self._routes, task_options=self._task_options,
+            default_workspace=self._default_workspace, emit=_emit,
+        )
         self._conversations: dict[object, ConversationMemory] = {}
         self._locks: dict[object, asyncio.Lock] = {}
         self._tasks: dict[tuple[object, str], AgentRuntime] = {}
@@ -375,6 +373,45 @@ class RagAgentService:
         execution_mode, single_runner, allow_writes and use_memory choose for this request only; None keeps the
         service default (D-051). allow_writes=False hides the write and run tools as for a read-only
         task (D-027); use_memory=False skips long-term recall. A resumed task keeps its own choices."""
+        workspace, attachments = self._check_request(
+            question, session_id, user_id, request_id, resume_task_id, question_id, execution_mode,
+            allow_writes, use_memory, single_runner, hooks, workspace, workspace_confirmed, attachments)
+        stamp = datetime.now(timezone.utc)
+        key = self._session_key(user_id, session_id)
+        async with self._locks.setdefault(key, asyncio.Lock()):
+            conversation = await self._session_conversation(key, user_id, session_id)
+            turn_id = f'request:{request_id}' if request_id is not None else str(uuid4())
+            outcome_key = (key, turn_id)
+            replayed = await self._replay(conversation, turn_id, outcome_key, question, resume_task_id, question_id)
+            if replayed is not None:
+                return replayed
+            runtime, memory, options, question_id = self._open_task(
+                key, user_id, session_id, question, resume_task_id, question_id,
+                execution_mode, single_runner, allow_writes, use_memory, workspace)
+            task = memory.task_state
+            turn = ConversationTurn([ConversationMessage(MessageRole.USER, question, stamp)], turn_id, stamp,
+                                    task_id=task.task_id, status=TurnStatus.RECEIVED, question_id=question_id)
+            # Every external call is after the original input has been published.
+            await self._publish_input(conversation, turn, turn_id, outcome_key)
+            try:
+                context_manager = await self._prepare_task(
+                    conversation, key, user_id, question, task, runtime, question_id, attachments, options)
+                result = await self._execute(
+                    conversation, key, user_id, session_id, question, hooks, on_event, outcome_key,
+                    task, memory, runtime, options, context_manager)
+            except StaleExecutionError:
+                await self._settle_stale(conversation, outcome_key)
+                raise
+            except (Exception, asyncio.CancelledError) as exc:
+                await self._settle_failure(conversation, outcome_key, key, task, exc)
+                raise
+            await _durable(self._publish_outcome(conversation, outcome_key))
+            return result
+
+    def _check_request(self, question, session_id, user_id, request_id, resume_task_id, question_id,
+                       execution_mode, allow_writes, use_memory, single_runner, hooks, workspace,
+                       workspace_confirmed, attachments):
+        """Validate one request before any lock or I/O; returns the checked workspace and attachments."""
         if self._closed:
             raise RuntimeError('service is closed')
         self._validate_input(question, session_id)
@@ -407,234 +444,186 @@ class RagAgentService:
         from app.agent.hooks import HookSet
         if hooks is not None and not isinstance(hooks, HookSet):
             raise TypeError('hooks must be a HookSet')
-        stamp = datetime.now(timezone.utc)
-        key = self._session_key(user_id, session_id)
-        async with self._locks.setdefault(key, asyncio.Lock()):
-            conversation = self._conversations.get(key)
-            if conversation is None:
-                label = self._archive_label(user_id, session_id)
-                archive = None
-                if self._memory_directory:
-                    archive = await asyncio.to_thread(
-                        ConversationArchive, self._archive_root(user_id), label
-                    )
-                conversation = ConversationMemory(label, compressor=self._conversation_compressor, archive=archive,
-                                                  background_compression=archive is not None)
-                await conversation.restore()
-                self._conversations[key] = conversation
-                # Reconstruct old backlog on session load, including restart.
-                self._notify_summary(key)
+        return workspace, attachments
 
-            turn_id = f'request:{request_id}' if request_id is not None else str(uuid4())
-            outcome_key = (key, turn_id)
-            try:
-                existing = await conversation.read_turn(turn_id)
-            except KeyError:
-                existing = None
-            if existing is not None:
-                if (existing.messages[0].content != question or existing.status is None
-                        or (resume_task_id is None) != (existing.question_id is None)
-                        or (resume_task_id is not None and existing.task_id != resume_task_id)
-                        or (question_id is not None and existing.question_id != question_id)):
-                    raise ValueError('request ID conflict')
-                if outcome_key in self._pending_outcomes:
-                    await _durable(self._publish_outcome(conversation, outcome_key))
-                    existing = await conversation.read_turn(turn_id)
-                payload = await conversation.turn_result(turn_id)
-                if payload is not None:
-                    restored = _restore_result(payload)
-                    if (restored.task_id != existing.task_id or restored.status.value != existing.status.value
-                            or restored.content != existing.messages[-1].content):
-                        raise ValueError('archived result conflicts with turn')
-                    return restored
-                raise RuntimeError(f'request already {existing.status.value}; automatic execution replay is unsafe')
-
-            runtime = None
-            if resume_task_id is not None:
-                runtime = self._tasks.get((key, resume_task_id))
-                if runtime is None or runtime.memory.task_state.status is not TaskStatus.BLOCKED:
-                    raise ValueError('No resumable task in this user/session; restart restores history, not live tasks')
-                task = runtime.memory.task_state
-                questions = [q for q in task.scratchpad.open_questions
-                             if q.goal_revision == task.goal_revision and q.blocking and q.resolved_at is None]
-                if question_id is None:
-                    if len(questions) != 1:
-                        raise ValueError('question_id is required when there is not exactly one blocking question')
-                    question_id = questions[0].question_id
-                if not any(q.question_id == question_id for q in questions):
-                    raise ValueError('question_id is not an unresolved blocking question of this task')
-                memory = runtime.memory
-                options = self._task_options.get((key, resume_task_id))
-            else:
-                memory = WorkingMemory(TaskState(user_id or session_id, question))
-                options = None
-            if options is None:
-                options = {'mode': execution_mode or self._execution_mode,
-                           'runner': single_runner or self._single_runner,
-                           'write': True if allow_writes is None else allow_writes,
-                           'memory': (self._longterm_memory is not None) if use_memory is None else use_memory}
-                if self._workspace_servers is not None:
-                    options['workspace'] = workspace       # None: the startup directory and its servers
-            task = memory.task_state
-            turn = ConversationTurn([ConversationMessage(MessageRole.USER, question, stamp)], turn_id, stamp,
-                                    task_id=task.task_id, status=TurnStatus.RECEIVED, question_id=question_id)
-
-            # Every external call is after the original input has been published.
-            try:
-                await _durable(conversation.add(turn))
-            except asyncio.CancelledError:
-                try:
-                    await conversation.read_turn(turn_id)
-                except KeyError:
-                    raise
-                self._pending_outcomes[outcome_key] = (TurnStatus.CANCELLED, 'Request cancelled before execution', None)
-                await _durable(self._publish_outcome(conversation, outcome_key))
-                raise
-            except Exception as exc:
-                # Publication may have succeeded before a cache reload failed.
-                # Preserve that accepted input, but never start external work.
-                try:
-                    await conversation.read_turn(turn_id)
-                except KeyError:
-                    pass
-                else:
-                    self._pending_outcomes[outcome_key] = (TurnStatus.FAILED, f'Input persistence failed: {type(exc).__name__}', None)
-                    await _durable(self._publish_outcome(conversation, outcome_key))
-                raise
-            try:
-                context_manager = ContextManager(
-                    window_tokens=config.agent_model_window_tokens, output_tokens=config.context_output_tokens,
-                    safety_tokens=config.context_safety_tokens, archive=conversation.archive,
+    async def _session_conversation(self, key, user_id, session_id):
+        """The session's conversation, loaded (and its archive restored) on first use."""
+        conversation = self._conversations.get(key)
+        if conversation is None:
+            label = self._archive_label(user_id, session_id)
+            archive = None
+            if self._memory_directory:
+                archive = await asyncio.to_thread(
+                    ConversationArchive, self._archive_root(user_id), label
                 )
-                if runtime is not None:
-                    task.resolve_question(question_id, question)
-                if attachments:
-                    task.pin_content(await self._attachment_note(conversation, attachments), 'attachments')
-                current = options.get('workspace') or self._default_workspace
-                previous = self._session_workspaces.get(key)
-                if runtime is None and previous is not None and previous != current:
-                    task.pin_content(WORKSPACE_CHANGED_NOTE, 'workspace_note')
-                if runtime is None and current:
-                    self._session_workspaces[key] = current
-                if runtime is None:
-                    history = await context_manager.prepare_conversation(conversation, task.active_goal)
-                    task.pin_content(history, 'conversation_memory')
-                    if self._longterm_memory is not None and options['memory']:
-                        try:
-                            async with asyncio.timeout(self._longterm_timeout_seconds):
-                                hits = await self._longterm_memory.recall(
-                                    user_id=user_id, query=question, limit=self._longterm_recall_limit)
-                            payload = context_manager.longterm_context(
-                                hits=hits, user_id=user_id, token_budget=config.longterm_context_tokens)
-                            if json.loads(payload)['entries']:
-                                task.pin_content(payload, 'longterm_memory')
-                        except Exception as exc:
-                            logger.warning('Long-term recall unavailable: %s', type(exc).__name__)
-                cache_key = self._prompt_cache_key(self._archive_label(user_id, session_id))
-                run_hooks, audit = await self._run_hooks(key, conversation, hooks)
-                async with self._models(cache_key, run_hooks) as (planner_model, model):
-                    if self._planner_model is None:
-                        planner_model = PlanningModel(ContextManagedModel(model, context_manager))
-                    async with open_tool_registry(
-                        memory, mcp_servers=self._servers_for(options), conversation=conversation,
-                        knowledge_search=self._knowledge_search, include_knowledge=self._include_knowledge,
-                        local_tools=(ContextArchiveTool(conversation.archive, context_manager.tool_result_chars),)
-                                    if conversation.archive else (),
-                        context_manager=context_manager,
-                    ) as registry:
-                        # The mode is chosen once per task and kept when a blocked task resumes (D-026).
-                        choice = self._routes.get((key, task.task_id)) if runtime is not None else None
-                        team_options = self._team_options
-                        if team_options is not None and not options['write']:
-                            team_options = _without_writes(team_options)
-                        if choice is None:
-                            choice = await self._choose_route(question, model, options['mode'], team_options)
-                            if not options['write'] and not choice.read_only:
-                                # Writes off for this request: the D-027 read-only path, decided by the host.
-                                from dataclasses import replace
-                                choice = replace(choice, read_only=True)
-                        self._routes[(key, task.task_id)] = choice
-                        self._task_options[(key, task.task_id)] = options
-                        route = choice.mode
-                        if audit is not None:
-                            audit.note(mode=route, read_only=choice.read_only,
-                                       workspace=options.get('workspace') or self._default_workspace)
-                        _emit(on_event, {'type': 'route', 'mode': route, 'read_only': choice.read_only,
-                                         'options': dict(options)})
-                        # Read-only tasks lose write tools and get read-only runs (D-027/D-028).
-                        from app.agent.route_selection import task_registry
-                        registry = task_registry(registry, choice.read_only)
-                        # The team owns the whole task through one fixed plan step (DECISIONS D-019).
-                        loop = route == 'single' and options['runner'] == 'loop'
-                        if route == 'team':
-                            from app.agent.agent_loop import TeamPlanner
-                            planner = TeamPlanner(planner_model, max_steps=1, context_manager=context_manager)
-                        elif loop:
-                            from app.agent.agent_loop import LoopPlanner
-                            planner = LoopPlanner(planner_model, max_steps=1, context_manager=context_manager)
-                        else:
-                            planner = Planner(planner_model, context_manager=context_manager)
-                        if runtime is None:
-                            runner_options, limits = {}, dict(self._limits)
-                            if route == 'team':
-                                from app.agent.delegation import DelegatingLoopRunner
-                                def factory(deps):
-                                    return DelegatingLoopRunner(deps.model, deps.tool_registry,
-                                                                team_options, deps.context_manager)
-                                runner_options['runner_factory'] = factory
-                                runner_timeout = team_options.timeout_seconds
-                            elif loop:
-                                from app.agent.agent_loop import AgentLoopRunner, LoopResumeStore
-                                store = LoopResumeStore()  # one per runtime, retained by its factory on rebind
-                                if self._delegate:
-                                    from app.agent.delegation import ExploreLoopRunner
-                                    tally = {'delegations': 0}   # per task, kept across rebinds
-                                    def factory(deps):
-                                        return ExploreLoopRunner(deps.model, deps.tool_registry, self._loop_options,
-                                                                 deps.context_manager, store, tally=tally)
-                                else:
-                                    def factory(deps):
-                                        return AgentLoopRunner(deps.model, deps.tool_registry, self._loop_options,
-                                                               deps.context_manager, store)
-                                runner_options['runner_factory'] = factory
-                                runner_timeout = self._loop_options.timeout_seconds
-                            if route == 'team' or loop:
-                                # One task step must outlast its runner; a replan would repeat its work.
-                                limits['step_timeout_seconds'] = max(limits['step_timeout_seconds'], runner_timeout + 5)
-                                limits['max_replans'] = 0
-                            runtime = AgentRuntime(planner, model, memory, registry,
-                                                   **limits, **runner_options, context_manager=context_manager)
-                        else:
-                            runtime.rebind(planner, model, registry, context_manager=context_manager)
-                        result = await runtime.run(on_event=on_event)
-                        if key in self._spent_tokens:
-                            self._spent_tokens[key] += _total_tokens(result.usage)
-                        # Retain the result before resource cleanup or durable completion can fail.
-                        self._pending_outcomes[outcome_key] = (TurnStatus(result.status.value), result.content, asdict(result))
-                        if result.status is TaskStatus.BLOCKED:
-                            self._tasks[(key, task.task_id)] = runtime
-                        else:
-                            self._forget_task(key, task.task_id)
-            except StaleExecutionError:
-                # This interaction no longer owns task state. Finish only its
-                # own durable turn; do not fail or remove the newer execution.
-                self._pending_outcomes[outcome_key] = (TurnStatus.FAILED,
-                    'Execution superseded; stale output was not committed', None)
-                await _durable(self._publish_outcome(conversation, outcome_key))
-                raise
-            except (Exception, asyncio.CancelledError) as exc:
-                if outcome_key not in self._pending_outcomes:
-                    status = TurnStatus.CANCELLED if isinstance(exc, asyncio.CancelledError) else TurnStatus.FAILED
-                    content = ('Request cancelled; tool side effects may already exist' if status is TurnStatus.CANCELLED
-                               else f'Request failed: {type(exc).__name__}')
-                    if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
-                        task.fail_task(content)
-                    self._forget_task(key, task.task_id)
-                    self._pending_outcomes[outcome_key] = (status, content, None)
-                await _durable(self._publish_outcome(conversation, outcome_key))
-                raise
+            conversation = ConversationMemory(label, compressor=self._conversation_compressor, archive=archive,
+                                              background_compression=archive is not None)
+            await conversation.restore()
+            self._conversations[key] = conversation
+            # Reconstruct old backlog on session load, including restart.
+            self._notify_summary(key)
+        return conversation
+
+    async def _replay(self, conversation, turn_id, outcome_key, question, resume_task_id, question_id):
+        """The archived result of a repeated request, or None for a new turn; raises on a conflict."""
+        try:
+            existing = await conversation.read_turn(turn_id)
+        except KeyError:
+            existing = None
+        if existing is None:
+            return None
+        if (existing.messages[0].content != question or existing.status is None
+                or (resume_task_id is None) != (existing.question_id is None)
+                or (resume_task_id is not None and existing.task_id != resume_task_id)
+                or (question_id is not None and existing.question_id != question_id)):
+            raise ValueError('request ID conflict')
+        if outcome_key in self._pending_outcomes:
             await _durable(self._publish_outcome(conversation, outcome_key))
-            return result
+            existing = await conversation.read_turn(turn_id)
+        payload = await conversation.turn_result(turn_id)
+        if payload is not None:
+            restored = _restore_result(payload)
+            if (restored.task_id != existing.task_id or restored.status.value != existing.status.value
+                    or restored.content != existing.messages[-1].content):
+                raise ValueError('archived result conflicts with turn')
+            return restored
+        raise RuntimeError(f'request already {existing.status.value}; automatic execution replay is unsafe')
+
+    def _open_task(self, key, user_id, session_id, question, resume_task_id, question_id,
+                   execution_mode, single_runner, allow_writes, use_memory, workspace):
+        """The blocked task to resume (and its question) or a new task, with its run options."""
+        runtime = None
+        if resume_task_id is not None:
+            runtime = self._tasks.get((key, resume_task_id))
+            if runtime is None or runtime.memory.task_state.status is not TaskStatus.BLOCKED:
+                raise ValueError('No resumable task in this user/session; restart restores history, not live tasks')
+            task = runtime.memory.task_state
+            questions = [q for q in task.scratchpad.open_questions
+                         if q.goal_revision == task.goal_revision and q.blocking and q.resolved_at is None]
+            if question_id is None:
+                if len(questions) != 1:
+                    raise ValueError('question_id is required when there is not exactly one blocking question')
+                question_id = questions[0].question_id
+            if not any(q.question_id == question_id for q in questions):
+                raise ValueError('question_id is not an unresolved blocking question of this task')
+            memory = runtime.memory
+            options = self._task_options.get((key, resume_task_id))
+        else:
+            memory = WorkingMemory(TaskState(user_id or session_id, question))
+            options = None
+        if options is None:
+            options = {'mode': execution_mode or self._execution_mode,
+                       'runner': single_runner or self._single_runner,
+                       'write': True if allow_writes is None else allow_writes,
+                       'memory': (self._longterm_memory is not None) if use_memory is None else use_memory}
+            if self._workspace_servers is not None:
+                options['workspace'] = workspace       # None: the startup directory and its servers
+        return runtime, memory, options, question_id
+
+    async def _publish_input(self, conversation, turn, turn_id, outcome_key):
+        """Persist the original input; a failure after publication still settles its turn."""
+        try:
+            await _durable(conversation.add(turn))
+        except asyncio.CancelledError:
+            try:
+                await conversation.read_turn(turn_id)
+            except KeyError:
+                raise
+            self._pending_outcomes[outcome_key] = (TurnStatus.CANCELLED, 'Request cancelled before execution', None)
+            await _durable(self._publish_outcome(conversation, outcome_key))
+            raise
+        except Exception as exc:
+            # Publication may have succeeded before a cache reload failed.
+            # Preserve that accepted input, but never start external work.
+            try:
+                await conversation.read_turn(turn_id)
+            except KeyError:
+                pass
+            else:
+                self._pending_outcomes[outcome_key] = (TurnStatus.FAILED, f'Input persistence failed: {type(exc).__name__}', None)
+                await _durable(self._publish_outcome(conversation, outcome_key))
+            raise
+
+    async def _prepare_task(self, conversation, key, user_id, question, task, runtime, question_id,
+                            attachments, options):
+        """The task's context manager, with the answer, attachments, workspace note, history and recall pinned."""
+        context_manager = ContextManager(
+            window_tokens=config.agent_model_window_tokens, output_tokens=config.context_output_tokens,
+            safety_tokens=config.context_safety_tokens, archive=conversation.archive,
+        )
+        if runtime is not None:
+            task.resolve_question(question_id, question)
+        if attachments:
+            task.pin_content(await self._attachment_note(conversation, attachments), 'attachments')
+        current = options.get('workspace') or self._default_workspace
+        previous = self._session_workspaces.get(key)
+        if runtime is None and previous is not None and previous != current:
+            task.pin_content(WORKSPACE_CHANGED_NOTE, 'workspace_note')
+        if runtime is None and current:
+            self._session_workspaces[key] = current
+        if runtime is None:
+            history = await context_manager.prepare_conversation(conversation, task.active_goal)
+            task.pin_content(history, 'conversation_memory')
+            if self._longterm_memory is not None and options['memory']:
+                try:
+                    async with asyncio.timeout(self._longterm_timeout_seconds):
+                        hits = await self._longterm_memory.recall(
+                            user_id=user_id, query=question, limit=self._longterm_recall_limit)
+                    payload = context_manager.longterm_context(
+                        hits=hits, user_id=user_id, token_budget=config.longterm_context_tokens)
+                    if json.loads(payload)['entries']:
+                        task.pin_content(payload, 'longterm_memory')
+                except Exception as exc:
+                    logger.warning('Long-term recall unavailable: %s', type(exc).__name__)
+        return context_manager
+
+    async def _execute(self, conversation, key, user_id, session_id, question, hooks, on_event, outcome_key,
+                       task, memory, runtime, options, context_manager):
+        """Open the models and tools, run the task through the assembler and record its outcome."""
+        cache_key = self._prompt_cache_key(self._archive_label(user_id, session_id))
+        run_hooks, audit = await self._run_hooks(key, conversation, hooks)
+        async with self._models(cache_key, run_hooks) as (planner_model, model):
+            planner_model = self._run_assembler.prepare_planner_model(planner_model, model, context_manager)
+            async with open_tool_registry(
+                memory, mcp_servers=self._servers_for(options), conversation=conversation,
+                knowledge_search=self._knowledge_search, include_knowledge=self._include_knowledge,
+                local_tools=(ContextArchiveTool(conversation.archive, context_manager.tool_result_chars),)
+                            if conversation.archive else (),
+                context_manager=context_manager,
+            ) as registry:
+                runtime, result = await self._run_assembler.run(
+                    key=key, task=task, question=question, options=options, runtime=runtime,
+                    planner_model=planner_model, model=model, memory=memory, registry=registry,
+                    context_manager=context_manager, audit=audit, on_event=on_event,
+                    runtime_factory=AgentRuntime,
+                )
+                if key in self._spent_tokens:
+                    self._spent_tokens[key] += _total_tokens(result.usage)
+                # Retain the result before resource cleanup or durable completion can fail.
+                self._pending_outcomes[outcome_key] = (TurnStatus(result.status.value), result.content, asdict(result))
+                if result.status is TaskStatus.BLOCKED:
+                    self._tasks[(key, task.task_id)] = runtime
+                else:
+                    self._forget_task(key, task.task_id)
+        return result
+
+    async def _settle_stale(self, conversation, outcome_key):
+        # This interaction no longer owns task state. Finish only its
+        # own durable turn; do not fail or remove the newer execution.
+        self._pending_outcomes[outcome_key] = (TurnStatus.FAILED,
+            'Execution superseded; stale output was not committed', None)
+        await _durable(self._publish_outcome(conversation, outcome_key))
+
+    async def _settle_failure(self, conversation, outcome_key, key, task, exc):
+        if outcome_key not in self._pending_outcomes:
+            status = TurnStatus.CANCELLED if isinstance(exc, asyncio.CancelledError) else TurnStatus.FAILED
+            content = ('Request cancelled; tool side effects may already exist' if status is TurnStatus.CANCELLED
+                       else f'Request failed: {type(exc).__name__}')
+            if task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                task.fail_task(content)
+            self._forget_task(key, task.task_id)
+            self._pending_outcomes[outcome_key] = (status, content, None)
+        await _durable(self._publish_outcome(conversation, outcome_key))
 
     def _archive_root(self, user_id: str | None) -> Path:
         root = Path(self._memory_directory)
@@ -763,17 +752,6 @@ class RagAgentService:
                            'how_to_read': 'The user attached these text files to this message. Read them '
                                           'with read_context_artifact(ref), in pieces when long.'},
                           ensure_ascii=False)
-
-    async def _choose_route(self, question, model, mode, team_options):
-        """single/team are the user's choice; auto applies host rules, then one model call."""
-        from app.agent.route_selection import ModeChoice, choose_mode, log_choice
-        if mode != 'auto':
-            choice = ModeChoice(mode, 'user', mode)
-            log_choice(choice)
-            return choice
-        from app.agent.hooks import model_purpose, trace_scope
-        with model_purpose('route'), trace_scope('route'):     # before the task span, no parent (D-073)
-            return await choose_mode(question, team_options, model)
 
     async def _publish_outcome(self, conversation, outcome_key):
         status, content, payload = self._pending_outcomes[outcome_key]
