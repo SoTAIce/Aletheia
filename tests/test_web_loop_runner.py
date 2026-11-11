@@ -13,7 +13,6 @@ import httpx
 import pytest
 
 from app.agent.agent_loop import ASK_USER, LoopPlanner
-from app.agent.runner_registry import default_runner_registry
 from app.agent.runtime import AgentRunResult
 from app.agent.step_models import ModelTurn, ToolCall, ToolMessage
 from app.api.app import create_app
@@ -103,18 +102,6 @@ async def test_resume_retains_loop_choice_and_completed_tool_messages():
     assert json.loads(replies[-1].content)['content'] == 'Paris'
 
 
-async def test_custom_registry_only_offers_plan_and_rejects_loop_before_execution():
-    service, planner, model = make_service(runner_registry=default_runner_registry())
-    assert service.run_options()['runners'] == ['plan']
-    assert service.run_options()['default_runner'] == 'plan'
-    async with service:
-        with pytest.raises(ValueError, match='single_runner'):
-            await service.query_result('Answer', 's', single_runner='loop')
-        assert await service.list_sessions() == []
-    model.generate.assert_not_called()
-    planner.generate.assert_not_called()
-
-
 async def test_health_exposes_runner_choices_and_configured_default():
     service, _, _ = make_service(single_runner='loop')
     async with web_service(service) as (client, _):
@@ -122,8 +109,8 @@ async def test_health_exposes_runner_choices_and_configured_default():
     assert options['runners'] == ['plan', 'loop'] and options['default_runner'] == 'loop'
 
 
-async def test_resume_ignores_new_runner_even_when_custom_registry_only_accepts_plan():
-    service, _, _ = make_service(runner_registry=default_runner_registry(), turns=[
+async def test_plan_resume_ignores_new_loop_choice():
+    service, _, _ = make_service(turns=[
         ModelTurn(json.dumps({'status': 'blocked', 'content': 'Need answer', 'reason': 'Which?'})),
         ModelTurn(json.dumps({'status': 'succeeded', 'content': 'done', 'reason': None})),
     ])
@@ -157,7 +144,7 @@ async def test_auto_that_routes_single_honours_the_loop_choice():
 
 
 async def test_explicit_team_does_not_use_loop_even_if_runner_choice_is_loop(monkeypatch):
-    from app.agent.team_v2 import SingleStepPlanner
+    from app.agent.agent_loop import TeamPlanner
     from app.services import rag_agent_service as module
     seen = []
 
@@ -172,8 +159,12 @@ async def test_explicit_team_does_not_use_loop_even_if_runner_choice_is_loop(mon
         result = await service.query_result('Review', 's', single_runner='loop')
     assert result.status is TaskStatus.COMPLETED
     planner, options = seen[0]
-    assert isinstance(planner, SingleStepPlanner) and not isinstance(planner, LoopPlanner)
-    assert options['runner_requirements'](None).capabilities == {'agent_team'}
+    assert type(planner) is TeamPlanner
+    from app.agent.delegation import DelegatingLoopRunner
+    from app.agent.step_runner import RunnerDependencies, RunnerLimits
+    from app.tools.tool_registry import ToolRegistry
+    assert isinstance(options['runner_factory'](RunnerDependencies(AsyncMock(), ToolRegistry(), None, RunnerLimits())),
+                      DelegatingLoopRunner)
 
 
 async def test_web_loop_choice_reaches_service_and_resume_keeps_original_choice():
@@ -198,17 +189,13 @@ async def test_web_loop_choice_reaches_service_and_resume_keeps_original_choice(
     planner.generate.assert_not_called()
 
 
-@pytest.mark.parametrize('options,custom,code', [
-    ({'runner': 'steps'}, False, 'invalid_input'),
-    ({'runner': 'loop'}, True, 'runner_unavailable'),
-])
-async def test_web_rejects_invalid_or_unavailable_runner(options, custom, code):
-    kwargs = {'runner_registry': default_runner_registry()} if custom else {}
-    service, _, model = make_service(**kwargs)
+@pytest.mark.parametrize('options', [{'runner': 'steps'}, {'runner': ''}])
+async def test_web_rejects_invalid_runner(options):
+    service, _, model = make_service()
     async with web_service(service) as (client, _):
         response = await client.post('/api/sessions/s/messages', json={
             'content': 'Answer', 'request_id': 'r', 'options': options})
-        assert response.status_code == 400 and response.json()['code'] == code
+        assert response.status_code == 400 and response.json()['code'] == 'invalid_input'
     model.generate.assert_not_called()
 
 

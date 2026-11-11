@@ -1516,6 +1516,20 @@
         "Bench: team code tasks not below 6/7 and total not below 7/11 against the baseline in plan 10.1."
       ],
       "evidence": "Implemented by Codex, reviewed by Claude; 45 new tests; init.ps1 PASS 1851 passed, 16 skipped. Live (user '跑评测'): team loop 9/11 (code 6/7 as baseline, QA 3/4 after the gate fix), 92 calls, 1,996,491 tokens, 763 s (output/bench-tune-team-loop-3a.json); single loop 10/11, 26 calls (output/bench-tune-loop-3a.json); both missed config_merge_qa top_keys. Meets the 3b criterion. Not committed."
+    },
+    {
+      "id": "stage3-cleanup-001",
+      "name": "Stage 3b: remove team_v2.py, the runner registry and routing; the runtime takes a runner factory",
+      "description": "docs/stage3_team_delegate_plan.md 3b, D-075. delegation.py stands alone without acceptance tests; LoopPlanner/TeamPlanner in agent_loop.py; AgentRuntime(runner_factory=...); runtime._BoundRunner keeps the stale-binding and cancellation guards; --team-impl and --team-acceptance removed. User files untouched; StepRoutingError kept for step_executor.py.",
+      "status": "done",
+      "dependencies": [
+        "stage3-team-loop-001"
+      ],
+      "acceptance": [
+        "Team prompts identical to 3a; init.ps1 passes.",
+        "Bench team and single loop tune not below 3a."
+      ],
+      "evidence": "Codex until its quota ran out, finished and reviewed by Claude; tests migrated per plan 9.2; init.ps1 PASS 1807 passed, 16 skipped. Live (user '跑评测'): team tune 11/11, 78 calls, 1,837,245 tokens (output/bench-tune-team-3b.json); single loop 10/11, 28 calls (output/bench-tune-loop-3b.json). Not committed."
     }
   ],
   "cleanup_2026_11_04": {

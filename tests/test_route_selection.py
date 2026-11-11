@@ -9,7 +9,8 @@ import pytest
 from app.agent.route_selection import ModeChoice, allowed_modes, choose_mode
 from app.agent.runtime import AgentRunResult
 from app.agent.step_models import ModelTurn, ToolCall
-from app.agent.team_v2 import READ_TOOLS, DelegationOptions, SingleStepPlanner
+from app.agent.delegation import READ_TOOLS, DelegationOptions
+from app.agent.agent_loop import TeamPlanner
 from app.models.taskstate import TaskStatus
 
 SANDBOX = DelegationOptions(allowed_tools=READ_TOOLS | {'write_file', 'run_tests', 'run_python'},
@@ -128,9 +129,9 @@ def test_bench_passes_team_flags_to_auto_and_reads_the_decision(monkeypatch):
                         SimpleNamespace(stdout='x\n\nStatus: failed; executions: 1; replans: 0\n',
                                         stderr='noise\n' + decision + '\n'))
     task = next(t for t in run_bench.load_tasks(['all']) if t['id'] == 'parse_duration')
-    row = run_bench.run_one(task, 'auto', 1, 5, team_timeout=200, team_acceptance=True)
+    row = run_bench.run_one(task, 'auto', 1, 5, team_timeout=200)
     cmd, timeout = seen[0]
-    assert cmd[cmd.index('--execution-mode') + 1] == 'auto' and '--team-acceptance' in cmd
+    assert cmd[cmd.index('--execution-mode') + 1] == 'auto'
     assert cmd[cmd.index('--team-timeout') + 1] == '200' and timeout == 500
     assert row['route'] == {'mode': 'team', 'source': 'model', 'rule': 'r'}
     with pytest.raises(SystemExit):
@@ -165,10 +166,12 @@ async def test_auto_service_routes_each_task_and_binds_the_chosen_runner(monkeyp
         await service.query_result('implement parse_duration with tests', 's')
         await service.query_result('what does parse_duration do?', 's')
     team, single = FakeRuntime.created
-    assert isinstance(team.planner, SingleStepPlanner) and not isinstance(single.planner, SingleStepPlanner)
-    assert [d.runner_id for d in team.options['runner_registry'].definitions()] == ['tool_calling', 'agent_team']
-    assert team.options['runner_requirements'](None).capabilities == {'agent_team'}
-    assert single.options['runner_registry'] is None and single.options['runner_requirements'] is None
+    assert isinstance(team.planner, TeamPlanner) and not isinstance(single.planner, TeamPlanner)
+    from app.agent.step_runner import RunnerDependencies, RunnerLimits
+    from app.tools.tool_registry import ToolRegistry
+    runner = team.options['runner_factory'](RunnerDependencies(model, ToolRegistry(), None, RunnerLimits()))
+    assert runner.runner_id == 'agent_team'
+    assert 'runner_factory' not in single.options
     assert service._routes == {}                                     # finished tasks forget their route
 
 
@@ -176,7 +179,7 @@ async def test_auto_without_team_options_never_asks_the_model(monkeypatch):
     service = _service(monkeypatch, Model(), execution_mode='auto')
     async with service:
         await service.query_result('implement it', 's')
-    assert not isinstance(FakeRuntime.created[0].planner, SingleStepPlanner)
+    assert not isinstance(FakeRuntime.created[0].planner, TeamPlanner)
 
 
 async def test_a_blocked_task_keeps_its_route_for_the_resume(monkeypatch):
@@ -193,15 +196,12 @@ async def test_fixed_modes_keep_their_runner_and_log_a_user_decision(monkeypatch
     service = _service(monkeypatch, Model(), execution_mode='team', team_options=SANDBOX)
     async with service:
         await service.query_result('anything', 's')
-    assert isinstance(FakeRuntime.created[0].planner, SingleStepPlanner)
+    assert isinstance(FakeRuntime.created[0].planner, TeamPlanner)
     assert '"source": "user", "rule": "team"' in caplog.text
 
 
-def test_auto_rejects_a_custom_runner_registry():
-    from app.agent.runner_registry import default_runner_registry
+def test_service_rejects_invalid_execution_mode():
     from app.services.rag_agent_service import RagAgentService
-    with pytest.raises(ValueError, match='register_delegating_team_runner'):
-        RagAgentService(execution_mode='auto', runner_registry=default_runner_registry(), mcp_servers=())
     with pytest.raises(ValueError, match='single, team or auto'):
         RagAgentService(execution_mode='parallel', mcp_servers=())
 

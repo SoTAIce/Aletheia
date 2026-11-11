@@ -8,7 +8,7 @@
 2. 团队模式只剩 V2（2026-11-05 删除 V1，决策 D-025）：负责人委派给全新上下文的执行者，宿主判定完成。在 parse_duration、fix_inventory 上严格交付好于普通模式，但样本少，见第 7 节。
 3. ConversationMemory、WorkingMemory、长期记忆和 ContextManager 各有职责；不要再建一套重复 Memory 框架。
 4. 历史原文可恢复；运行中任务只能在同一服务实例暂停恢复，不能跨进程恢复执行。
-5. 用户刚清理了 tests、验证脚本与临时产物。1093 passed/2 skipped 是清理前的历史回归；当前可直接运行的是 init.ps1（静态/入口 + `tests/` 下的确定性 pytest）；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-10 为 1806 项通过、16 项跳过；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，历史开启记录为 1231 项通过，本轮未运行）。
+5. 用户刚清理了 tests、验证脚本与临时产物。1093 passed/2 skipped 是清理前的历史回归；当前可直接运行的是 init.ps1（静态/入口 + `tests/` 下的确定性 pytest）；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-10 为 1807 项通过、16 项跳过；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，历史开启记录为 1231 项通过，本轮未运行）。
 6. 当前工作区有用户未提交源码与删除项，不能把它当成干净的冻结提交，也不能擅自 reset、commit 或 push。
 
 ## 2. 仓库状态与启动
@@ -66,10 +66,10 @@ CLI / 调用方
   -> Planner 提议 -> Executor 校验并安装
   -> AgentRuntime 取下一步 / Replan / 完成或阻塞
   -> StepExecutor 开始、校验、提交 Step
-  -> RoutingStepRunner -> RunnerRegistry + RoutingPolicy
+  -> 服务按模式传入一个执行器工厂（第 3 阶段起没有注册表和路由，D-075）
        -> AgentLoopRunner：单一循环，经 LoopPlanner 固定一步进入（命令行、网页、评测的普通模式默认，D-072）
-       -> ToolCallingStepRunner：按计划逐步执行的单 Agent 工具循环（`--single-runner plan`）
-       -> DelegatingTeamRunner（V2）：负责人委派给全新上下文的执行者，宿主判定完成
+       -> ToolCallingStepRunner：按计划逐步执行的单 Agent 工具循环（`--single-runner plan`，运行时默认工厂）
+       -> DelegatingLoopRunner：团队，负责人是单一循环，`delegate` 是宿主工具，成员是子循环，宿主判定完成
   -> StepRunOutput -> 公共提交路径 -> Task Completion / Turn outcome
 ```
 
@@ -80,7 +80,7 @@ CLI / 调用方
 | 规划 | `app/agent/planner.py`、`planning_model.py`、`executor.py` | LLM 提议结构化计划；可信版本信息由程序绑定；Executor 决定是否安装 |
 | 调度 | `app/agent/runtime.py` | 自动推进剩余步骤，处理成功/失败/阻塞、有限执行/Replan；不承担具体工具循环 |
 | 单步提交 | `app/agent/step_executor.py`、`step_models.py`、`step_runner.py` | 执行边界、失效结果拒绝、统一输出和异常类别 |
-| 路由 | `app/agent/runner_registry.py`、`runner_router.py`、`routing_step_runner.py` | 注册/工厂注入、独立可信能力要求、确定性动态选择；不是 LLM 分类器 |
+| 执行器绑定 | `app/agent/runtime.py`（`_BoundRunner`）、`step_runner.py`（`RunnerDependencies`、`RunnerFactory`） | 运行时用工厂造执行器；重新绑定后旧执行器的迟到结果作废，取消请求后的结果不提交（原路由执行器的两条保护，D-075） |
 | 单一循环 | `app/agent/agent_loop.py` | 普通模式默认执行方式（D-062～D-064、D-072）：整任务一个循环，纯文本即最终答案，`todo`/`ask_user` 控制工具，不重新规划，阻塞恢复只在内存里 |
 | 工作目录 | `app/services/workspace.py`、`app/tools/tool_loader.workspace_servers` | 按会话选择工作目录（D-074）：检查拒绝名单和禁止目录，系统盘要确认（服务端校验）；每次运行按目录启动文件和沙盒服务，禁止目录用 `--deny` 传给它们 |
 | 追踪 | `app/agent/hooks.py`（`trace_scope`）、`trace_view.py`、`trace.py` | 事件带区间编号和父子关系（审计第 2 版，D-073）；`build_trace` 拼成树，命令行 `python -m app.agent.trace`、网页“执行记录”面板查看；不记原文 |
@@ -89,7 +89,7 @@ CLI / 调用方
 
 WorkingMemory 的 goal_revision、plan_revision、state_version 与 Resources.context_version 有不同语义。Planner 旧快照、旧执行 token、旧 rebind 结果不能覆盖新状态。不要绕过 Executor/WorkingMemory 直接安装或提交。
 
-成功输出才完成 Step；失败说明不等于完成。格式修复局限当前尝试且不带业务工具，不重复执行已有工具。工具/业务错误可触发有限 Replan；格式耗尽、provider/配置/路由错误与 Team terminal 错误不应盲重跑。具体分支以当前 runtime/step_runner 源码为准。
+成功输出才完成 Step；失败说明不等于完成。格式修复局限当前尝试且不带业务工具，不重复执行已有工具。工具/业务错误可触发有限 Replan；格式耗尽、provider/配置错误与 Team terminal 错误不应盲重跑。具体分支以当前 runtime/step_runner 源码为准。
 
 ## 4. 工具、MCP 与 RAG
 
@@ -156,15 +156,15 @@ BLOCKED 只结束这次交互。保持同一个服务实例，使用 `resume_tas
 
 已通过受控 stand-in 复现的跨库边界：数据库较新更新之后，较旧索引写可能晚到；forget 后也可能出现迟到旧向量。CAS 不排序后续 Milvus 写。Retriever 回查权威行可挡住孤儿内容返回，但不能保证召回正确或索引同步。无 outbox/跨库事务或通用补偿；本轮不修业务代码。
 
-## 7. Agent Team（V2；V1 已于 2026-11-05 删除）
+## 7. Agent Team（第 3 阶段起为单一循环里的委派工具，D-075）
 
-`app/agent/team_v2.py` 注册 runner `agent_team`。团队模式下服务用 `SingleStepPlanner` 只产生一步计划，整件任务交给团队。负责人只能调用 `delegate`（可选 `review`；开启独立验收时还有 `verify`），每次委派都新建一个普通模式执行器（`ToolCallingStepRunner`），只拿到授予的工具，上下文是全新的。
+`app/agent/delegation.py` 的 `DelegatingLoopRunner`（执行器编号仍是 `agent_team`）。团队模式下服务用 `TeamPlanner`（`agent_loop.py`）只产生一步计划，整件任务交给团队。负责人是一个 `AgentLoopRunner`，没有工作区工具，只有宿主工具 `delegate`（可选 `review`）和 `todo`，不能向用户提问；每次委派都新建一个子循环成员，只拿到授予的工具，上下文是全新的，回纯文本报告；审查员用 `review_decision` 给结论。
 
-完成由宿主判定：开启沙盒时要求最后一次写入之后有一次通过的 `run_tests`/`run_python`；工具结果由宿主自己记录，执行者最终报告出错也不丢证据（D-023）。独立验收默认关闭，`--team-acceptance` 开启（D-022）。执行者上下文按两档压缩，防止超窗（`model_view.py`）。
+完成由宿主判定：开启沙盒时，**本次运行写过文件**才要求最后一次写入之后有一次通过的 `run_tests`/`run_python`（`builtin_hooks.PassingRunGate`，挂在新的 `before_finish` 拦截事件上）；写过文件且条件满足时宿主直接结束，答案取该成员报告；没写文件时由负责人回答。工具结果由宿主自己记录，成员出错也不丢证据（D-023）。独立验收测试（`--team-acceptance`、`verify`）已删除。成员上下文按两档压缩，防止超窗（`model_view.py`）。
 
-默认上限（`DelegationOptions`）：6 次委派、2 次验收、负责人 16 轮、执行者 12 轮/24 次工具调用、180 秒。`app/agent/team/` 只剩 `models.py`（`TeamError`、`WORKER_ONLY_TOOLS`、通过门槛函数）和 `diagnostics.py`（安全异常类型链）。
+默认上限（`DelegationOptions`）：6 次委派、负责人 16 轮、成员 12 轮/24 次工具调用、180 秒。评测见 [第 3 阶段方案](stage3_team_delegate_plan.md) 第 10 节。`app/agent/team/` 只剩 `models.py`（`TeamError`、`WORKER_ONLY_TOOLS`、通过门槛函数）和 `diagnostics.py`（安全异常类型链）。
 
-真实评测和已知短板见 [V2 实现记录](harness/team-v2-2026-11-04.md)；V1 的设计与证据见历史报告和提交 `e20a6e1` 及更早版本。
+旧 V2 实现（`team_v2.py`）的真实评测和短板见 [V2 实现记录](harness/team-v2-2026-11-04.md)，代码见提交 `cefcd2d` 及更早版本；V1 见提交 `e20a6e1` 及更早版本。
 
 ## 8. 证据矩阵：不要把机制成功当成质量优势
 

@@ -17,13 +17,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1
 ```
 
 做管理文件、JSON、Python compile、CLI 加载检查，并运行确定性 pytest 套件（basetemp 放在 TEMP）；不执行模型、MCP、数据库或完整任务。启动时再运行 [基线核对](docs/harness/baseline.md)。
-原 tests/ 和验证脚本曾按用户要求删除；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-10 为 1806 项通过、16 项跳过；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，历史开启记录为 1231 项通过，本轮未运行）。历史 1093/2 不是当前回归。后续行为修改须恢复对应测试或在 tests/ 中补充测试；参见 [清理记录](docs/project_cleanup.md)。
+原 tests/ 和验证脚本曾按用户要求删除；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-10 为 1807 项通过、16 项跳过；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，历史开启记录为 1231 项通过，本轮未运行）。历史 1093/2 不是当前回归。后续行为修改须恢复对应测试或在 tests/ 中补充测试；参见 [清理记录](docs/project_cleanup.md)。
 
 ## Global Invariants
 
 - 保留 Plan–Execute–Replan：Planner 提议、Executor 安装、Runtime 调度、StepExecutor 校验并提交；Runner 不直接改权威状态。
-- ToolCallingStepRunner 与 AgentTeamRunner 平级独立；Team 使用独立 Lead、确定性 Coordinator 和轻量 Session，不嵌套 Runtime。
-- Runner 必需能力来自独立可信来源，不由 RouteDecision 自我授权；修改状态语义或冻结路由接口前先说明兼容影响。
+- 团队是单一循环里的 `delegate` 工具；成员是独立上下文的子循环，不嵌套 Runtime；完成由宿主判定（D-075）。
+- 执行方式由宿主选择（`route_selection` 的宿主规则在前，模型只能在规则允许的范围内选），模型不能放宽；修改状态语义或执行器接口（`runner_factory`）前先说明兼容影响。
 - 宿主拥有最终输出契约和验收门；Lead 内部要求、Reviewer 意见及 Member 协议不能覆盖它。
 - 保留取消、超时、rebind、版本校验与预算上限；格式修复不得重放完成的工具；外部副作用不确定时不得自动重试。
 - MCP 连接覆盖执行期，进入/退出须在拥有它的同一 asyncio task；暂停后不能复用已关闭适配器。

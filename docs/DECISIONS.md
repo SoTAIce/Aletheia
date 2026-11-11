@@ -668,3 +668,13 @@
 - 被否方案：网页上的目录浏览器（要开一个列目录的接口，留到以后）；读写目录分开选；启动参数在 C 盘时只警告（用户要求必须确认）；用 `window.confirm`（样式和焦点不可控，改用页面内对话框，默认焦点在“取消”）。
 - 约束：在工作树分支 `exp/workspace-choice` 上实现，用户同意后才并入 `main`。没有改 `planner.py`、`step_executor.py`、`tool_calling_step_runner.py`。没有跑真实模型。
 - 来源：用户 2026-11-09 提出；2026-11-10“可以先做第一项，输出方案”，以及对方案第 9 节的七条回答。
+
+## D-075 2026-11-10 团队改为单一循环里的委派工具；删除执行器注册表与路由
+
+- 决定：按 [第 3 阶段方案](stage3_team_delegate_plan.md) 分两步：3a（`cefcd2d`）新增 `app/agent/delegation.py`，团队负责人由 `AgentLoopRunner` 担任，`delegate`、`review` 是循环里的宿主工具，成员是子循环（只给授权工具、没有 `ask_user`、回纯文本），审查员用 `review_decision` 给结论；3b 删除 `team_v2.py`、`runner_registry.py`、`runner_router.py`、`routing_step_runner.py` 和临时开关 `team_impl`。`AgentRuntime` 改为接收 `runner_factory(deps)`；`RagAgentService`、`AgentRuntime` 去掉 `runner_registry`、`routing_policy`、`runner_requirements` 参数。
+- 完成条件：hooks 新增拦截事件 `before_finish`，`PassingRunGate` 只在本次运行写过文件时要求“最后一次写入后有通过的运行”（基线里旧实现在问答题上误拦，3 题因此失败）；写过文件且条件满足时宿主直接结束，答案取成员报告；没写文件时由负责人回答。改 D-019 中“开沙盒必须有通过的运行”的范围。
+- 原路由执行器的两条保护移到 `runtime._BoundRunner`：重新绑定后旧执行器的迟到结果或失败作废（`StaleExecutionError`）；运行中请求了取消时，结果和声明的失败都不提交。执行器编号（`tool_calling`、`agent_loop`、`agent_team`）不变，步骤事件和追踪里的 `runner` 字段不变；运行结果里不再有路由事件。
+- 删除独立验收测试（`--team-acceptance`、`verify`、验证员，D-020～D-022）：默认关闭、真实评测里验证员常写错测试、2026-11-04 之后无人使用（用户“都按建议”）。
+- `StepRoutingError` 暂留在 `step_runner.py`：只因用户未提交的 `step_executor.py` 还导入它；没有任何代码再抛出它，第 4 阶段随该导入一起删。3b 没有修改用户的 `planner.py`、`step_executor.py`、`tool_calling_step_runner.py`、`README.md`（哈希与基线清单一致）。
+- 证据：基线（旧实现）调参集团队模式 7/11；3a 新实现 9/11（代码类同为 6/7）、单一循环 10/11（方案 10.1、10.2）。3b 只删除和搬移，团队提示文字与 3a 逐字相同（由脚本对比确认）。
+- 来源：用户 2026-11-10“先进行架构第三阶段方案确定吧”“都按建议”“跑评测”“提交并做 3b”。3a 由 Codex 实现；3b 由 Codex 做到一半时额度用完，余下由 Claude 完成。

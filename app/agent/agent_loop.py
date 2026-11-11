@@ -14,13 +14,11 @@ the answer in resolved_questions.
 
 import json
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from textwrap import dedent
 
 from app.agent.model_view import CompactingManager
-from app.agent.runner_registry import RunnerDefinition
 from app.agent.run_meter import current_meter
-from app.agent.runner_router import RunnerRequirements
 from app.agent.step_models import (
     ModelTurn, StepExecutionContext, StepOutcome, StepRunOutput, SystemMessage, ToolCall, ToolDefinition,
     ToolMessage, ToolsShownOnly, UserMessage, TOOL_LIST_SOURCE,
@@ -28,7 +26,7 @@ from app.agent.step_models import (
 from app.agent.step_runner import (StepFormatError, StepModelError, StepRunError, StepRunnerContractError,
                                    StepTimeoutError, StepToolError, ToolRoundLimitError)
 from app.agent.team.diagnostics import failure_details, failure_types
-from app.agent.team_v2 import SingleStepPlanner
+from app.agent.planner import Planner, PlannerContext, PlanProposal
 from app.agent.tool_calling_model import (ModelTimeoutError, ModelToolArgumentsError, ToolCallingModelError,
                                           tool_argument_repair_instruction)
 from app.tools.tool_registry import ToolRegistry
@@ -192,6 +190,8 @@ class HostTool:
 
 class AgentLoopRunner:
     """One loop over the whole task: model and tools until a plain-text answer."""
+
+    runner_id = RUNNER_ID
 
     def __init__(self, model, tool_registry: ToolRegistry, options: LoopOptions | None = None,
                  context_manager=None, resume_store: LoopResumeStore | None = None, *,
@@ -427,24 +427,35 @@ class AgentLoopRunner:
         return StepRunOutput(content=content, observation=None, source_refs=tuple(refs),
                              tool_calls=tuple(calls), tool_results=tuple(results), outcome=outcome, reason=reason)
 
-
-def loop_requirements(context) -> RunnerRequirements:
-    return RunnerRequirements(frozenset({RUNNER_ID}))
-
-
-def register_agent_loop_runner(registry, *, options: LoopOptions | None = None):
-    """Synchronous binding: the loop uses the runtime's model, watched tools and context manager.
-    The registry lives as long as the task's runtime, so its resume store outlives each rebinding."""
-    store = LoopResumeStore()
-
-    def bind(deps):
-        return AgentLoopRunner(deps.model, deps.tool_registry, options, deps.context_manager, store)
-    registry.register(RunnerDefinition(RUNNER_ID, 'One agent loop over the whole task',
-                                       frozenset({RUNNER_ID})), bind)
-
-
-class LoopPlanner(SingleStepPlanner):
+class LoopPlanner(Planner):
     """A fixed one-step plan, no planning model call: the loop reads active_goal itself."""
 
     STEP = 'Deliver the active goal in one agent loop.'
     REASON = 'agent loop single step'
+
+    def _proposal(self, context):
+        if not isinstance(context, PlannerContext):
+            raise TypeError('context must be a PlannerContext')
+        if not isinstance(context.active_goal, str) or not context.active_goal.strip():
+            raise ValueError('active_goal must be a non-empty string')
+        return PlanProposal(steps=(self.STEP,), goal_revision=context.goal_revision,
+                            base_state_version=context.state_version, reason=self.REASON,
+                            created_at=datetime.now(timezone.utc), task_id=context.task_id,
+                            base_resource_context_version=context.resource_context_version)
+
+    async def plan(self, context):
+        if isinstance(context, PlannerContext) and (context.current_plan or context.plan_revision > 0):
+            raise ValueError('A plan already exists or existed; use replan()')
+        return self._proposal(context)
+
+    async def replan(self, context):
+        if isinstance(context, PlannerContext) and context.plan_revision == 0:
+            raise ValueError('No plan has been installed; use plan()')
+        return self._proposal(context)
+
+
+class TeamPlanner(LoopPlanner):
+    """The team reads active_goal through the same fixed-plan protocol."""
+
+    STEP = 'Deliver the active goal as one team task: the Team Lead delegates and verifies the work.'
+    REASON = 'team v2 single step'

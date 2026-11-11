@@ -255,18 +255,18 @@ async def test_team_member_calls_hang_under_the_member_and_the_lead_under_the_st
     from test_sandbox_step1 import _context
     from test_sandbox_step3 import FakeTool, call
     from test_tool_argument_repair import Scripted
-    from app.agent.team_v2 import DelegatingTeamRunner, DelegationOptions
+    from app.agent.delegation import DelegatingLoopRunner, DelegationOptions
     from app.tools.tool_registry import ToolRegistry
     model = Scripted(call('l1', 'delegate', task='read notes.txt and summarize'),
                      call('w1', 'read_file', path='notes.txt'),
-                     ModelTurn(content=json.dumps({'status': 'succeeded', 'content': 'x', 'reason': None})),
+                     ModelTurn(content='x'),
                      ModelTurn(content='The notes say x = 1.'))
     registry = ToolRegistry()
     registry.register(HookedTool(FakeTool('read_file', 'x = 1')))
     recorder = Recorder()
     with using_hooks(HookSet([recorder])), metering(RunMeter()):
         with root_span(), trace_scope('step', index=1):
-            await DelegatingTeamRunner(HookedModel(model), registry, DelegationOptions()).run(_context())
+            await DelegatingLoopRunner(HookedModel(model), registry, DelegationOptions()).run(_context())
     trace = build_trace(recorder.events)
     task, = trace['spans']
     step, = task['children']

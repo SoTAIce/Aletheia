@@ -11,7 +11,7 @@ import pytest
 
 from app.agent.__main__ import team_options_for
 from app.agent.team.models import WORKER_ONLY_TOOLS
-from app.agent.team_v2 import READ_TOOLS
+from app.agent.delegation import READ_TOOLS
 from app.models.taskstate import TaskState
 from app.models.working_memory import WorkingMemory
 from app.agent.step_executor import StepExecutor

@@ -144,6 +144,14 @@
 - 审查修改：不能提问时的提示原写“把缺的信息报告给负责人”，对负责人不成立，改为“在最终答案里说明缺什么”，补 1 项测试。
 - 验证：新增测试 45 项（`tests/test_delegation.py`、`tests/test_agent_loop.py`、`tests/test_hooks.py`）；init.ps1 1851 项通过、16 项跳过。没有真实模型运行。
 
+## 9.2 3b 实现记录（2026-11-10）
+
+- Codex 做到一半时额度用完（旧模块和临时开关已删，测试未迁完），余下由 Claude 完成。
+- 删除：`team_v2.py`、`runner_registry.py`、`runner_router.py`、`routing_step_runner.py`；`delegation.py` 自立（不再继承旧实现，去掉独立验收测试）；`SingleStepPlanner` 并入 `agent_loop.py` 的 `LoopPlanner`，团队用子类 `TeamPlanner`；`RunnerDependencies`、`RunnerLimits`、`RunnerFactory` 移到 `step_runner.py`；命令行和评测去掉 `--team-impl`、`--team-acceptance` 和旧团队日志那几栏。
+- **与方案的差别**：Codex 原把取消保护搬进 `step_executor.py`、给 `tool_calling_step_runner.py` 加了 `runner_id`，并删除 `StepRoutingError`（要改 `step_executor.py`）。这两个是用户有未提交改动的文件，Claude 全部撤回（四个用户文件与基线清单哈希一致），改为：取消保护和“重新绑定后旧执行器作废”放进 `runtime._BoundRunner`，`runner_id` 缺省由它补成 `tool_calling`，`StepRoutingError` 暂留（D-075）。
+- 测试去向：`tests/agent/test_runner_registry.py`（5 项）、`test_runner_routing.py`（7 项）、`test_runtime_routing.py`（9 项）、`tests/test_team_v2.py`（43 项）、`tests/test_team_trace.py`（5 项）删除。仍然成立的约束迁进 `tests/test_delegation.py`：绑定与重绑、取消与超时不提交、旧目标的迟到结果、限额校验、默认工厂原样输出（来自路由三个文件，约 9 项，另由 Claude 补“重绑后旧绑定作废”“运行中失效的绑定丢弃迟到结果”2 项）；授权、工具缺失不授予、成员全新上下文与返工、中断写入、未知工具与空任务、审查员只读、负责人参数修复、上下文两档压缩、选项校验、命令行选项、规划器不调模型、评测失败识别与静态守卫原因（来自 `test_team_v2.py`）；异常类型链、命令行失败、超时余量与部分文件诊断（来自 `test_team_trace.py`）。随模块删除、不再迁移的：注册表与路由策略本身（能力校验、偏好、注册冻结等）、独立验收测试 8 项、旧负责人 JSON 结束协议 4 项、旧 `Team trace` 日志 3 项、V1 已删一项。新增 `tests/test_stage3_cleanup.py` 守卫（四个模块不存在、无导入、构造参数已删）。
+- 验证：团队提示文字与 3a 逐字相同（脚本在旧提交副本和当前代码里分别导出对比）；三项新测试在去掉失效保护时失败、恢复后通过；init.ps1 1807 项通过、16 项跳过。没有真实模型运行。
+
 ## 10. 评测记录
 
 ### 10.1 第 0 步：团队基线（2026-11-10，`0f92d5c`，旧实现 `DelegatingTeamRunner`）
@@ -195,3 +203,17 @@
 - **判断标准**（10.1）：代码类 6/7，不低于基线 6/7；总数 9/11，不低于 7/11。**达到**，可以进入 3b。问答类多出的 2 题来自完成条件的修正，不能算作新实现本身更好。
 - 调用次数、令牌和用时与旧实现基本持平；`sales_csv_qa` 用了 19 次调用，是新实现里最多的一题。团队模式整体仍比单一循环贵约 4 倍、慢约 4 倍。
 - **`config_merge_qa` 的 `top_keys`**：团队新实现和单一循环这次都错在同一项（顶层键名排序）。单一循环此前 8 份调参集报告里这题都通过。3a 没有改单一循环的提示和消息（不传宿主工具时行为不变，有测试守住），所以更可能是模型这次的波动；要确认，可以单独重跑这一题几次（未授权，未跑）。
+
+### 10.3 3b 评测（2026-11-10，`cefcd2d` 加 3b 未提交改动）
+
+命令：团队同 10.1（3b 已没有 `--team-impl`），报告 `output/bench-tune-team-3b.json`，追踪 `output/traces-team-3b/`；单一循环报告 `output/bench-tune-loop-3b.json`。
+
+| | 3a 团队 | 3b 团队 | 3a 单一循环 | 3b 单一循环 |
+|---|---|---|---|---|
+| 严格通过 | 9/11 | **11/11** | 10/11 | 10/11 |
+| 模型调用 | 92 | 78 | 26 | 28 |
+| 令牌 | 1,996,491 | 1,837,245 | 520,667 | 606,738 |
+| 用时（秒） | 763 | 674 | 199 | 210 |
+
+- 逐题看，3a 与 3b 的差别都在已知会波动的两项上：`config_merge_qa`（`top_keys`）这次团队和单一循环都通过，说明 3a 那次两边同时出错是模型波动；`todo_html` 的纯文本匹配 `enter_key_and_trim` 这次团队通过、单一循环没过，以往两种模式都出现过时过时不过。`sales_csv_qa` 团队调用从 19 次降到 6 次。
+- 3b 只删除和搬移、提示文字不变，评测不低于 3a，**第 3 阶段达到判断标准**。团队模式仍比单一循环贵约 3 倍、慢约 3 倍。

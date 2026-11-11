@@ -13,14 +13,15 @@ import pytest
 from app.agent import route_selection
 from app.agent.runtime import AgentRunResult
 from app.agent.step_models import ModelTurn
-from app.agent.team_v2 import READ_TOOLS, DelegationOptions, SingleStepPlanner
+from app.agent.delegation import READ_TOOLS, DelegationOptions
+from app.agent.agent_loop import TeamPlanner
 from app.api.app import create_app
 from app.models.taskstate import TaskStatus
 from app.services import rag_agent_service as module
 from app.services.rag_agent_service import RagAgentService
 
 SANDBOX = DelegationOptions(allowed_tools=READ_TOOLS | {'write_file', 'run_tests', 'run_python'},
-                            require_passing_run=True, acceptance_tests=True, timeout_seconds=300)
+                            require_passing_run=True, timeout_seconds=300)
 
 
 def outcome(text, status='succeeded', reason=None):
@@ -103,10 +104,10 @@ async def test_a_message_may_pick_the_team_in_a_single_default_service(fake_runt
         await svc.query_result('implement it', 's', execution_mode='team', on_event=events.append)
         await svc.query_result('what is it?', 's')
     team, single = fake_runtime
-    assert isinstance(team.planner, SingleStepPlanner) and not isinstance(single.planner, SingleStepPlanner)
-    assert team.options['runner_requirements'](None).capabilities == {'agent_team'}
+    assert isinstance(team.planner, TeamPlanner) and not isinstance(single.planner, TeamPlanner)
+    assert callable(team.options['runner_factory'])
     assert team.options['step_timeout_seconds'] >= SANDBOX.timeout_seconds + 5   # widened for the team only
-    assert single.options['runner_registry'] is None and single.options['runner_requirements'] is None
+    assert 'runner_factory' not in single.options
     assert single.options['step_timeout_seconds'] < SANDBOX.timeout_seconds
     assert events[0] == {'type': 'route', 'mode': 'team', 'read_only': False,
                          'options': {'mode': 'team', 'runner': 'plan', 'write': True, 'memory': False}}
@@ -116,8 +117,8 @@ async def test_a_message_may_pick_single_in_a_team_default_service(fake_runtime)
     async with service(execution_mode='team', team_options=SANDBOX) as svc:
         await svc.query_result('what is it?', 's', execution_mode='single')
     [single] = fake_runtime
-    assert not isinstance(single.planner, SingleStepPlanner)
-    assert single.options['runner_registry'] is None and single.options['runner_requirements'] is None
+    assert not isinstance(single.planner, TeamPlanner)
+    assert 'runner_factory' not in single.options
 
 
 async def test_writes_off_reuses_the_read_only_path(fake_runtime, read_only_calls):
@@ -134,7 +135,7 @@ async def test_auto_with_writes_off_never_asks_the_model_and_runs_single(fake_ru
     async with service(model=model, execution_mode='auto', team_options=SANDBOX) as svc:
         await svc.query_result('implement it', 's', allow_writes=False)
     model.generate.assert_not_called()                     # the host rule 'read_only' leaves only single
-    assert not isinstance(fake_runtime[0].planner, SingleStepPlanner) and read_only_calls == [True]
+    assert not isinstance(fake_runtime[0].planner, TeamPlanner) and read_only_calls == [True]
 
 
 async def test_auto_with_writes_on_still_asks_the_model(fake_runtime):
@@ -142,23 +143,18 @@ async def test_auto_with_writes_on_still_asks_the_model(fake_runtime):
     model.generate.return_value = route_reply('team')
     async with service(model=model, execution_mode='auto', team_options=SANDBOX) as svc:
         await svc.query_result('implement it', 's')
-    assert isinstance(fake_runtime[0].planner, SingleStepPlanner)
+    assert isinstance(fake_runtime[0].planner, TeamPlanner)
 
 
 async def test_a_team_with_writes_off_gets_read_only_workers(fake_runtime, monkeypatch):
-    seen = []
-    from app.agent import team_v2
-    original = team_v2.register_delegating_team_runner
-
-    def spy(registry, *, options):
-        seen.append(options)
-        return original(registry, options=options)
-    monkeypatch.setattr(team_v2, 'register_delegating_team_runner', spy)
     async with service(team_options=SANDBOX) as svc:
         await svc.query_result('review it', 's', execution_mode='team', allow_writes=False)
-    [options] = seen
+    from app.agent.step_runner import RunnerDependencies, RunnerLimits
+    from app.tools.tool_registry import ToolRegistry
+    runtime = fake_runtime[0]
+    options = runtime.options['runner_factory'](RunnerDependencies(AsyncMock(), ToolRegistry(), None, RunnerLimits())).options
     assert options.allowed_tools == READ_TOOLS
-    assert not options.require_passing_run and not options.acceptance_tests
+    assert not options.require_passing_run
     assert options.timeout_seconds == SANDBOX.timeout_seconds
 
 

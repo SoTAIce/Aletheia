@@ -40,26 +40,24 @@ def cache_line(usage: dict) -> str:
     return f'其中输入命中缓存 {cached}（{share}%）'
 
 
-def team_options_for(execution_mode, write_root, sandbox=False, timeout_seconds=None, acceptance=False):
+def team_options_for(execution_mode, write_root, sandbox=False, timeout_seconds=None):
     """Options for the delegating team (DECISIONS D-019; the only team since D-025); None when no team can run.
 
     auto (D-026) gets team options only with a write root and the sandbox, the one case the routing
     rules leave to the model; otherwise auto always runs single.
 
     Workers stay read-only unless a write root is configured; with the sandbox they may also run code
-    and completion needs a passing run after the last write. acceptance opts in to independent
-    acceptance tests, off by default because weak models write wrong ones (DECISIONS D-022).
+    and completion needs a passing run after the last write.
     """
     if execution_mode not in ('team', 'auto'):
         return None
     if execution_mode == 'auto' and not (write_root and sandbox):
         return None   # the routing rules allow the team only for code delivery in the sandbox (D-026)
-    from app.agent.team_v2 import DelegationOptions, READ_TOOLS
+    from app.agent.delegation import DelegationOptions, READ_TOOLS
     tools = READ_TOOLS | ({'write_file'} if write_root else set()) | (
         {'run_tests', 'run_python'} if sandbox else set())
     defaults = DelegationOptions()
     return DelegationOptions(allowed_tools=frozenset(tools), require_passing_run=bool(sandbox),
-                             acceptance_tests=bool(sandbox and acceptance),
                              timeout_seconds=defaults.timeout_seconds if timeout_seconds is None
                              else timeout_seconds)
 
@@ -289,8 +287,7 @@ async def main(args) -> int:
         # A user id scopes long-term memory; the local CLI user is 'local' unless given.
         args.user_id = getattr(args, 'user_id', None) or ('local' if memory is not None else None)
         team_options = team_options_for(getattr(args, 'execution_mode', 'single'), write_root, sandbox,
-                                        getattr(args, 'team_timeout', None),
-                                        getattr(args, 'team_acceptance', False))
+                                        getattr(args, 'team_timeout', None))
         from app.tools.tool_loader import workspace_servers
         service = await stack.enter_async_context(RagAgentService(
             hooks=trace_hooks(filesystem_root, write_root),
@@ -308,7 +305,7 @@ async def main(args) -> int:
             max_executions=args.max_executions, max_replans=args.max_replans,
             conversation_compressor=compressor,
             execution_mode=getattr(args, 'execution_mode', 'single'),
-            team_options=team_options, team_impl=getattr(args, 'team_impl', 'v2'),
+            team_options=team_options,
             step_timeout_seconds=step_timeout_for(sandbox, team_options),
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
             single_runner=getattr(args, 'single_runner', 'loop'),
@@ -358,11 +355,7 @@ def build_parser():
                         help="How single mode runs: one agent loop (default, D-072), or plan then steps")
     parser.add_argument('--sandbox', action='store_true',
                         help='Let the agent run workspace code/tests in the Docker sandbox (needs --write-root)')
-    parser.add_argument('--team-impl', choices=['v2', 'loop'], default='v2',
-                        help='Team implementation for the stage 3a comparison (default v2)')
     parser.add_argument('--team-timeout', type=float, help='Team time budget in seconds (default 180)')
-    parser.add_argument('--team-acceptance', action='store_true',
-                        help='Team V2 with --sandbox: independent acceptance tests decide completion (D-020/D-022)')
     parser.add_argument("--max-executions", type=int, default=16)
     parser.add_argument("--max-replans", type=int, default=2)
     parser.add_argument('--compress-history', action='store_true',

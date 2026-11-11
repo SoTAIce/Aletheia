@@ -1,11 +1,21 @@
 """Runner contract independent of the execution coordinator."""
+from __future__ import annotations
 
-from typing import Protocol
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Protocol, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from app.agent.tool_calling_model import ToolCallingModel
+    from app.services.context_manager import ContextManager
+    from app.tools.tool_registry import ToolRegistry
 
 from app.agent.step_models import StepExecutionContext, StepRunOutput
 
 
 class StepRunner(Protocol):
+    runner_id: str
+
     async def run(self, context: StepExecutionContext) -> StepRunOutput:
         ...
 
@@ -24,7 +34,9 @@ class StepRunError(RuntimeError):
 
 
 class StepRoutingError(StepRunError):
-    """Runner configuration/selection failed; replanning cannot repair it."""
+    """Kept only because step_executor.py still names it (user-owned file, stage 3b); nothing raises it
+    since the runner registry and routing were removed. Remove it with that import in stage 4."""
+
 
 class ToolRoundLimitError(StepRunError):
     """The tool-calling loop exceeded its allowed number of rounds."""
@@ -58,3 +70,27 @@ class StepTimeoutError(StepModelError):
 
 class StepRunnerContractError(TypeError):
     """Runner data violates its interface contract, not a declared step failure."""
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerLimits:
+    max_tool_rounds: int = 4
+    max_total_tool_calls: int = 8
+
+    def __post_init__(self):
+        for name, value in [('max_tool_rounds', self.max_tool_rounds), ('max_total_tool_calls', self.max_total_tool_calls)]:
+            if type(value) is not int:
+                raise TypeError(f'{name} must be an integer')
+            if value < 0:
+                raise ValueError(f'{name} must be non-negative')
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerDependencies:
+    model: ToolCallingModel
+    tool_registry: ToolRegistry
+    context_manager: ContextManager
+    limits: RunnerLimits
+
+
+RunnerFactory = Callable[[RunnerDependencies], StepRunner]

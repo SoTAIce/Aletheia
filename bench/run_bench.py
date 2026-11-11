@@ -27,9 +27,7 @@ REPO = BENCH.parent
 _GUARD_REASONS = frozenset({'syntax_error', 'forbidden_import', 'forbidden_name', 'forbidden_attribute'})
 _SAFE_FAILURE = re.compile(r'^(Planning failed: )?[A-Za-z]+(Error|Exception)(: [A-Za-z][\w :().,>-]{0,200})?$',
                            re.ASCII)
-_TEAM_TRACE = re.compile(r'Team trace: (\{.*\})')
 _ROUTE = re.compile(r'Route decision: (\{[^\n]*\})')
-_TEAM_COUNTS = re.compile(r'"model_calls": (\d+), "tool_calls": (\d+)')
 
 
 SPLITS = ('tune', 'holdout')
@@ -156,7 +154,7 @@ SANDBOX_HINT = ('写完后先写测试，再用 run_tests 或 run_python 在沙�
 
 
 def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=False, team_timeout=None,
-            team_acceptance=False, single_runner='loop', trace_dir=None, team_impl='v2'):
+            single_runner='loop', trace_dir=None):
     write = write or sandbox
     # Answer tasks are graded on the final answer even when write and sandbox tools are offered;
     # offering them is what lets auto routing consider the team (D-026).
@@ -196,12 +194,8 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             # auto uses it when it routes to single mode.
             cmd += ['--single-runner', single_runner]
         teamish = mode in ('team', 'auto')   # auto may route to the team (D-026)
-        if teamish:
-            cmd += ['--team-impl', team_impl]
         if team_timeout is not None and teamish:
             cmd += ['--team-timeout', str(team_timeout)]
-        if teamish and team_acceptance:
-            cmd.append('--team-acceptance')
         if team_timeout is not None and teamish:
             # Planning and teardown run outside the team budget; never kill a team that is still in time.
             timeout = max(timeout, team_timeout + 300)
@@ -210,7 +204,7 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             done = launch_agent(cmd, env, timeout)
             stdout, stderr, timed_out = done.stdout, done.stderr, False
         except subprocess.TimeoutExpired as exc:
-            # Keep what the child already logged (the team trace, if the team ended).
+            # Keep partial stderr for route diagnostics.
             stdout, stderr, timed_out = '', _text(exc.stderr), True
         seconds = round(time.monotonic() - started, 1)
         record = None if timed_out else read_result(result_path)
@@ -224,23 +218,10 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
                'status': 'timeout' if timed_out else status,
                'executions': executions, 'replans': replans, 'seconds': seconds,
                'result_source': 'result_json' if record is not None else 'stdout'}
-        if teamish:
-            row['team_impl'] = team_impl
         if mode == 'single':
             row['runner'] = single_runner
         if record is not None:
             row.update(usage_fields(record))
-        traces = _TEAM_TRACE.findall(stderr)
-        if traces:
-            parsed = []
-            for text in traces:  # host-authored, no model text; one per team step
-                try:
-                    parsed.append(json.loads(text))
-                except ValueError:
-                    parsed.append('unparsable')
-            row['team_trace'] = parsed[-1]
-            if len(parsed) > 1:
-                row['team_traces'] = parsed
         route = _ROUTE.search(stderr)
         if route:
             try:
@@ -249,9 +230,6 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
                 row['route'] = 'unparsable'
         if mode == 'auto' and 'expected_route' in task:
             row['route_correct'] = isinstance(row.get('route'), dict) and row['route'].get('mode') == task['expected_route']
-        counts = _TEAM_COUNTS.search(stderr)
-        if counts:
-            row['team_model_calls'], row['team_tool_calls'] = int(counts.group(1)), int(counts.group(2))
         if answer_only:
             row['delivery'] = 'answer'
         elif write:
@@ -378,11 +356,7 @@ def main(argv=None):
     parser.add_argument('--confirm-live', action='store_true', help='required: runs call the real model provider')
     parser.add_argument('--sandbox', action='store_true',
                         help='file delivery plus run_tests/run_python in the Docker sandbox (implies --write)')
-    parser.add_argument('--team-impl', choices=['v2', 'loop'], default='v2',
-                        help='Team implementation for the stage 3a comparison (default v2)')
     parser.add_argument('--team-timeout', type=float, help='team time budget per run in seconds')
-    parser.add_argument('--team-acceptance', action='store_true',
-                        help='team V2 + sandbox: opt in to independent acceptance tests (D-022)')
     parser.add_argument('--single-runner', choices=['plan', 'loop'], default='loop',
                         help='how single (and auto-routed single) mode runs: one agent loop (default, D-072), '
                              'or plan then steps')
@@ -397,7 +371,7 @@ def main(argv=None):
     planned = len(tasks) * len(args.modes) * args.runs
     plan = (f'{planned} agent run(s): tasks={[t["id"] for t in tasks]} modes={args.modes} runs={args.runs} '
             f'splits={sorted({t.get("split", "tune") for t in tasks})} '
-            f'team_acceptance={args.team_acceptance} single_runner={args.single_runner} team_impl={args.team_impl} '
+            f'single_runner={args.single_runner} '
             f'delivery={"file" if args.write or args.sandbox else "answer"} sandbox={args.sandbox}')
     if not args.confirm_live:
         over = f' (exceeds --max-runs {args.max_runs}; a live run would be refused)' if planned > args.max_runs else ''
@@ -413,7 +387,7 @@ def main(argv=None):
                 for index in range(1, args.runs + 1):
                     rows.append(run_one(task, mode, index, args.timeout, args.keep_answers, args.write,
                                         args.sandbox, args.team_timeout,
-                                        args.team_acceptance, args.single_runner, args.keep_traces, args.team_impl))
+                                        args.single_runner, args.keep_traces))
                     print(json.dumps(rows[-1], ensure_ascii=False), file=sys.stderr, flush=True)
     finally:
         # The MCP stdio child does not inherit PYTHONDONTWRITEBYTECODE (DECISIONS D-011).

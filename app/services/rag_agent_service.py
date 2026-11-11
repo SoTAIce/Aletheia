@@ -23,8 +23,6 @@ from app.agent.openai_compatible_tool_calling_model import OpenAICompatibleToolC
 from app.agent.planner import Planner
 from app.agent.planning_model import PlanningModel
 from app.agent.runtime import AgentRunResult, AgentRuntime
-from app.agent.runner_registry import RunnerRegistry
-from app.agent.runner_router import RoutingPolicy, RequirementsProvider
 from app.config import config
 from app.models.conversation_memory import (
     ConversationMemory, ConversationMessage, ConversationTurn, MessageRole, TurnStatus,
@@ -120,12 +118,8 @@ def _without_writes(options):
     from dataclasses import replace
     from app.agent.route_selection import READ_ONLY_HIDDEN
     return replace(options, allowed_tools=options.allowed_tools - READ_ONLY_HIDDEN,
-                   require_passing_run=False, acceptance_tests=False)
+                   require_passing_run=False)
 
-
-def _team_requirements(context):
-    from app.agent.runner_router import RunnerRequirements
-    return RunnerRequirements(frozenset({'agent_team'}))
 
 
 class RagAgentService:
@@ -145,10 +139,8 @@ class RagAgentService:
         longterm_memory:"LongTermMemoryService | None" = None,
         longterm_recall_limit: int = 5,
         longterm_timeout_seconds: float = 3.0,
-        runner_registry: RunnerRegistry | None = None, routing_policy: RoutingPolicy | None = None,
-        runner_requirements: RequirementsProvider | None = None,
         execution_mode: str = 'single', team_options=None, hooks=None,
-        single_runner: str = 'plan', loop_options=None, team_impl: str = 'v2',
+        single_runner: str = 'plan', loop_options=None,
         workspace_servers=None, workspace_policy=None, default_workspace: str | None = None,
     ) -> None:
         self.streaming = streaming
@@ -162,28 +154,17 @@ class RagAgentService:
         self._memory_directory = config.conversation_storage_dir if memory_directory is None else memory_directory
         self._conversation_compressor = conversation_compressor
         self._planner_model = planner_model
-        self._runner_options = dict(runner_registry=runner_registry, routing_policy=routing_policy,
-                                    runner_requirements=runner_requirements)
         if execution_mode not in ('single', 'team', 'auto'):
             raise ValueError('execution_mode must be single, team or auto')
-        from app.agent.team_v2 import DelegationOptions
+        from app.agent.delegation import DelegationOptions
         if team_options is not None and not isinstance(team_options, DelegationOptions):
             raise TypeError('team_options must be DelegationOptions')
-        if (execution_mode != 'single' or team_options is not None) and runner_registry is not None:
-            raise ValueError('use register_delegating_team_runner for custom registry assembly')
-        if team_impl not in ('v2', 'loop'):
-            raise ValueError('team_impl must be v2 or loop')
-        if team_impl == 'loop' and team_options is not None and team_options.acceptance_tests:
-            raise ValueError('team_impl loop does not support acceptance_tests')
-        self._team_impl = team_impl
         self._execution_mode = execution_mode
         # How single mode runs (loop-trial-001): 'plan' plans then executes steps; 'loop' is one
         # agent loop entered through a fixed one-step plan (docs/architecture_review.md stage 1).
         # The library default stays 'plan'; the CLI, web and bench entry points default to 'loop' (D-072).
         if single_runner not in ('plan', 'loop'):
             raise ValueError('single_runner must be plan or loop')
-        if single_runner == 'loop' and runner_registry is not None:
-            raise ValueError('single_runner loop assembles its own runner registry')
         from app.agent.agent_loop import LoopOptions
         if loop_options is not None and not isinstance(loop_options, LoopOptions):
             raise TypeError('loop_options must be LoopOptions')
@@ -326,7 +307,7 @@ class RagAgentService:
         default mode is always accepted. Team and auto need the team prepared at startup."""
         accepted = {'single', self._execution_mode} | ({'team', 'auto'} if self._team_options is not None else set())
         offered = {'modes': [m for m in MODES if m in accepted], 'default_mode': self._execution_mode,
-                   'runners': ['plan', 'loop'] if self._runner_options['runner_registry'] is None else ['plan'],
+                   'runners': ['plan', 'loop'],
                    'default_runner': self._single_runner,
                    'memory_available': self._longterm_memory is not None}
         if self._workspace_servers is not None:      # only when offered, so the old answer stays as it was
@@ -398,9 +379,6 @@ class RagAgentService:
             raise ValueError('execution mode is not available')
         if single_runner is not None and single_runner not in ('plan', 'loop'):
             raise ValueError('single_runner must be plan or loop')
-        if (resume_task_id is None and single_runner == 'loop'
-                and self._runner_options['runner_registry'] is not None):
-            raise ValueError('single_runner loop assembles its own runner registry')
         _check_choice('allow_writes', allow_writes)
         _check_choice('use_memory', use_memory)
         _check_choice('workspace_confirmed', workspace_confirmed)
@@ -582,39 +560,36 @@ class RagAgentService:
                         # Read-only tasks lose write tools and get read-only runs (D-027/D-028).
                         from app.agent.route_selection import task_registry
                         registry = task_registry(registry, choice.read_only)
-                        # Team V2 owns the whole task: one fixed plan step, one team (DECISIONS D-019).
+                        # The team owns the whole task through one fixed plan step (DECISIONS D-019).
                         loop = route == 'single' and options['runner'] == 'loop'
                         if route == 'team':
-                            from app.agent.team_v2 import SingleStepPlanner
-                            planner = SingleStepPlanner(planner_model, max_steps=1, context_manager=context_manager)
+                            from app.agent.agent_loop import TeamPlanner
+                            planner = TeamPlanner(planner_model, max_steps=1, context_manager=context_manager)
                         elif loop:
                             from app.agent.agent_loop import LoopPlanner
                             planner = LoopPlanner(planner_model, max_steps=1, context_manager=context_manager)
                         else:
                             planner = Planner(planner_model, context_manager=context_manager)
                         if runtime is None:
-                            runner_options, limits = dict(self._runner_options), dict(self._limits)
+                            runner_options, limits = {}, dict(self._limits)
                             if route == 'team':
-                                runner_options['runner_registry'] = self._team_registry(team_options)
-                                if runner_options['runner_requirements'] is None:
-                                    runner_options['runner_requirements'] = _team_requirements
-                                # A team step must outlast the team's own timeout.
-                                limits['step_timeout_seconds'] = max(limits['step_timeout_seconds'],
-                                                                     team_options.timeout_seconds + 5)
-                                if self._team_impl == 'loop':
-                                    limits['max_replans'] = 0
+                                from app.agent.delegation import DelegatingLoopRunner
+                                def factory(deps):
+                                    return DelegatingLoopRunner(deps.model, deps.tool_registry,
+                                                                team_options, deps.context_manager)
+                                runner_options['runner_factory'] = factory
+                                runner_timeout = team_options.timeout_seconds
                             elif loop:
-                                from app.agent.agent_loop import loop_requirements, register_agent_loop_runner
-                                from app.agent.runner_registry import default_runner_registry
-                                loop_registry = default_runner_registry()
-                                register_agent_loop_runner(loop_registry, options=self._loop_options)
-                                runner_options['runner_registry'] = loop_registry
-                                if runner_options['runner_requirements'] is None:
-                                    runner_options['runner_requirements'] = loop_requirements
-                                # The whole task is one step; restarting the loop after a failure
-                                # would repeat its work, so the runtime does not replan it.
-                                limits['step_timeout_seconds'] = max(limits['step_timeout_seconds'],
-                                                                     self._loop_options.timeout_seconds + 5)
+                                from app.agent.agent_loop import AgentLoopRunner, LoopResumeStore
+                                store = LoopResumeStore()  # one per runtime, retained by its factory on rebind
+                                def factory(deps):
+                                    return AgentLoopRunner(deps.model, deps.tool_registry, self._loop_options,
+                                                           deps.context_manager, store)
+                                runner_options['runner_factory'] = factory
+                                runner_timeout = self._loop_options.timeout_seconds
+                            if route == 'team' or loop:
+                                # One task step must outlast its runner; a replan would repeat its work.
+                                limits['step_timeout_seconds'] = max(limits['step_timeout_seconds'], runner_timeout + 5)
                                 limits['max_replans'] = 0
                             runtime = AgentRuntime(planner, model, memory, registry,
                                                    **limits, **runner_options, context_manager=context_manager)
@@ -788,16 +763,6 @@ class RagAgentService:
         from app.agent.hooks import model_purpose, trace_scope
         with model_purpose('route'), trace_scope('route'):     # before the task span, no parent (D-073)
             return await choose_mode(question, team_options, model)
-
-    def _team_registry(self, options=None):
-        from app.agent.runner_registry import default_runner_registry
-        if self._team_impl == 'loop':
-            from app.agent.delegation import register_delegating_loop_runner as register_delegating_team_runner
-        else:
-            from app.agent.team_v2 import register_delegating_team_runner
-        registry = default_runner_registry()
-        register_delegating_team_runner(registry, options=options or self._team_options)
-        return registry
 
     async def _publish_outcome(self, conversation, outcome_key):
         status, content, payload = self._pending_outcomes[outcome_key]

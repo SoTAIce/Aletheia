@@ -15,12 +15,11 @@ from app.agent.step_executor import StepExecutor
 from app.agent.step_models import StepExecutionReceipt, TOOL_LIST_SOURCE
 from app.agent.side_effects import SideEffectWatch
 from app.agent.run_meter import RunMeter, cache_text as _cache_text, call_text as _call_text, current_meter, metering
-from app.agent.step_runner import (StepBlockedError, StepRunError, StepFormatError, StepModelError, StepRoutingError,
+from app.agent.step_runner import (StepBlockedError, StepRunError, StepFormatError, StepModelError,
                                    StepToolError)
 from app.agent.tool_calling_model import ToolCallingModel
-from app.agent.runner_registry import RunnerRegistry, RunnerDependencies, RunnerLimits, default_runner_registry
-from app.agent.runner_router import RoutingPolicy, RequirementsProvider
-from app.agent.routing_step_runner import RoutingStepRunner, RoutingEvent
+from app.agent.step_runner import RunnerDependencies, RunnerLimits, RunnerFactory, StepRunner
+from app.agent.tool_calling_step_runner import ToolCallingStepRunner
 from app.models.conversation_memory import (
     ConversationMemory, ConversationMessage, ConversationTurn, MessageRole, TurnStatus,
     finish_conversation_write,
@@ -37,7 +36,6 @@ FAILURE_MESSAGES = {
     'planning': '模型没有给出可用的计划，任务停止。',
     'format': '模型多次没有按要求的格式给出步骤结果，任务停止。',
     'model': '调用模型失败（服务出错或请求超时），任务停止，可以稍后重试。',
-    'routing': '这一步没有可用的执行方式，任务停止。',
     'side_effect': '一个会修改文件或运行代码的操作没有正常结束，结果不确定。为避免重复执行，任务已停止，请先检查工作区。',
     'timeout': '执行超时，为避免重复已完成的操作，任务已停止。',
     'rejected': '任务结果没有通过完成检查，任务停止。',
@@ -83,6 +81,51 @@ class AgentRunResult:
         return FAILURE_MESSAGES.get(self.failure_kind) if self.failure_kind else None
 
 
+def _tool_calling_factory(deps: RunnerDependencies) -> StepRunner:
+    return ToolCallingStepRunner(deps.model, deps.tool_registry,
+        deps.limits.max_tool_rounds, deps.limits.max_total_tool_calls,
+        require_step_outcome=True, context_manager=deps.context_manager, unavailable_tool_feedback=True)
+
+
+class _BoundRunner:
+    """The runtime's binding of one runner, carrying the two guards RoutingStepRunner used to hold:
+
+    - after rebind() the old binding is invalid, so a late result or failure from it is stale;
+    - when cancellation was requested while the runner ran, neither its output nor a declared
+      failure may be committed as if the step had finished normally.
+    """
+
+    def __init__(self, runner: StepRunner):
+        self.runner, self._valid = runner, True      # the bound runner itself, read-only for callers
+        self.runner_id = getattr(runner, 'runner_id', 'tool_calling')
+
+    @property
+    def format_repair_count(self) -> int:
+        return getattr(self.runner, 'format_repair_count', 0)
+
+    def invalidate(self) -> None:
+        self._valid = False
+
+    async def run(self, context):
+        if not self._valid:
+            raise StaleExecutionError('Runner binding is no longer current')
+        task = asyncio.current_task()
+        cancellations = task.cancelling()
+        try:
+            result = await self.runner.run(context)
+        except BaseException as exc:
+            if not self._valid:
+                raise StaleExecutionError('Late failure belongs to an invalid Runner binding') from exc
+            if task.cancelling() > cancellations and not isinstance(exc, asyncio.CancelledError):
+                raise asyncio.CancelledError('Runner failed after cancellation was requested') from exc
+            raise
+        if task.cancelling() > cancellations:
+            raise asyncio.CancelledError('Runner returned after cancellation was requested')
+        if not self._valid:
+            raise StaleExecutionError('Late output belongs to an invalid Runner binding')
+        return result
+
+
 class AgentRuntime:
     """One runtime per task. Keep tool sessions open for run() and any resume.
 
@@ -97,8 +140,7 @@ class AgentRuntime:
         step_timeout_seconds: float = 60.0, planning_timeout_seconds: float = 60.0,
         max_tool_rounds: int = 4, max_total_tool_calls: int = 8,
         context_manager: ContextManager | None = None,
-        runner_registry: RunnerRegistry | None = None, routing_policy: RoutingPolicy | None = None,
-        runner_requirements: RequirementsProvider | None = None,
+        runner_factory: RunnerFactory | None = None,
     ) -> None:
         for name, value, minimum in (("max_executions", max_executions, 1), ("max_replans", max_replans, 0)):
             if type(value) is not int or value < minimum:
@@ -114,12 +156,8 @@ class AgentRuntime:
         self._context_manager = context_manager or ContextManager()
         if self._planner._context_manager is None:
             self._planner._context_manager = self._context_manager
-        if runner_registry is not None and not isinstance(runner_registry, RunnerRegistry):
-            raise TypeError('runner_registry must be RunnerRegistry')
         self._runner_limits = RunnerLimits(max_tool_rounds, max_total_tool_calls)
-        self._runner_registry = (runner_registry if runner_registry is not None else default_runner_registry()).snapshot()
-        self._routing_policy, self._runner_requirements = routing_policy, runner_requirements
-        self._routing_events: list[RoutingEvent] = []
+        self._runner_factory = runner_factory if runner_factory is not None else _tool_calling_factory
         self._runner, self._step_executor = self._assemble_runner(model, registry, self._context_manager)
         self._conversation = conversation
         self._max_executions, self._max_replans = max_executions, max_replans
@@ -142,13 +180,8 @@ class AgentRuntime:
         """The sole construction path for both initial and resumed bindings."""
         self._watch = SideEffectWatch(registry)   # side effects of the current step (D-032)
         dependencies = RunnerDependencies(model, self._watch, context_manager, self._runner_limits)
-        runner = RoutingStepRunner(self._runner_registry.bind(dependencies), routing_policy=self._routing_policy,
-                                   requirements_provider=self._runner_requirements, events=self._routing_events)
+        runner = _BoundRunner(self._runner_factory(dependencies))
         return runner, StepExecutor(self.memory, runner)
-
-    @property
-    def routing_decisions(self) -> tuple[RoutingEvent, ...]:
-        return tuple(self._routing_events)
 
     def rebind(self, planner: Planner, model: ToolCallingModel, registry: ToolRegistry, *,
                context_manager: ContextManager) -> None:
@@ -360,14 +393,13 @@ class AgentRuntime:
                 self._steps.append(receipt)
             except StepBlockedError as exc:
                 return self._result(exc.message)
-            except (StepFormatError, StepModelError, StepRoutingError) as exc:
+            except (StepFormatError, StepModelError) as exc:
                 # Local format repair is exhausted, or the provider failed.
                 # Replanning would repeat completed tools without fixing either.
                 denied = _policy_denial(exc)
                 if denied is not None:
                     return self._fail(f'Model call denied by {denied.hook}: {denied.reason}', 'policy')
-                kind = ('format' if isinstance(exc, StepFormatError) else
-                        'routing' if isinstance(exc, StepRoutingError) else 'model')
+                kind = 'format' if isinstance(exc, StepFormatError) else 'model'
                 return self._fail(f"{type(exc).__name__}: {exc.message}", kind)
             except StepToolError as exc:
                 if self._watch.uncertain:
@@ -382,7 +414,7 @@ class AgentRuntime:
                 # Never overwrite evidence or lifecycle belonging to newer work.
                 raise
             except TimeoutError:
-                if self.routing_decisions and self.routing_decisions[-1].runner_id == 'agent_team':
+                if self._runner.runner_id == 'agent_team':
                     # A team owns many side effects; an outer deadline must not replay it.
                     return self._fail('Team execution timed out; automatic replanning is disabled', 'timeout')
                 if self._context_manager.overflow_recovery_interrupted:
@@ -410,10 +442,9 @@ class AgentRuntime:
         """Record one step attempt: outcome, runner and tool calls, without model or tool text."""
         outcome = ('succeeded' if exc is None else 'blocked' if isinstance(exc, StepBlockedError)
                    else 'timeout' if isinstance(exc, TimeoutError) else 'failed')
-        decisions = self.routing_decisions
         entry = {'step': self._execution_count, 'step_id': step_id, 'outcome': outcome,
                  'error': None if exc is None or outcome == 'blocked' else type(exc).__name__,
-                 'runner': decisions[-1].runner_id if decisions else None,
+                 'runner': self._runner.runner_id,
                  'seconds': round(time.monotonic() - started, 3), 'tools': [dict(c) for c in self._watch.calls]}
         self._step_log.append(entry)
         tools = ', '.join(f"{c['tool']} {'ok' if c['success'] else 'failed'}" for c in entry['tools']) or 'none'

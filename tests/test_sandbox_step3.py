@@ -12,7 +12,7 @@ import pytest
 from app.agent.__main__ import sandbox_problem, team_options_for
 from app.agent.step_models import ModelTurn, ToolCall, ToolDefinition, ToolOutput, ToolResult
 from app.agent.team.models import has_passing_run_after_last_write
-from app.agent.team_v2 import READ_TOOLS
+from app.agent.delegation import READ_TOOLS
 from app.tools.sandbox import server as sandbox_server
 from app.tools.sandbox.executor import DockerSandbox, RunResult, SandboxError
 from app.tools.tool_loader import local_mcp_servers
