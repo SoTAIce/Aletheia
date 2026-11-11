@@ -57,5 +57,4 @@ pytest 配置在 `pyproject.toml`（`asyncio_mode = "auto"`，测试只在内存
 
 ## 注意
 
-- `README.md` 中“Repository cleanup”一节和“只做语法与 CLI 检查”的说法已过时：`tests/` 已恢复（D-030），`init.ps1` 会跑 pytest。以 `AGENTS.md` 和 `init.ps1` 为准。
 - 改动行为时，在 `tests/` 中补充或恢复对应测试。
