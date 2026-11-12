@@ -16,7 +16,7 @@
 **4d（2026-11-12 同一会话，后加）**
 - 方案 `docs/stage4d_plan.md`。用户：暂时没有第二个模型（以后可能 DeepSeek、Qwen、Claude，先不用）；问题 2～4 按建议；Claude 实现。
 - 已做：4d-1 模型档案结构（`app/models/model_profile.py`，`Settings.agent_model_profile`，请求逐字节不变），4d-3 每次模型调用前检查预算（`StepBudgetError`）。D-078。提交 `e54d849`、`948604f`、`fc13b4d`。
-- 推送状态以本分支最新提交说明为准；本条写入时还没推送 `main`，等用户确认。
+- 2026-11-12 经用户确认（“可以将这三个上传了”）已推送到 `origin/main`。
 - 以后加第二个模型时做 4d-2（`models.toml`，角色 `route`/`member`/`explorer`）和 4d-4 评测；Claude 的接法到时另定（方案第 7 节后的说明）。
 
 **第 4 阶段剩下的（4d 之前写的，第 2 项已由 4d-3 完成）**

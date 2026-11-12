@@ -1643,7 +1643,7 @@
         "A spent budget stops the next model call inside a step and inside member loops.",
         "4d-2/4d-4 only when the user adds a second model (DeepSeek, Qwen or Claude later)."
       ],
-      "evidence": "User 2026-11-12: no second model yet ('先不用'), questions 2-4 as suggested, Claude implements. Commits on local main: e54d849 (design), 948604f (4d-1, tests/test_model_profile.py 38, byte-identical requests over 24 setting combinations; mutation check: temperature 0.0 fails 24), fc13b4d (4d-3, StepBudgetError; test_loop_run_guarantees budget test rewritten 3->2 calls, member test added). D-078. Linux pytest 1761 passed, 22 skipped, 4 failed (Windows-only). No live run (budget unlimited by default). Pushed: see session-handoff."
+      "evidence": "User 2026-11-12: no second model yet ('先不用'), questions 2-4 as suggested, Claude implements. Commits on local main: e54d849 (design), 948604f (4d-1, tests/test_model_profile.py 38, byte-identical requests over 24 setting combinations; mutation check: temperature 0.0 fails 24), fc13b4d (4d-3, StepBudgetError; test_loop_run_guarantees budget test rewritten 3->2 calls, member test added). D-078. Linux pytest 1761 passed, 22 skipped, 4 failed (Windows-only). No live run (budget unlimited by default). Pushed to origin/main 2026-11-12 (user approved)."
     }
   ],
   "cleanup_2026_11_04": {
