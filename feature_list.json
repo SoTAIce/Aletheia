@@ -1659,7 +1659,7 @@
         "Bench groups pass counts by band.",
         "Warning only on anomalies, before the Status line."
       ],
-      "evidence": "Commits 01e2294 (plan), af3efba (implementation), e39de77 (index) on local main. tests/test_provider_state.py 24; Linux pytest 1785 passed, 22 skipped, 4 failed (Windows-only). Local end-to-end with a fake model server (no live call): warning printed before Status, usage.provider dropped + mismatch, trace viewer shows estimate and ratio. User answers: mark and group only (no reruns), warn only on anomalies, no direct DashScope comparison now, Claude implements. Not pushed yet."
+      "evidence": "Commits 01e2294 (plan), af3efba (implementation), e39de77 (index) on local main. tests/test_provider_state.py 24; Linux pytest 1785 passed, 22 skipped, 4 failed (Windows-only). Local end-to-end with a fake model server (no live call): warning printed before Status, usage.provider dropped + mismatch, trace viewer shows estimate and ratio. User answers: mark and group only (no reruns), warn only on anomalies, no direct DashScope comparison now, Claude implements. Pushed to origin/main 2026-11-12 (user approved)."
     }
   ],
   "cleanup_2026_11_04": {
