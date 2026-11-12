@@ -1,0 +1,81 @@
+{
+  "created": "2026-11-09",
+  "base_commit": "7835fa27995a35f2bc7e3e4c02affd27d6a55269",
+  "purpose": "kb-index-cli-002 完成后的未提交状态：保留用户差异和原方案，新增安全替换、阶段诊断、过时来源清理及确定性验证记录；未暂存、提交或推送。",
+  "self_path": "docs/harness/history/baseline-2026-11-09-kb2.json",
+  "check": "docs/harness/baseline.md",
+  "user_protected_sha256": {
+    "README.md": "2b917b14b8c098babd342f0c442d6e76c2f91eaae829d28574b77d7cb6348e38",
+    "app/agent/planner.py": "a2ce0f91c476ea473f2ae6db98aa7b7ac7416b744abde1419a0f38c1fe8d8dc6",
+    "app/agent/step_executor.py": "86f8ca77ebd86d964f1dbc31b2dcf8cfcbb0596ba85c12d086368fdb304b1f1d",
+    "app/agent/tool_calling_step_runner.py": "f61016aabfffe6bd1ddfc92084b009ce944e9dbac5f30b4f3963d4619f36cb25"
+  },
+  "user_deleted_tracked": [
+    "scripts/benchmark_conversation_memory.py",
+    "scripts/validate_multi_runner_live.py",
+    "scripts/validate_summary_context.py"
+  ],
+  "startup_snapshot": {
+    "created": "2026-11-09",
+    "base_commit": "7835fa27995a35f2bc7e3e4c02affd27d6a55269",
+    "purpose": "Start of kb-index-cli-002: the user differences (README, Chinese docstrings in planner.py, step_executor.py and tool_calling_step_runner.py, three deleted scripts) plus the plan registration.",
+    "self_path": "docs/harness/history/baseline-2026-11-09-kb2.json",
+    "check": "docs/harness/baseline.md",
+    "modified_tracked": {
+      "README.md": "2b917b14b8c098babd342f0c442d6e76c2f91eaae829d28574b77d7cb6348e38",
+      "app/agent/planner.py": "a2ce0f91c476ea473f2ae6db98aa7b7ac7416b744abde1419a0f38c1fe8d8dc6",
+      "app/agent/step_executor.py": "86f8ca77ebd86d964f1dbc31b2dcf8cfcbb0596ba85c12d086368fdb304b1f1d",
+      "app/agent/tool_calling_step_runner.py": "f61016aabfffe6bd1ddfc92084b009ce944e9dbac5f30b4f3963d4619f36cb25",
+      "docs/DOCUMENT_INDEX.md": "d8cbaf541008ced038fe3e3c1ba4c159668e646228b2f6d666112a5627e4a7f6",
+      "docs/harness/baseline.md": "70c2b05893e839c71042388d63a36adba61699a30f49abd1750003d2710fb9de",
+      "feature_list.json": "613f9150e7f7056894f04e01a882f88b85e0808333269051879256478cf572b6",
+      "progress.md": "b632a60fc3a89e161417be8e2291b32f5f590cf0c88fe506cdd477faa2c050f6",
+      "session-handoff.md": "74459425e010284ff4df8d9b183b583060683c081de24860055ba581aca3bd2f"
+    },
+    "untracked": {
+      "docs/kb_index_v2_plan.md": "066dba723455f48e75d02c8d9373003a61603a9450fd02c7054a119446e0b88e"
+    },
+    "deleted_tracked": [
+      "scripts/benchmark_conversation_memory.py",
+      "scripts/validate_multi_runner_live.py",
+      "scripts/validate_summary_context.py"
+    ]
+  },
+  "verification": {
+    "python_files": 94,
+    "passed": 1692,
+    "skipped": 16,
+    "knowledge_tests": 58,
+    "new_tests": 48,
+    "scope": "静态与确定性测试；默认预演及网络审计；真实服务、真实确认与清理运行未验证。"
+  },
+  "modified_tracked": {
+    "AGENTS.md": "8f7bda2011850083a2987babefc4c2248c7095cb1ffae3c0398e8c8a4d300b49",
+    "README.md": "2b917b14b8c098babd342f0c442d6e76c2f91eaae829d28574b77d7cb6348e38",
+    "app/agent/planner.py": "a2ce0f91c476ea473f2ae6db98aa7b7ac7416b744abde1419a0f38c1fe8d8dc6",
+    "app/agent/step_executor.py": "86f8ca77ebd86d964f1dbc31b2dcf8cfcbb0596ba85c12d086368fdb304b1f1d",
+    "app/agent/tool_calling_step_runner.py": "f61016aabfffe6bd1ddfc92084b009ce944e9dbac5f30b4f3963d4619f36cb25",
+    "app/core/milvus_client.py": "74ec847545417c94a5376c1df32e168e5e9ca6f928e58b4d23a0252d7f049f08",
+    "app/knowledge/__main__.py": "ba35384153d67d9ffd381dd6ee9bfa935c24dcd1588f4366a7aab0d016427b7d",
+    "app/services/vector_embedding_service.py": "b95697c624ce43f868d9fae51972454bed6090353811fd3e3bb9222833c0867b",
+    "app/services/vector_index_service.py": "5711626cdd23949ed34641c5be13acd1031f30b3c21ea5b78a7905f3270367af",
+    "app/services/vector_store_manager.py": "62fefdbc8be897d803ce381c0dcbbebbc7304987769ea5bd20495fc46c0332b7",
+    "common.md": "68c30032da38560f7b4b5233cc3d065cf90648927457551b37aae6bb0ec2e424",
+    "docs/DECISIONS.md": "d02bf1ae00376896fe8ba776a35191d06a800a05f981d4a46f8c69139a5163a4",
+    "docs/DOCUMENT_INDEX.md": "da02d597d3ce5a245fdf7bb17d4c6d3d9890a4cbb098225f5528ee2199f0321d",
+    "docs/PROJECT_HANDOVER.md": "5f222b2e7b444d7b8858582ae40a5b24c2b3a89c729a429dccab304f0a5ded16",
+    "docs/harness/baseline.md": "8c52bd2c932539187a6caeb84a3c4e0845526cd2c37d764506eb905d6c0c921c",
+    "feature_list.json": "618c524926bab63bb30eea8c604bfe55f9c30820e411ff48a8f2ee7fe1f63f1c",
+    "progress.md": "52645c7a0528b4369a25cacc04792955d191de2f7a17f173db9f8cf2686b8d78",
+    "session-handoff.md": "f1e1838dc3aea3fe71f9f62935a1d0abb4ef07d28026034cb6e213b6b1ae06e0",
+    "tests/test_knowledge_cli.py": "ad6ea286e61afbba4fb17a31361fdfc9ffd40426560055d89ccd750a7c3e540a"
+  },
+  "untracked": {
+    "docs/kb_index_v2_plan.md": "066dba723455f48e75d02c8d9373003a61603a9450fd02c7054a119446e0b88e"
+  },
+  "deleted_tracked": [
+    "scripts/benchmark_conversation_memory.py",
+    "scripts/validate_multi_runner_live.py",
+    "scripts/validate_summary_context.py"
+  ]
+}
