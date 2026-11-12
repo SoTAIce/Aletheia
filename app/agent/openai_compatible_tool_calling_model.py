@@ -439,3 +439,15 @@ class OpenAICompatibleToolCallingModel:
         if content is None and not tool_calls:
             raise ModelResponseError("model response contains neither text nor tool calls")
         return ModelTurn(content=content, tool_calls=tool_calls)
+
+
+def profile_model(client, profile, prompt_cache_key: str | None = None) -> OpenAICompatibleToolCallingModel:
+    """The model a profile describes, on an already open client (stage 4d-1). The cache key is
+    sent only when the profile supports it (D-057)."""
+    return OpenAICompatibleToolCallingModel(
+        client, profile.model, temperature=profile.temperature,
+        json_mode=profile.json_mode,
+        enable_thinking=profile.enable_thinking,
+        max_output_tokens=profile.max_output_tokens,
+        prompt_cache_key=prompt_cache_key if profile.prompt_cache_key else None,
+    )

@@ -157,11 +157,9 @@ def call_text(entry: dict) -> str:
 
 
 def estimated_cost(prompt_tokens: int, completion_tokens: int) -> float | None:
-    """Cost in the configured currency, or None when no price is configured."""
-    prices = (config.model_input_price_per_million_tokens, config.model_output_price_per_million_tokens)
-    if any(price is None for price in prices):
-        return None
-    return round((prompt_tokens * prices[0] + completion_tokens * prices[1]) / 1_000_000, 6)
+    """Cost in the configured currency, or None when no price is configured; prices come
+    from the agent model's profile (stage 4d-1)."""
+    return config.agent_model_profile.estimated_cost(prompt_tokens, completion_tokens)
 
 
 _current: ContextVar[RunMeter | None] = ContextVar('aletheia_run_meter', default=None)

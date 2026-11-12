@@ -97,14 +97,13 @@ async def main(argv=None) -> int:
     parser.add_argument('--cache-key', default=None,
                         help='also send prompt_cache_key with this value (some endpoints reject it)')
     args = parser.parse_args(argv)
-    base_url, api_key, model = config.agent_model_endpoint
+    profile = config.agent_model_profile          # stage 4d-1: capabilities come from the profile
+    api_key, model, thinking = profile.api_key(config), profile.model, profile.enable_thinking
     if not api_key:
         print('没有配置模型的 API 密钥')
         return 2
-    # enable_thinking is a DashScope parameter; a separate endpoint may reject it (D-050).
-    thinking = None if config.agent_model_base_url else config.rag_enable_thinking
-    async with AsyncOpenAI(api_key=api_key, base_url=base_url,
-                           timeout=config.rag_model_timeout_seconds, max_retries=0) as client:
+    async with AsyncOpenAI(api_key=api_key, base_url=profile.base_url,
+                           timeout=profile.timeout_seconds, max_retries=0) as client:
         entries = await run_probe(client, model, args.calls, args.cache_key, thinking)
     print(f'模型 {model}，连发 {args.calls} 次相同请求' + ('，带 prompt_cache_key' if args.cache_key else ''))
     for number, entry in enumerate(entries, 1):

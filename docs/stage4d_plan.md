@@ -1,6 +1,6 @@
 # 第 4 阶段 4d：模型档案（设计）
 
-日期：2026-11-12。状态：**设计稿，第 7 节的问题待用户回答**（stage4d-001）。
+日期：2026-11-12。状态：**用户已回答第 7 节；4d-1、4d-3 由 Claude 实现（第 9 节），4d-2、4d-4 等有第二个模型再做**（stage4d-001）。
 来源：用户 2026-11-12“接下来来设计4d方案吧”。依据是当前 `main`（`e6973f3`）和 [第 4 阶段方案](stage4_plan.md) 第 3 节“4d 模型档案”。
 
 ## 1. 现状（以代码为准）
@@ -163,9 +163,28 @@ explorer = "cheap"
    - 预算继续按令牌（建议），还是增加按钱的上限？
 5. **由谁实现？** Codex 额度 11 月 15 日恢复。可以现在由 Claude 做，也可以等 Codex。4d-1 规模小，建议 Claude 现在做；4d-2 可以交给 Codex。
 
+**用户回答（2026-11-12）**：
+- 第 1 问：暂时没有第二个模型；以后可能加入 DeepSeek、Qwen、Claude，但先不用。按建议只做 4d-1；4d-2（档案文件和角色）、4d-4（评测）等真要加模型时再做。
+- 第 2～4 问：按建议。以后的档案放单独的 `models.toml`；`route`、`member`、`explorer` 三个角色都可以单独换模型；每次模型调用前检查预算（4d-3）并入、单独提交，它不依赖第二个模型，所以现在就做；预算继续按令牌。
+- 第 5 问：由 Claude 实现。
+
+**为以后加模型记下的一点**：DeepSeek 和 Qwen 都有 OpenAI 兼容接口，加进档案即可。Claude 也提供 OpenAI 兼容接口，但提示缓存、思考参数的写法和 OpenAI 不同；到时候要么只用兼容接口能表达的部分，要么给档案加一个 `api` 字段并写一个 Anthropic 原生适配器。这要等真要接入时再定。
+
 ## 8. 不改的
 
 - 嵌入、知识库查询改写、长期记忆、联网搜索演示继续走 DashScope 的现有设置。
 - `.env` 现有变量的含义和默认值都不变；不自动建 `models.toml`，也不自动改 `.env`。
 - 请求开头的缓存友好结构（D-057）、hooks、副作用保护、失败分类、团队完成门槛（D-075）、按需委派默认关闭。
 - 网页和命令行不加选模型的入口。
+
+## 9. 实现记录
+
+### 4d-1 档案结构（2026-11-12，Claude）
+
+- 新增 `app/models/model_profile.py`：`ModelProfile`（字段同第 4.1 节；`api_key_env` 只记密钥所在的设置或环境变量名，`api_key(settings)` 用时才读；`estimated_cost` 按档案单价算）。
+- `Settings.agent_model_profile`：从现有设置合成 `default` 档案，原来按“是不是 DashScope”推断的规则写进这里（独立地址不发 `enable_thinking`、按开关发缓存键；DashScope 相反）。`agent_model_endpoint`、`agent_model_window_tokens` 保留，改为从档案取。
+- 改为读档案的地方：`rag_agent_service._base_models`（新函数 `profile_model` 按档案建模型）、`_prompt_cache_key`、`_prepare_task` 的 `ContextManager` 窗口和输出上限、`run_meter.estimated_cost`、`cache_probe`。
+- 温度保留整数 `0`：改成 `0.0` 会让请求里的 `"temperature": 0` 变成 `0.0`，对照测试会抓到（试过，24 项失败）。
+- 测试 `tests/test_model_profile.py`（38 项）：新旧两种构造在 24 种设置组合下（DashScope / 独立地址 × 思考开关三种 × JSON 模式 × 缓存键开关）发出的请求逐字节相同，包括地址和认证头；默认档案逐项对应设置；档案的 `repr` 不含密钥；密钥变量回落到环境变量；非法档案被拒；缓存键只发给支持的档案。
+- 全部测试（Linux）：1760 通过、22 跳过、4 失败（只在 Windows 上成立的路径断言，改动前同样）。
+

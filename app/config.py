@@ -1,10 +1,13 @@
 """Type-safe application configuration loaded from environment variables."""
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from app.models.model_profile import ModelProfile
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -155,16 +158,41 @@ class Settings(BaseSettings):
         return self
 
     @property
+    def agent_model_profile(self) -> "ModelProfile":
+        """The agent's chat model as one profile, built from the settings above (stage 4d-1).
+
+        A separate endpoint (D-050) uses its own key, gets no enable_thinking (a DashScope
+        parameter it may reject) and gets prompt_cache_key when enabled (D-057); DashScope gets
+        enable_thinking as configured and no cache key. Rebuilt on each read, so it always
+        follows the current settings."""
+        from app.models.model_profile import ModelProfile
+        separate = bool(self.agent_model_base_url)
+        return ModelProfile(
+            name='default',
+            base_url=self.agent_model_base_url if separate else self.dashscope_base_url,
+            api_key_env='AGENT_MODEL_API_KEY' if separate else 'DASHSCOPE_API_KEY',
+            model=self.agent_model or self.rag_model,
+            context_tokens=self.agent_model_context_tokens or self.context_window_tokens,
+            max_output_tokens=self.context_output_tokens,
+            timeout_seconds=self.rag_model_timeout_seconds,
+            temperature=0,
+            json_mode=self.rag_json_mode,
+            enable_thinking=None if separate else self.rag_enable_thinking,
+            prompt_cache_key=separate and self.agent_model_prompt_cache_key,
+            input_price_per_million=self.model_input_price_per_million_tokens,
+            output_price_per_million=self.model_output_price_per_million_tokens,
+        )
+
+    @property
     def agent_model_window_tokens(self) -> int:
         """Context window of the agent's chat model (D-052)."""
-        return self.agent_model_context_tokens or self.context_window_tokens
+        return self.agent_model_profile.context_tokens
 
     @property
     def agent_model_endpoint(self) -> tuple[str, str, str]:
         """(base_url, api_key, model) for the agent's chat model."""
-        if self.agent_model_base_url:
-            return self.agent_model_base_url, self.agent_model_api_key, self.agent_model or self.rag_model
-        return self.dashscope_base_url, self.dashscope_api_key, self.agent_model or self.rag_model
+        profile = self.agent_model_profile
+        return profile.base_url, profile.api_key(self), profile.model
 
     @property
     def debug(self) -> bool:

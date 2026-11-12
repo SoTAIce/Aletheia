@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 from mcp import StdioServerParameters
 from openai import AsyncOpenAI
 
-from app.agent.openai_compatible_tool_calling_model import OpenAICompatibleToolCallingModel
+from app.agent.openai_compatible_tool_calling_model import profile_model
 from app.agent.runtime import AgentRunResult
 from app.config import config
 from app.models.conversation_memory import (
@@ -250,7 +250,7 @@ class RagAgentService:
     def _prompt_cache_key(label: str) -> str | None:
         """Per-conversation cache routing key for the separate endpoint (D-057): a hash, so
         the session and user names never leave the machine; DashScope gets none."""
-        if not (config.agent_model_base_url and config.agent_model_prompt_cache_key):
+        if not config.agent_model_profile.prompt_cache_key:
             return None
         return 'aletheia-' + hashlib.sha256(label.encode('utf-8')).hexdigest()[:24]
 
@@ -268,20 +268,12 @@ class RagAgentService:
         if self.model is not None:
             yield self.model
             return
-        base_url, api_key, model_name = config.agent_model_endpoint      # D-050
+        profile = config.agent_model_profile                              # stage 4d-1, D-050
         async with AsyncOpenAI(
-            api_key=api_key, base_url=base_url,
-            timeout=config.rag_model_timeout_seconds, max_retries=0,
+            api_key=profile.api_key(config), base_url=profile.base_url,
+            timeout=profile.timeout_seconds, max_retries=0,
         ) as client:
-            model = OpenAICompatibleToolCallingModel(
-                client, model_name, temperature=0,
-                json_mode=config.rag_json_mode,
-                # enable_thinking is a DashScope parameter; other endpoints may reject it.
-                enable_thinking=None if config.agent_model_base_url else config.rag_enable_thinking,
-                max_output_tokens=config.context_output_tokens,
-                prompt_cache_key=cache_key,
-            )
-            yield model
+            yield profile_model(client, profile, cache_key)
 
     async def _run_hooks(self, key, conversation, extra=None):
         """This run's hooks: the service's (or the caller's), the request's own (extra, e.g. the
@@ -551,7 +543,8 @@ class RagAgentService:
                             attachments, options):
         """The task's context manager, with the answer, attachments, workspace note, history and recall pinned."""
         context_manager = ContextManager(
-            window_tokens=config.agent_model_window_tokens, output_tokens=config.context_output_tokens,
+            window_tokens=config.agent_model_profile.context_tokens,
+            output_tokens=config.agent_model_profile.max_output_tokens,
             safety_tokens=config.context_safety_tokens, archive=conversation.archive,
         )
         if runtime is not None:
