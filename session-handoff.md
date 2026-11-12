@@ -8,7 +8,7 @@
 - 下面各节里指向 `docs/...` 计划文档的链接在 `main` 上，不在本分支。
 
 **当前状态**
-- `main`（已推送到 `origin/main`）：`70f7470` 4b → `25aa47c` 4c → `2a5ab26` 删除 `agent_planning_timeout_seconds` → `e6973f3` 交接文件移出 `main`（D-077）。远端分支 `stage4c` 已经全部并入 `main`；重复做 4b 的 `claude/wizardly-ride-peavwg` 已删除。
+- `main`（已推送到 `origin/main`）：`70f7470` 4b → `25aa47c` 4c → `2a5ab26` 删除 `agent_planning_timeout_seconds` → `e6973f3` 交接文件移出 `main`（D-077）。远端分支 `stage4c` 已经全部并入 `main`；重复做 4b 的 `claude/wizardly-ride-peavwg` 本地已删除；远端删除被云端会话的权限检查拦下，待用户在 GitHub 上手动删除。
 - 4c 留出集复跑（2026-11-12，在云端会话跑，设置同用户本机 `.env`）：单一循环 12/13，达到 ≥10/13。唯一失败 `side_effects_qa`（`mutates_arguments`，历来都错）。3 道问答题第一次请求约 6,400 提示令牌（少开销状态），其余约 2 万的全部通过。详见 `main` 上 `docs/stage4_plan.md` 第 14 节“4c 留出集复跑”。
 - Linux 下 pytest：1722 通过、22 跳过、4 失败（只在 Windows 上成立的路径断言，改动前同样失败）。`init.ps1` 本身没在 Windows 上跑过，用户本机拉取后跑一次。
 - 用户本机拉 `main` 时：`session-handoff.md`、`progress.md`、`feature_list.json` 和 `docs/harness/` 的基线文件会被删除。若本机这些文件有未提交修改，先另存。用户自己的未提交差异（`scripts/` 下三个脚本的删除）不受影响。
