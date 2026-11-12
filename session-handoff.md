@@ -13,6 +13,13 @@
 - Linux 下 pytest：1722 通过、22 跳过、4 失败（只在 Windows 上成立的路径断言，改动前同样失败）。`init.ps1` 本身没在 Windows 上跑过，用户本机拉取后跑一次。
 - 用户本机拉 `main` 时：`session-handoff.md`、`progress.md`、`feature_list.json` 和 `docs/harness/` 的基线文件会被删除。若本机这些文件有未提交修改，先另存。用户自己的未提交差异（`scripts/` 下三个脚本的删除）不受影响。
 
+**下次从这里开始（2026-11-12 收尾时写）**
+- `origin/main` 到 `23304d4`：第 4 阶段（4a～4d-3）、服务商状态检测（D-079）、入口文档更新都已推送。
+- 待用户在本机做：拉取后跑 `init.ps1`（云端没有 PowerShell）；GitHub 上删远端分支 `claude/wizardly-ride-peavwg`、`stage4c`。
+- 可选的下一个方向（用户还没选）：第 5 阶段上下文和限额整理（架构梳理问题 3、4）；钩子安全加固（待办 `hooks-fail-closed-001`）；交付质量（`deliverable-format-001`、`side_effects_qa` 的 `mutates_arguments`）；有第二个模型时做 4d-2、4d-4。
+- 小收尾还没做：删无人用的 `ContextManagedModel`、`scripts/` 下两个已不能运行的规划模式脚本、清理本分支 `feature_list.json` 里过时的团队待办。
+- 云端：个人环境 `Aletheia` 存着中转站密钥；评测设置见上一轮“云端会话的经验”。
+
 **服务商状态检测（2026-11-12 同一会话，最后做的）**
 - 用户在第 4 阶段结束后选了这个方向。方案和实现记录：`docs/provider_state_plan.md`，D-079。
 - 查明：我们的请求约 2,500 令牌；中转站平时加约 1.75 万隐藏内容，有时加约 4 千，有时报告的比发出的还少；请求 `gpt-5.6-luna`，响应都是 `gpt-6.1-sol`。代码题只在加大量内容时通过。
