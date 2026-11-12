@@ -691,3 +691,14 @@
 - 用户的三份中文笔记（`planner.py`、`step_executor.py`、`tool_calling_step_runner.py` 里未提交的文档字符串）随文件删除；用户在删除前确认已自行保存（“已保存，做 4c-3”），删除前核对过哈希。
 - 证据：`init.ps1` 1731 项通过、16 项跳过；方案第 14 节。真实模型评测待用户授权。
 - 来源：用户 2026-11-11“都按建议”（第 7 节）、“写设计吧，可以调用codeX”、测试清单“可以”、“继续 4c-2”、“已保存，做 4c-3”、“继续 4c-4”。Codex 额度用完（11 月 15 日恢复），4c 由 Claude 实现。
+
+## D-077 2026-11-12 第 4 阶段收尾：4c 并入 main，交接文件移到独立分支
+
+- 4c 留出集在服务商状态基本正常时复跑：12/13，达到标准（[第 4 阶段方案](stage4_plan.md) 第 14 节“4c 留出集复跑”）。`stage4c`（`70f7470` 4b、`25aa47c` 4c）快进并入 `main`。调参集单一循环 9/11 低于 4b 合并重跑的 11/11，但 4b 首次也是 9/11，少的两题一题是老问题、一题只出现一次（方案第 14 节“4c 评测”），用户同意据留出集结果并入。
+- 交接文件不再放在 `main` 上：`session-handoff.md`、`progress.md`、`feature_list.json`、`docs/harness/baseline.md` 和 `docs/harness/history/`（基线清单和旧状态存档）移到独立的 `handoff` 分支（与 `main` 没有共同历史，路径不变），检出在仓库内的 `.handoff/`（加进 `.gitignore`）。原因：这些文件只是 Agent 之间（两个 Claude 账号、Codex）交接用的，用户不想让它们污染主分支（用户 2026-11-12“交接文档只是让你和另一个claude账号通信的”，选“单独一个分支”）。`init.ps1` 不再要求这些文件，有 `.handoff/` 时照旧校验功能表；`AGENTS.md`、`CLAUDE.md`、README、文档索引、Harness 手册、clean-state 清单、总交接里的入口改为指向 `.handoff/`。`main` 上旧文档里指向这些文件的链接是历史记录，不逐一改写。
+- 删掉无人读取的 `agent_planning_timeout_seconds`（`app/config.py`、`.env.example`）。配置忽略多余项，用户本机 `.env` 里留着这一行也能载入；是否删那一行由用户自己决定。
+- 暂不做：循环一步内多次模型调用之间检查令牌预算（D-076 已记下现状，等 4d 模型档案一并考虑）；`SessionService` 单独成类（第 4 阶段方案 4a 只拆出了 `RunAssembler`，目前没有需要）。
+- 已知遗留：`scripts/validate_multi_runner_live.py`、`scripts/validate_summary_context.py` 仍按已删除的规划模式写（`AgentRuntime`、`max_replans`、`planning_timeout_seconds`），4c 起已不能运行；用户本机工作区里这两个文件本来就是删除状态（用户自己的差异），这里不动。
+- 重复工作：另一个会话从过时的 `main` 交接出发，在 `claude/wizardly-ride-peavwg` 上重做了一遍 4b（`8c8938f`），与 `stage4c` 的 `70f7470` 重复，未合并，分支已删除。交接文件独立成分支后，新会话从 `handoff` 分支读到的就是最新状态，不再受 `main` 是否合并的影响。
+- 来源：用户 2026-11-12“重跑下留出集吧，然后等这个验证通过再搞”“你能帮我跑吗，那在云端跑吧”“可以”。
+

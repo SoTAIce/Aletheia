@@ -5,7 +5,7 @@
 ## Startup Workflow
 
 1. 查看 `git status --short` 和 `git log -1 --oneline`；保留已有修改、删除和未跟踪文件。
-2. 阅读 [当前交接](session-handoff.md)、[功能状态](feature_list.json)、[进度](progress.md)。
+2. 阅读交接文件：`.handoff/session-handoff.md`、`.handoff/feature_list.json`、`.handoff/progress.md`。它们不在 `main` 上，只在独立的 `handoff` 分支里（用户 2026-11-12 决定，D-077），检出在仓库内的 `.handoff/` 工作树（已被 `.gitignore` 忽略）。没有这个目录时先运行 `git fetch origin handoff` 和 `git worktree add .handoff handoff`；已有时在 `.handoff/` 里 `git pull`。
 3. 首次接手读 [项目总交接](docs/PROJECT_HANDOVER.md) 和 [决策记录](docs/DECISIONS.md)，以后按 [文档索引](docs/DOCUMENT_INDEX.md) 按需读取。
 4. 在根目录运行只读健康检查。失败先记录，不自动安装依赖或改配置来制造通过。
 5. 明确目标、涉及文件和验收。One feature at a time；待办建议不代表授权。
@@ -16,7 +16,7 @@
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1
 ```
 
-做管理文件、JSON、Python compile、CLI 加载检查，并运行确定性 pytest 套件（basetemp 放在 TEMP）；不执行模型、MCP、数据库或完整任务。启动时再运行 [基线核对](docs/harness/baseline.md)。
+做管理文件、JSON、Python compile、CLI 加载检查，并运行确定性 pytest 套件（basetemp 放在 TEMP）；不执行模型、MCP、数据库或完整任务。启动时再运行基线核对（`.handoff/docs/harness/baseline.md`）。
 原 tests/ 和验证脚本曾按用户要求删除；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-11 为 1731 项通过、16 项跳过；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，历史开启记录为 1231 项通过，本轮未运行）。历史 1093/2 不是当前回归。后续行为修改须恢复对应测试或在 tests/ 中补充测试；参见 [清理记录](docs/project_cleanup.md)。
 
 ## Global Invariants
@@ -36,7 +36,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1
 
 ## Scope and Evidence
 
-- feature_list.json 记录功能 status、依赖与证据；session-handoff.md 记录当前任务和下一步；progress.md 记录执行结果。
+- `.handoff/` 里的 feature_list.json 记录功能 status、依赖与证据；session-handoff.md 记录当前任务和下一步；progress.md 记录执行结果；基线清单也在那里。这些文件只用于 Agent 之间交接，绝不提交到 `main`。
 - 当前代码/命令优先于旧计划；历史报告解释决策。冲突须查证，不能沿用旧“运行中/未实现”。
 - 按主题读取，不默认加载全部 docs 或历史归档；区分冻结 HEAD 与当前脏工作区。
 - 多 Agent 工作先划清所有权与合并方式，不默认并发写同一文件。
@@ -50,7 +50,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1
 
 ## End of Session / Next steps
 
-更新 feature_list.json、progress.md、session-handoff.md（新决策写入 docs/DECISIONS.md），附命令和证据位置，再检查 Git 状态。
+更新 `.handoff/` 里的 feature_list.json、progress.md、session-handoff.md，附命令和证据位置，在 `.handoff/` 里提交并推送 `handoff` 分支（只放交接文件；推送仍按本轮授权）。新决策写入 `main` 的 docs/DECISIONS.md。再检查两边的 Git 状态。
 逐项完成 [clean-state 清单](docs/harness/clean-state-checklist.md)；需要评审时用 [evaluator-rubric](docs/harness/evaluator-rubric.md)。
 Clean handoff 指状态清楚、可恢复，不要求清空用户脏工作区；历史只归档，不覆盖当前交接。
 维护规则见 [Harness 手册](docs/harness/README.md)。

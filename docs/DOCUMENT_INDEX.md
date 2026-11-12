@@ -38,9 +38,9 @@
 | [评测集说明](../bench/README.md) | 任务、运行命令、授权与上限、判定口径 |
 | [single/team 前端任务对照 2026-11-04](harness/frontend-compare-2026-11-04.md) | 真实模型各跑 1 次单文件 HTML 任务：single、team 都失败（0/1），未产出 HTML |
 | [Team 一致性审查 2026-11-04](harness/team-audit-2026-11-04.md) | Team V1 文档声明逐条对照代码；历史 Team 测试 68 passed；修订上限表述更正 |
-| [已记录基线](harness/baseline.md) | HEAD + 工作区差异哈希清单（[JSON](harness/history/baseline-2026-11-06.json)）及核对命令 |
+| 已记录基线（`handoff` 分支的 `docs/harness/baseline.md`） | HEAD + 工作区差异哈希清单（同分支 `docs/harness/history/`）及核对命令 |
 | [AGENTS.md](../AGENTS.md)、[CLAUDE.md](../CLAUDE.md) | 公共工程约束与 Claude 入口 |
-| [session-handoff.md](../session-handoff.md)、[progress.md](../progress.md)、[feature_list.json](../feature_list.json) | 当前状态、执行记录、功能证据 |
+| `session-handoff.md`、`progress.md`、`feature_list.json` | 当前状态、执行记录、功能证据；2026-11-12 起只在独立的 `handoff` 分支上，检出到仓库内的 `.handoff/`（D-077，见 AGENTS.md） |
 
 ## Agent 执行与路由
 
@@ -98,7 +98,7 @@
 | 文件 | 注意事项 |
 | --- | --- |
 | [project_cleanup.md](project_cleanup.md) | 测试/脚本/临时产物清理与外部 TEMP 备份；10 个权限残留；原报告不改写 |
-| [旧管理状态](harness/history/2026-11-04-state-before.json) | 原 AGENTS/feature/progress/handoff 和保护哈希；历史参考，勿当活动指令 |
+| 旧管理状态（`handoff` 分支的 `docs/harness/history/2026-11-04-state-before.json`） | 原 AGENTS/feature/progress/handoff 和保护哈希；历史参考，勿当活动指令 |
 | [本轮验收](harness/validation-2026-11-04.md) | 只读检查、链接覆盖、源码与原文保护及证据限制 |
 
 维护：新增 docs 应增加索引，重大事实变化先更新总交接；计划保留当时上下文，新阶段明确其接续关系，避免删除负面实验或把旧授权当新授权。

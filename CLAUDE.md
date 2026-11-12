@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 入口
 
 请先阅读并遵循 [AGENTS.md](AGENTS.md)，它是本仓库唯一的公共工程指令入口（全局不变量、完成定义、会话收尾都在那里，这里不重复）。
-随后读取 [当前会话交接](session-handoff.md) 和 [项目总交接](docs/PROJECT_HANDOVER.md)。
+随后读取当前会话交接 `.handoff/session-handoff.md`（在独立的 `handoff` 分支上，检出方法见 AGENTS.md 启动第 2 步）和 [项目总交接](docs/PROJECT_HANDOVER.md)。
 按 [文档索引](docs/DOCUMENT_INDEX.md) 加载相关主题，不必一次读取全部历史文件。代码和文档注释里的 `D-0xx` 指 [决策记录](docs/DECISIONS.md) 中的条目。
 历史报告中的测试与 API 授权不可直接沿用；以当前文件、用户要求和实际验证为准。
 

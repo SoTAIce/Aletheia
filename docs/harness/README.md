@@ -8,9 +8,9 @@
 | --- | --- | --- |
 | [AGENTS.md](../../AGENTS.md) | 短入口、全局不变量、验收纪律 | 每个会话启动；约束变化时更新 |
 | [CLAUDE.md](../../CLAUDE.md) | 引导 Claude 到同一入口 | Claude 启动；不复制另一套规则 |
-| [session-handoff.md](../../session-handoff.md) | 当前任务、阻塞、下一步 | 每轮启动/结束；当前段覆盖旧状态 |
-| [feature_list.json](../../feature_list.json) | 功能 ID、依赖、status、证据与待办 | 选择任务和完成验收时 |
-| [progress.md](../../progress.md) | 精简执行日志、命令结果 | 每阶段结束追加 |
+| `session-handoff.md`（`handoff` 分支） | 当前任务、阻塞、下一步 | 每轮启动/结束；当前段覆盖旧状态 |
+| `feature_list.json`（`handoff` 分支） | 功能 ID、依赖、status、证据与待办 | 选择任务和完成验收时 |
+| `progress.md`（`handoff` 分支） | 精简执行日志、命令结果 | 每阶段结束追加 |
 | [PROJECT_HANDOVER.md](../PROJECT_HANDOVER.md) | 系统架构、模块入口、已知边界和结论 | 首次接手/跨模块工作；系统事实变化时 |
 | [DOCUMENT_INDEX.md](../DOCUMENT_INDEX.md) | 原始报告/计划及版本关系 | 深入具体模块时 |
 | [init.ps1](../../init.ps1) | Windows 只读健康检查，打印标准启动/验证路径 | 启动与本轮交付前 |
@@ -19,9 +19,9 @@
 | [evaluator-rubric.md](evaluator-rubric.md) | 6 维 0–2 分评审，Accept/Revise/Block | 任务验收、周期复核 |
 | [quality-document.md](quality-document.md) | 领域/层 A–D 质量评级与可观测性现状 | 周期性清理时复核 |
 | [合规审查](conformance-audit-2026-11-04.md) | 与课程的逐项对照和剩余缺口 | 调整 harness 时 |
-| [baseline.md](baseline.md) | 已记录基线：HEAD + 工作区差异哈希清单 + 核对命令 | 启动核对；未提交时每轮结束刷新 |
+| `docs/harness/baseline.md`（`handoff` 分支） | 已记录基线：HEAD + 工作区差异哈希清单 + 核对命令 | 启动核对；未提交时每轮结束刷新 |
 
-历史管理文件见 [状态存档](history/2026-11-04-state-before.json)，用于追溯，不是活动指令。旧 docs 原文不覆盖；其中过时表述通过索引和总交接纠正，不静默改写实验历史。
+2026-11-12 起（D-077），交接文件（session-handoff.md、feature_list.json、progress.md）、基线说明和 `history/` 下的清单与状态存档都移到独立的 `handoff` 分支，不再放在 `main` 上；检出到仓库内的 `.handoff/`（已被 `.gitignore` 忽略），方法见 AGENTS.md。`main` 上旧文档里指向这些文件的链接是历史记录，去 `handoff` 分支的同名路径查看。历史管理文件见该分支的 `docs/harness/history/2026-11-04-state-before.json`，用于追溯，不是活动指令。旧 docs 原文不覆盖；其中过时表述通过索引和总交接纠正，不静默改写实验历史。
 
 ## 工作闭环
 

@@ -155,7 +155,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1
 
 ## 维护与交接
 
-先读 [AGENTS.md](AGENTS.md)，再读 [当前会话交接](session-handoff.md) 和 [项目总交接](docs/PROJECT_HANDOVER.md)，其他文档按 [文档索引](docs/DOCUMENT_INDEX.md) 查找。
+先读 [AGENTS.md](AGENTS.md)，再读当前会话交接（`handoff` 分支上的 `session-handoff.md`，见 AGENTS.md）和 [项目总交接](docs/PROJECT_HANDOVER.md)，其他文档按 [文档索引](docs/DOCUMENT_INDEX.md) 查找。
 
 ## 本地数据
 

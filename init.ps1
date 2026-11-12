@@ -13,34 +13,39 @@ try {
 import json, pathlib, sys
 root = pathlib.Path.cwd()
 assert (3, 11) <= sys.version_info[:2] < (3, 14), 'Python 3.11-3.13 required'
-for name in ('AGENTS.md', 'CLAUDE.md', 'progress.md', 'session-handoff.md',
+for name in ('AGENTS.md', 'CLAUDE.md',
              'docs/PROJECT_HANDOVER.md', 'docs/DOCUMENT_INDEX.md', 'docs/harness/README.md',
              'docs/DECISIONS.md', 'docs/harness/clean-state-checklist.md',
              'docs/harness/evaluator-rubric.md', 'docs/harness/quality-document.md',
-             'docs/harness/baseline.md', 'tests/test_harness_smoke.py'):
+             'tests/test_harness_smoke.py'):
     assert (root / name).is_file(), f'Missing management file: {name}'
-state = json.loads((root / 'feature_list.json').read_text(encoding='utf-8-sig'))
-features = state['features']
-assert isinstance(features, list) and features, 'Missing feature records'
-ids = [f['id'] for f in features]
-assert len(ids) == len(set(ids)), 'Duplicate feature IDs'
-for feature in features:
-    for key in ('id', 'name', 'description', 'status'):
-        assert isinstance(feature[key], str) and feature[key].strip(), f'Invalid {key}'
-    assert feature['status'] in {'planned', 'in_progress', 'blocked', 'partial', 'done', 'deferred'}, 'Unknown status'
-    assert isinstance(feature.get('dependencies', []), list), 'Dependencies must be a list'
-    assert all(dep in ids for dep in feature.get('dependencies', [])), 'Unknown dependency'
-    if feature['status'] == 'done':
-        assert feature.get('evidence'), f'Missing completion evidence: {feature["id"]}'
-active = state.get('active_feature')
-assert active is None or active in ids, 'Unknown active feature'
-running = [f['id'] for f in features if f['status'] == 'in_progress']
-assert running == ([] if active is None else [active]), 'Active feature/status mismatch'
+# Handoff files live on the separate `handoff` branch, checked out at .handoff/ (AGENTS.md).
+# Validate the feature list when that worktree is present; main does not require it.
+feature_file = root / '.handoff' / 'feature_list.json'
+state = json.loads(feature_file.read_text(encoding='utf-8-sig')) if feature_file.is_file() else None
+if state is not None:
+    features = state['features']
+    assert isinstance(features, list) and features, 'Missing feature records'
+    ids = [f['id'] for f in features]
+    assert len(ids) == len(set(ids)), 'Duplicate feature IDs'
+    for feature in features:
+        for key in ('id', 'name', 'description', 'status'):
+            assert isinstance(feature[key], str) and feature[key].strip(), f'Invalid {key}'
+        assert feature['status'] in {'planned', 'in_progress', 'blocked', 'partial', 'done', 'deferred'}, 'Unknown status'
+        assert isinstance(feature.get('dependencies', []), list), 'Dependencies must be a list'
+        assert all(dep in ids for dep in feature.get('dependencies', [])), 'Unknown dependency'
+        if feature['status'] == 'done':
+            assert feature.get('evidence'), f'Missing completion evidence: {feature["id"]}'
+    active = state.get('active_feature')
+    assert active is None or active in ids, 'Unknown active feature'
+    running = [f['id'] for f in features if f['status'] == 'in_progress']
+    assert running == ([] if active is None else [active]), 'Active feature/status mismatch'
 sources = sorted((root / 'app').rglob('*.py'))
 assert sources, 'Missing application sources'
 for source in sources:
     compile(source.read_bytes(), str(source), 'exec')
-print(f'Management state valid; syntax PASS: {len(sources)} Python files')
+handoff = 'feature list valid' if state is not None else 'no .handoff/ worktree, feature list not checked'
+print(f'Management files present; {handoff}; syntax PASS: {len(sources)} Python files')
 '@
     $check | & $python -B -
     if ($LASTEXITCODE -ne 0) { throw 'Static health check failed' }

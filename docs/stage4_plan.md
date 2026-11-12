@@ -621,7 +621,7 @@ Codex 做完 `RunAssembler` 后又卡住了 20 多分钟（同样停在 `node_re
 - `RagAgentService` 删除 `planner_model`、`max_replans`、`planning_timeout_seconds`；`single_runner` 只收 `'loop'`，传 `'plan'` 报“single_runner plan was removed in stage 4c (D-076); use loop”。每个任务都建 `RunMemory`，`_models` 只给一个模型，`run_options()['runners']` 为 `['loop']`。
 - `RunAssembler` 删除 `planner_model_injected`、`prepare_planner_model`、`planner_model`、`runtime_factory` 和 `AgentRuntime` 分支。
 - 命令行、网页后端、评测的 `--single-runner` 只剩 `loop`；命令行删除 `--max-replans`。网页请求的 `runner` 只收 `'loop'`，传 `'plan'` 返回 400（参数校验失败，代码 `invalid_input`，与其他非法选项相同）；页面删除“按计划”选项，下拉框默认隐藏。
-- `app/config.py` 的 `agent_planning_timeout_seconds` 没有删：`.env` 里可能还有这一项，删掉配置字段要另改 `.env.example`；现在没有代码读它。
+- `app/config.py` 的 `agent_planning_timeout_seconds` 没有删：`.env` 里可能还有这一项，删掉配置字段要另改 `.env.example`；现在没有代码读它。（2026-11-12 已删，`.env.example` 同步去掉；配置忽略多余项，旧 `.env` 里留着这一行也能正常载入。D-077）
 
 **测试：**
 - 整个删除 15 个文件：13.2 的 14 个，加上 `tests/agent/test_context_integration.py`（两项规划器测试；另两项已迁到 `test_loop_run_guarantees.py`；“溢出恢复超时不重放”由期望值文件 `test_host_boundaries_timeout-overflow` 覆盖）。
@@ -670,3 +670,13 @@ Codex 做完 `RunAssembler` 后又卡住了 20 多分钟（同样停在 `node_re
 
 结论：调参集看不出 4c 的回退（团队持平；单一循环少的两题，一题是老问题，一题只出现一次）。留出集 6/13 低于标准，但 7 道失败里有 6 道处在服务商的少开销状态，另一道以往一直失败；代码题的失败和这个状态高度相关（4 次评测里，代码题处在少开销状态共 6 次，全部失败；开销正常共 18 次，全部通过），仍属相关，没有证明因果。按 D-035 不据此调提示。要拿可比的数字，可以在服务商状态正常时重跑留出集；用户 2026-11-11 决定今天先停在 4c，是否重跑另定。
 
+### 4c 留出集复跑（2026-11-12，用户“重跑下留出集吧”“那在云端跑吧”）
+
+在云端会话里跑，代码是 `stage4c` 分支的 `25aa47c`，设置与用户本机 `.env` 相同（中转站上的 `gpt-5.6-luna`，`AGENT_MODEL_CONTEXT_TOKENS=128000`，模型和单步时限 90/240 秒，`RAG_JSON_MODE=true`，`RAG_ENABLE_THINKING=false`）。留出集单一循环，每题 1 次，只交答案，`--max-runs 13`。输出 `output/bench-holdout-loop-4c-rerun.json`、`answers-holdout-4c-rerun/`、`traces-holdout-4c-rerun/`（只在那次云端会话里，没有拷回本机）。
+
+结果 **12/13**，达到不低于 10/13 的标准。
+- 唯一失败的是 `side_effects_qa`（5 项过 4 项，缺 `mutates_arguments`），以往 4 次都在这一项失败，和服务商状态无关。
+- 有 3 题第一次请求处在约 6,400 的少开销状态（`call_chain_qa` 6,664、`role_perms_qa` 6,431、`side_effects_qa` 6,467），都是问答题；其余 10 题约 2 万，全部通过，包括上次失败的 4 道代码题。
+- 代码题和少开销状态的相关性维持不变：这次代码题都处在正常状态，全部通过（累计正常 24 次全部通过，少开销 6 次全部失败）。
+
+结论：4c 留出集通过，可以并入 `main`（用户 2026-11-12“可以”，D-077）。

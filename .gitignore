@@ -53,3 +53,6 @@ Thumbs.db
 
 # Private conversation and tool artifacts
 data/conversations/
+
+# Handoff branch worktree (session-handoff.md, progress.md, feature_list.json; see AGENTS.md)
+.handoff/
