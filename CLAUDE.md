@@ -13,6 +13,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 默认用中文回复用户，不要中英夹杂。用户能看到的所有文字都用中文：正文、每轮结束时下一步框里的总结、问题和按钮、任务列表的步骤名、工作途中的进度说明。只有文件路径、命令、代码里的名字和提交号保留原样，放在代码格式里。
 
+## 分工和会话
+
+- **Codex 实施，Claude 写方案和审查**（用户 2026-11-08 定）：要改代码的任务，Claude 先在 `docs/` 写方案（要改的文件、测试、记录和约束），用 Agent 工具派 `codex:codex-rescue` 子代理实现，做完逐项审查（范围、用户未提交改动、`init.ps1`、基线核对）。派出去后挂后台监视，任务日志 20 分钟没更新就当作卡住，先用 `git status` 收下已完成的部分。Codex 没额度、没登录或报错时，告诉用户，由 Claude 自己实施。一两行的小改动、文档和只读排查由 Claude 直接做。
+- **可以自己开多个会话**（用户 2026-11-06 定）：任务确实能拆成互不依赖、不改同一批文件的几块时，可以分头开新会话，每份说明写清范围、文件和完成标准，并要求遵守 `AGENTS.md`。这不扩大其他授权：真实模型调用、提交、推送仍要用户逐项同意。
+
 ## 常用命令
 
 Windows + PowerShell，解释器优先用 `.venv/Scripts/python.exe`（Python 3.11–3.13）。
@@ -23,7 +28,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1
 
 # 单独跑测试（basetemp 放到 TEMP 下的新目录，不要写进仓库）
 .venv/Scripts/python.exe -m pytest -q -p no:cacheprovider --basetemp $env:TEMP/aletheia-pytest-x
-.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/agent/test_runtime.py::test_name
+.venv/Scripts/python.exe -m pytest -q -p no:cacheprovider tests/test_loop_run.py::test_name
 # 真实容器测试默认跳过，需 Docker 和 aletheia-sandbox:py313 镜像：$env:ALETHEIA_DOCKER_TESTS='1'
 ```
 
@@ -39,17 +44,16 @@ pytest 配置在 `pyproject.toml`（`asyncio_mode = "auto"`，测试只在内存
 
 ## 架构概览
 
-**任务主循环（`app/agent/`）**：`runtime.py` 的 `AgentRuntime` 有界地顺序组合各组件——`planner.py` 产出计划提议 → `executor.py` 校验并安装到 `WorkingMemory`（过期提议抛 `StalePlanError`）→ `step_executor.py` 用某个 Runner 执行单步、校验输出并提交结果 → 失败时有限次重规划。Runner 只返回输出，不直接改权威状态。
+**任务运行（`app/agent/`）**：每个任务是一个循环（D-076）。`loop_run.py` 的 `LoopRun` 负责宿主保证：锁、重新绑定后旧执行器作废、取消后不提交、版本校验、预算、单步时限、副作用监视、执行次数上限、失败分类，以及 `plan`/`step` 事件和追踪区间；任务状态在 `app/models/run_state.py` 的 `RunState`/`RunMemory`。执行器只返回输出，由 `LoopRun` 提交。结果和失败分类在 `runtime.py`（`AgentRunResult`、`FAILURE_MESSAGES`）。规划模式和规划—执行骨架已在第 4 阶段删除。
 
-**执行模式**：`route_selection.py` 每个任务在规划前选一次模式（先走宿主规则，再一次有界模型调用，失败回落到 single），同时判断任务是否写文件，只读任务看不到写入和运行类工具。
-- single：`tool_calling_step_runner.py`，逐步调用工具的标准 Runner。
-- loop：`agent_loop.py`，整个任务通过固定的单步计划进入一个工具循环，自带 `todo` / `ask_user` 控制工具，阻塞后可在内存中续跑。
-- team：`team_v2.py`，Lead 只有 `delegate`/`review` 工具，每次委派都起一个新的 single Runner；共享状态在工作区文件里，完成由宿主判定。
-- `runner_registry.py` / `runner_router.py` / `routing_step_runner.py` 负责按能力路由；能力需求来自应用代码，不来自模型。
+**执行模式**：`route_selection.py` 每个任务开始前选一次模式（先走宿主规则，再一次有界模型调用，失败回落到 single），同时判断任务是否写文件，只读任务看不到写入和运行类工具。`app/services/run_assembler.py` 的 `RunAssembler` 按模式选执行器工厂并建 `LoopRun`。
+- single：`agent_loop.py` 的 `AgentLoopRunner`，整个任务一个工具循环，纯文本即最终答案，自带 `todo` / `ask_user` 控制工具，阻塞后在内存中接着原来的消息续跑；`--delegate` 时用 `delegation.py` 的 `ExploreLoopRunner`，可以把只读调研交给子循环（默认关闭）。
+- team：`delegation.py` 的 `DelegatingLoopRunner`，负责人也是一个循环，只有宿主工具 `delegate`/`review`，每次委派都起一个全新上下文的子循环成员；共享状态在工作区文件里，完成由宿主判定（D-075）。
+- `step_runner.py` 是执行器接口（`RunnerDependencies`、`RunnerFactory`、错误类型）；能力需求来自应用代码，不来自模型。
 
 **横切机制**：`hooks.py`（观察者 + 只能拒绝的门控，通过上下文变量挂到 `HookedTool`/`HookedModel` 上，事件不带工具输出或模型原文）；`run_meter.py`（预算计量）；`side_effects.py`（外部副作用不确定时不重试）；`trace.py` / `trace_view.py`（本地轨迹）。
 
-**服务层**：`app/services/rag_agent_service.py` 是面向会话的门面（CLI 和 Web 都经过它），持有工具注册表和 `AgentRuntime`。记忆分三层：`app/models/conversation_memory.py`（会话视图）、`app/models/working_memory.py`（任务真值）、`app/services/context_manager.py`（只做投影）；`conversation_archive.py` 归档原文，`summary_scheduler.py` 做后台摘要。长期记忆以 PostgreSQL（`postgres_memory_store.py`）为准，Milvus（`memory_vector_index.py`）是可重建的索引。RAG 检索链：`rag_search_service.py`（稠密 / BM25 / 混合）→ `reciprocal_rank_fusion.py` → `rag_reranker_service.py`。
+**服务层**：`app/services/rag_agent_service.py` 是面向会话的门面（CLI 和 Web 都经过它），持有工具注册表和每个任务的 `LoopRun`，选择和组装交给 `run_assembler.py`。记忆分三层：`app/models/conversation_memory.py`（会话视图）、`app/models/run_state.py`（任务真值）、`app/services/context_manager.py`（只做投影）；`conversation_archive.py` 归档原文，`summary_scheduler.py` 做后台摘要。长期记忆以 PostgreSQL（`postgres_memory_store.py`）为准，Milvus（`memory_vector_index.py`）是可重建的索引。RAG 检索链：`rag_search_service.py`（稠密 / BM25 / 混合）→ `reciprocal_rank_fusion.py` → `rag_reranker_service.py`。
 
 **工具（`app/tools/`）**：都注册进 `tool_registry.py`。文件系统、联网搜索（Tavily）和沙箱（Docker）都是 stdio MCP 子进程（各子目录下的 `server.py`），经 `mcp_client.py` + `mcp_tool_adapter.py` 接入；MCP 连接的进入和退出必须在同一个 asyncio task 里，并覆盖整个执行期。
 

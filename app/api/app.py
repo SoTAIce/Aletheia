@@ -44,7 +44,7 @@ class RunOptionsIn(BaseModel):
     """Choices for one message; an omitted one takes the server default (D-051)."""
     model_config = ConfigDict(extra='forbid')
     mode: Literal['single', 'team', 'auto'] | None = None
-    runner: Literal['plan', 'loop'] | None = None
+    runner: Literal['loop'] | None = None        # plan mode was removed (D-076)
     write: StrictBool | None = None
     memory: StrictBool | None = None
     workspace: str | None = None                 # workspace-001: the working directory for this task

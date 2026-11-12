@@ -9,7 +9,6 @@ import pytest
 from app.agent.delegation import DelegatingLoopRunner, DelegationOptions, READ_TOOLS
 from app.agent.step_models import ModelTurn, ToolMessage, StepOutcome
 from app.agent.team.models import TeamError
-from app.agent.tool_calling_step_runner import ToolCallingStepRunner
 from test_sandbox_step1 import _context
 from test_sandbox_step3 import FakeTool, call
 from app.tools.tool_registry import ToolRegistry
@@ -213,12 +212,12 @@ async def test_service_uses_delegating_loop_factory_and_one_step_runtime(monkeyp
     monkeypatch.setattr(service_module, 'LoopRun', runtime)
     model = AsyncMock()
     model.generate.return_value = text('answer')
-    async with RagAgentService(model=model, planner_model=AsyncMock(), mcp_servers=(),
+    async with RagAgentService(model=model, mcp_servers=(),
             include_knowledge=False, memory_directory='', execution_mode='team',
             team_options=DelegationOptions(timeout_seconds=3)) as service:
         result = await service.query_result('Explain this', 'test')
     assert isinstance(captured['instance']._runner.runner, DelegatingLoopRunner)
-    assert captured['step_timeout_seconds'] >= 8 and captured['max_replans'] == 0
+    assert captured['step_timeout_seconds'] >= 8 and 'max_replans' not in captured
     assert result.status is TaskStatus.COMPLETED and result.content == 'answer'
     assert result.execution_count == 1 and result.replan_count == 0 and model.generate.await_count == 1
     assert result.step_log[0]['runner'] == 'agent_team'
@@ -305,23 +304,6 @@ def test_cli_builds_delegation_options_for_team_mode():
     assert {'write_file', 'run_tests', 'run_python'} <= options.allowed_tools and options.timeout_seconds == 400
     assert team_options_for('team', None).allowed_tools == READ_TOOLS
     assert team_options_for('single', 'w', True) is None
-
-
-async def test_single_step_planner_never_calls_the_planning_model():
-    from app.agent.agent_loop import TeamPlanner
-    from app.models.taskstate import TaskState
-    from app.models.working_memory import WorkingMemory
-
-    class NoModel:
-        async def generate(self, prompt):
-            raise AssertionError('planning model must not be called')
-    memory = WorkingMemory(TaskState('u', 'a long goal ' * 100))
-    memory.task_state.start_planning()
-    planner = TeamPlanner(NoModel(), max_steps=1)
-    proposal = await planner.plan(planner.build_context(memory))
-    assert proposal.steps == (TeamPlanner.STEP,) and len(TeamPlanner.STEP) <= planner.max_step_length
-    with pytest.raises(ValueError, match='use plan'):
-        await planner.replan(planner.build_context(memory))
 
 
 def test_bench_recognizes_planning_failures(monkeypatch):
@@ -471,20 +453,27 @@ async def test_team_turn_limit_uses_loop_budget():
 
 import asyncio
 from bench import run_bench
-from app.agent.planner import Planner
-from app.agent.runtime import AgentRuntime
+from app.agent.agent_loop import AgentLoopRunner, LOOP_STEP, LoopResumeStore
+from app.agent.loop_run import LoopRun
 from app.agent.step_models import StepRunOutput
-from app.models.taskstate import TaskState, TaskStatus, StepStatus
-from app.models.working_memory import WorkingMemory, StaleExecutionError
+from app.models.run_state import RunMemory, RunState
+from app.models.taskstate import TaskStatus
+from app.models.run_state import StaleExecutionError
 from app.services.context_manager import ContextManager
 
+
+def _loop_factory(deps):
+    return AgentLoopRunner(deps.model, deps.tool_registry, None, deps.context_manager, LoopResumeStore())
+
+
 def runtime_fixture(**kwargs):
-    model, planner_model = AsyncMock(), AsyncMock()
-    model.generate.return_value = ModelTurn('{"status":"succeeded","content":"done","reason":null}')
-    planner_model.generate.return_value = '{"steps":["Do work"],"reason":null}'
-    memory = WorkingMemory(TaskState('u', 'goal'))
-    runtime = AgentRuntime(Planner(planner_model), model, memory, ToolRegistry(), **kwargs)
-    return runtime, memory, model, planner_model
+    """A LoopRun over a fresh RunMemory (stage 4c: these host guarantees moved off AgentRuntime)."""
+    model = AsyncMock()
+    model.generate.return_value = ModelTurn('done')
+    memory = RunMemory(RunState('u', 'goal'))
+    kwargs.setdefault('runner_factory', _loop_factory)
+    runtime = LoopRun(memory, model, ToolRegistry(), step_description=LOOP_STEP, **kwargs)
+    return runtime, memory, model
 
 
 def fake_factory(run):
@@ -499,15 +488,15 @@ def test_init_and_rebind_use_same_factory_inputs_and_atomic_replacement():
         if reject:
             raise ValueError('binding rejected')
         return SimpleNamespace(runner_id='tool_calling', run=AsyncMock(return_value=StepRunOutput('done')))
-    runtime, memory, model, planner = runtime_fixture(runner_factory=factory, max_tool_rounds=2, max_total_tool_calls=3)
+    runtime, memory, model = runtime_fixture(runner_factory=factory, max_tool_rounds=2, max_total_tool_calls=3)
     old = runtime._runner
     replacement_model, tools, manager = AsyncMock(), ToolRegistry(), ContextManager()
     reject = True
     with pytest.raises(ValueError):
-        runtime.rebind(Planner(planner), replacement_model, tools, context_manager=manager)
+        runtime.rebind(replacement_model, tools, context_manager=manager)
     assert runtime._runner is old
     reject = False
-    runtime.rebind(Planner(planner), replacement_model, tools, context_manager=manager)
+    runtime.rebind(replacement_model, tools, context_manager=manager)
     assert seen[-1].model is replacement_model and seen[-1].tool_registry.inner is tools   # side-effect watch (D-032)
     assert seen[-1].context_manager is manager and seen[-1].limits == seen[0].limits
     assert seen[-1].limits.max_tool_rounds == 2
@@ -516,21 +505,22 @@ def test_init_and_rebind_use_same_factory_inputs_and_atomic_replacement():
 
 
 async def test_rebind_after_blocked_uses_new_clients_preserves_counts_and_diagnostics():
-    runtime, memory, model, planner = runtime_fixture()
-    model.generate.return_value = ModelTurn('{"status":"blocked","content":"Which file?","reason":"Need file"}')
+    from app.agent.step_models import ToolCall
+    runtime, memory, model = runtime_fixture()
+    model.generate.return_value = ModelTurn(tool_calls=(ToolCall('q', 'ask_user', {'question': 'Which file?'}),))
     blocked = await runtime.run()
-    assert blocked.status is TaskStatus.BLOCKED
+    assert blocked.status is TaskStatus.BLOCKED and blocked.content == 'Which file?'
     question = memory.task_state.scratchpad.open_questions[0]
     memory.task_state.resolve_question(question.question_id, 'report.txt')
     replacement = AsyncMock()
-    replacement.generate.return_value = ModelTurn('{"status":"succeeded","content":"new client result","reason":null}')
-    runtime.rebind(Planner(planner), replacement, ToolRegistry(), context_manager=ContextManager())
+    replacement.generate.return_value = ModelTurn('new client result')
+    runtime.rebind(replacement, ToolRegistry(), context_manager=ContextManager())
     result = await runtime.run()
-    assert result.status is TaskStatus.COMPLETED and result.execution_count == 2 and result.replan_count == 0   # answering a question replans without spending the budget (D-033)
+    assert result.status is TaskStatus.COMPLETED and result.content == 'new client result'
+    assert result.execution_count == 2 and result.replan_count == 0   # answering does not spend a replan (D-033)
     assert model.generate.await_count == 1 and replacement.generate.await_count == 1
-    from app.agent.tool_calling_step_runner import ToolCallingStepRunner
-    assert isinstance(runtime._runner.runner, ToolCallingStepRunner)
-    assert [s['runner'] for s in result.step_log] == ['tool_calling', 'tool_calling']
+    assert isinstance(runtime._runner.runner, AgentLoopRunner)
+    assert [s['runner'] for s in result.step_log] == ['agent_loop', 'agent_loop']
 
 
 @pytest.mark.parametrize('late_failure', [False, True])
@@ -546,18 +536,18 @@ async def test_cancelled_runner_cannot_commit_even_when_it_swallows_cancellation
         if late_failure:
             raise StepToolError('late failed output')
         return StepRunOutput('late success')
-    runtime, memory, model, planner = runtime_fixture(runner_factory=fake_factory(run))
+    runtime, memory, model = runtime_fixture(runner_factory=fake_factory(run))
     task = asyncio.create_task(runtime.run())
     await entered.wait()
     with pytest.raises(RuntimeError):
-        runtime.rebind(Planner(planner), AsyncMock(), ToolRegistry(), context_manager=ContextManager())
+        runtime.rebind(AsyncMock(), ToolRegistry(), context_manager=ContextManager())
     task.cancel()
     await asyncio.sleep(0)
     release.set()
     with pytest.raises(asyncio.CancelledError):
         await task
     assert memory.task_state.status is TaskStatus.FAILED
-    assert memory.task_state.plan[0].status is StepStatus.FAILED
+    assert not runtime._steps                                   # no receipt: the late output never committed
     assert memory.task_state.active_step_id is None
     assert memory.task_state.scratchpad.intermediate_results == ()
 
@@ -570,8 +560,7 @@ async def test_timeout_rejects_suppressed_cancellation_result():
             await asyncio.Event().wait()
         except asyncio.CancelledError:
             return StepRunOutput('must not commit timed-out output')
-    runtime, memory, model, planner = runtime_fixture(runner_factory=fake_factory(run),
-                                            step_timeout_seconds=.02, max_replans=0)
+    runtime, memory, model = runtime_fixture(runner_factory=fake_factory(run), step_timeout_seconds=.02)
     result = await runtime.run()
     assert result.status is TaskStatus.FAILED
     assert memory.task_state.scratchpad.intermediate_results == ()
@@ -592,18 +581,18 @@ async def test_stale_output_or_cancel_cleanup_never_fails_new_goal(mode):
         if mode == 'invalid_output':
             return object()
         return StepRunOutput('old goal result')
-    runtime, memory, model, planner = runtime_fixture(runner_factory=fake_factory(run))
+    runtime, memory, model = runtime_fixture(runner_factory=fake_factory(run))
     task = asyncio.create_task(runtime.run())
     await entered.wait()
-    memory.record_failure('Old execution superseded')
-    memory.update_goal('new goal')
-    before = memory.snapshot()
+    # The application settles the task while the old execution is still running (RunState has no goal change).
+    memory.task_state.fail_task('Old execution superseded')
+    before = memory.task_state.snapshot()
     if mode == 'cancel':
         task.cancel()
     release.set()
     with pytest.raises(StaleExecutionError):
         await task
-    assert memory.snapshot() == before
+    assert memory.task_state.snapshot() == before
 
 
 async def test_service_stale_cleanup_preserves_new_task_and_records_old_turn(tmp_path, monkeypatch):
@@ -611,7 +600,7 @@ async def test_service_stale_cleanup_preserves_new_task_and_records_old_turn(tmp
     from app.models.conversation_memory import TurnStatus
     entered, release = asyncio.Event(), asyncio.Event()
     captured = []
-    class Runtime(AgentRuntime):
+    class Runtime(LoopRun):
         def __init__(self, *args, **kwargs):
             kwargs['runner_factory'] = fake_factory(run)
             super().__init__(*args, **kwargs)
@@ -620,21 +609,18 @@ async def test_service_stale_cleanup_preserves_new_task_and_records_old_turn(tmp
         entered.set()
         await release.wait()
         raise ValueError('late invalid implementation result')
-    monkeypatch.setattr(module, 'AgentRuntime', Runtime)
-    planner = AsyncMock()
-    planner.generate.return_value = '{"steps":["Do work"],"reason":null}'
-    async with module.RagAgentService(model=AsyncMock(), planner_model=planner, mcp_servers=(),
+    monkeypatch.setattr(module, 'LoopRun', Runtime)
+    async with module.RagAgentService(model=AsyncMock(), mcp_servers=(), single_runner='loop',
                                       include_knowledge=False, memory_directory=tmp_path) as service:
         task = asyncio.create_task(service.query_result('original goal', 's', request_id='old'))
         await entered.wait()
         memory = captured[0]
-        memory.record_failure('Superseded by the application')
-        memory.update_goal('new goal')
-        before = memory.snapshot()
+        memory.task_state.fail_task('Superseded by the application')
+        before = memory.task_state.snapshot()
         release.set()
         with pytest.raises(StaleExecutionError):
             await task
-        assert memory.snapshot() == before
+        assert memory.task_state.snapshot() == before
         turn = service._conversations['s'].archive.read_turn('request:old')
         assert turn.status is TurnStatus.FAILED and turn.messages[0].content == 'original goal'
 
@@ -691,17 +677,6 @@ def _four_writes():
     return [call(f'w{i}', 'write_file', path=f'{n}.py', content=n * 3000) for i, n in enumerate('abcd', 1)]
 
 
-async def test_plain_worker_overflows_on_whole_file_writes():
-    # Reproduces the live failure: prepare() never shrinks write_file arguments.
-    from app.agent.step_runner import StepModelError
-    from app.services.context_manager import ContextManager
-    model = Scripted(*_four_writes(), call('w5', 'run_tests', path='t.py'), text('done'))
-    runner = ToolCallingStepRunner(model, _registry(*_sandbox_tools()), 12, 24, require_step_outcome=True,
-                                   context_manager=ContextManager(window_tokens=7000))
-    with pytest.raises(StepModelError, match='ContextBudgetError'):
-        await runner.run(_context())
-
-
 async def test_worker_view_keeps_only_the_latest_file_body_when_near_the_window():
     from app.services.context_manager import ContextManager
     model = Scripted(delegate('l1'), *_four_writes(), call('w5', 'run_tests', path='t.py'), text('done'))
@@ -756,30 +731,6 @@ async def test_strong_tier_also_drops_old_code_arguments_and_long_outputs():
         'p' * 3000, 'q' * 3000, 'r' * 3000]                      # evidence keeps full arguments
 
 
-async def test_default_factory_preserves_exact_output_and_model_messages():
-    from app.agent.runtime import _tool_calling_factory
-    from app.agent.step_runner import RunnerDependencies, RunnerLimits
-    from app.agent.tool_calling_step_runner import ToolCallingStepRunner
-    from app.agent.step_models import ModelTurn, ToolCall, ToolDefinition, ToolOutput
-    from app.services.context_manager import ContextManager
-    from app.tools.tool_registry import ToolRegistry
-    class Tool:
-        definition = ToolDefinition('lookup', 'Lookup', {'type': 'object'})
-        async def invoke(self, args):
-            return ToolOutput(True, 'fixed evidence')
-    tools = ToolRegistry()
-    tools.register(Tool())
-    replies = [ModelTurn(tool_calls=(ToolCall('lookup-once', 'lookup', {}),)),
-               ModelTurn('{"status":"succeeded","content":"fixed result","reason":null}')]
-    a, b = AsyncMock(), AsyncMock()
-    a.generate.side_effect, b.generate.side_effect = list(replies), list(replies)
-    direct = ToolCallingStepRunner(a, tools, 2, 3, require_step_outcome=True, context_manager=ContextManager())
-    routed = _tool_calling_factory(RunnerDependencies(b, tools, ContextManager(), RunnerLimits(2, 3)))
-    ctx = _context()
-    assert await direct.run(ctx) == await routed.run(ctx)
-    assert a.generate.await_args_list == b.generate.await_args_list
-
-
 @pytest.mark.parametrize('args', [(True, 1), (1, False), (-1, 1), (1, -1)])
 def test_limits_keep_original_strict_validation(args):
     from app.agent.step_runner import RunnerLimits
@@ -791,14 +742,14 @@ async def test_format_repair_count_comes_from_current_runner():
     def factory(deps):
         return SimpleNamespace(runner_id='agent_loop', format_repair_count=7,
                                run=AsyncMock(return_value=StepRunOutput('done')))
-    runtime, memory, model, planner = runtime_fixture(runner_factory=factory)
-    assert runtime.format_repair_count == runtime._planner.format_repair_count + 7
+    runtime, memory, model = runtime_fixture(runner_factory=factory)
+    assert runtime.format_repair_count == 7
 
 
 async def test_team_outer_timeout_does_not_replay_without_tool_calls():
     async def run(context):
         await asyncio.Event().wait()
-    runtime, memory, model, planner = runtime_fixture(step_timeout_seconds=.01,
+    runtime, memory, model = runtime_fixture(step_timeout_seconds=.01,
         runner_factory=lambda deps: SimpleNamespace(runner_id='agent_team', run=run))
     result = await runtime.run()
     assert result.status is TaskStatus.FAILED and result.failure_kind == 'timeout'
@@ -808,10 +759,10 @@ async def test_team_outer_timeout_does_not_replay_without_tool_calls():
 
 async def test_old_binding_is_invalid_after_rebind():
     """Migrated from tests/agent/test_runtime_routing.py: the guard now lives in runtime._BoundRunner."""
-    from app.models.working_memory import StaleExecutionError
-    runtime, memory, model, planner = runtime_fixture()
+    from app.models.run_state import StaleExecutionError
+    runtime, memory, model = runtime_fixture()
     old = runtime._runner
-    runtime.rebind(Planner(planner), AsyncMock(), ToolRegistry(), context_manager=ContextManager())
+    runtime.rebind(AsyncMock(), ToolRegistry(), context_manager=ContextManager())
     with pytest.raises(StaleExecutionError):
         await old.run(None)
 
@@ -819,9 +770,9 @@ async def test_old_binding_is_invalid_after_rebind():
 @pytest.mark.parametrize('late_failure', [False, True])
 async def test_a_binding_invalidated_while_running_discards_its_late_result(late_failure):
     """Migrated from tests/agent/test_runner_routing.py (late success or failure of an invalidated binding)."""
-    from app.agent.runtime import _BoundRunner
+    from app.agent.loop_run import _BoundRunner
     from app.agent.step_runner import StepToolError
-    from app.models.working_memory import StaleExecutionError
+    from app.models.run_state import StaleExecutionError
     entered, release = asyncio.Event(), asyncio.Event()
     async def run(context):
         entered.set()

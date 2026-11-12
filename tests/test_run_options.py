@@ -1,6 +1,6 @@
 """Per-message run options: mode, writing and long-term memory chosen for each request (D-051).
 
-Offline only: scripted planner and model, a fake runtime where the runner itself is not under test.
+Offline only: a scripted model and a fake LoopRun where the runner itself is not under test.
 """
 
 import asyncio
@@ -12,9 +12,9 @@ import pytest
 
 from app.agent import route_selection
 from app.agent.runtime import AgentRunResult
-from app.agent.step_models import ModelTurn
+from app.agent.step_models import ModelTurn, ToolCall
 from app.agent.delegation import READ_TOOLS, DelegationOptions
-from app.agent.agent_loop import TeamPlanner
+from app.agent.agent_loop import LOOP_STEP, TEAM_STEP, LoopOptions
 from app.api.app import create_app
 from app.models.taskstate import TaskStatus
 from app.services import rag_agent_service as module
@@ -25,7 +25,10 @@ SANDBOX = DelegationOptions(allowed_tools=READ_TOOLS | {'write_file', 'run_tests
 
 
 def outcome(text, status='succeeded', reason=None):
-    return ModelTurn(json.dumps({'status': status, 'content': text, 'reason': reason}))
+    """One loop reply: the answer, or (blocked) an ask_user call with the question as its reason."""
+    if status == 'blocked':
+        return ModelTurn(tool_calls=(ToolCall('ask', 'ask_user', {'question': reason}),))
+    return ModelTurn(text)
 
 
 def route_reply(route, writes=True):
@@ -35,14 +38,10 @@ def route_reply(route, writes=True):
 class FakeRuntime:
     created = []
 
-    def __init__(self, planner, model, memory, registry, **options):
-        self.planner, self.memory, self.registry, self.options = planner, memory, registry, options
+    def __init__(self, memory, model, registry, **options):
+        # Stands in for LoopRun(memory, model, registry, step_description=..., runner_factory=..., ...).
+        self.memory, self.registry, self.options = memory, registry, options
         FakeRuntime.created.append(self)
-
-    @classmethod
-    def loop(cls, memory, model, registry, **options):
-        # Stage 4b: loop and team tasks are built as LoopRun(memory, model, registry, step_description=...).
-        return cls(None, model, memory, registry, **options)
 
     async def run(self, **kwargs):
         return AgentRunResult(self.memory.task_state.task_id, TaskStatus.COMPLETED, 'done', (), 1, 0)
@@ -60,8 +59,7 @@ class FakeLongterm:
 @pytest.fixture
 def fake_runtime(monkeypatch):
     FakeRuntime.created = []
-    monkeypatch.setattr(module, 'AgentRuntime', FakeRuntime)
-    monkeypatch.setattr(module, 'LoopRun', FakeRuntime.loop)
+    monkeypatch.setattr(module, 'LoopRun', FakeRuntime)
     return FakeRuntime.created
 
 
@@ -86,11 +84,11 @@ def service(tmp_path=None, model=None, **kw):
 
 def test_the_service_offers_team_modes_only_when_the_team_was_prepared():
     assert service().run_options() == {'modes': ['single'], 'default_mode': 'single', 'memory_available': False,
-                                       'runners': ['plan', 'loop'], 'default_runner': 'plan'}
+                                       'runners': ['loop'], 'default_runner': 'loop'}
     assert service(execution_mode='auto').run_options()['modes'] == ['single', 'auto']   # the default stays usable
     prepared = service(team_options=SANDBOX, longterm_memory=FakeLongterm())
     assert prepared.run_options() == {'modes': ['single', 'team', 'auto'], 'default_mode': 'single',
-                                      'memory_available': True, 'runners': ['plan', 'loop'], 'default_runner': 'plan'}
+                                      'memory_available': True, 'runners': ['loop'], 'default_runner': 'loop'}
 
 
 async def test_unavailable_choices_are_refused_before_anything_runs(fake_runtime):
@@ -110,21 +108,19 @@ async def test_a_message_may_pick_the_team_in_a_single_default_service(fake_runt
         await svc.query_result('implement it', 's', execution_mode='team', on_event=events.append)
         await svc.query_result('what is it?', 's')
     team, single = fake_runtime
-    assert team.options['step_description'] == TeamPlanner.STEP and not isinstance(single.planner, TeamPlanner)
+    assert team.options['step_description'] == TEAM_STEP and single.options['step_description'] == LOOP_STEP
     assert callable(team.options['runner_factory'])
     assert team.options['step_timeout_seconds'] >= SANDBOX.timeout_seconds + 5   # widened for the team only
-    assert 'runner_factory' not in single.options
-    assert single.options['step_timeout_seconds'] < SANDBOX.timeout_seconds
+    assert single.options['step_timeout_seconds'] == LoopOptions().timeout_seconds + 5   # the loop's own limit
     assert events[0] == {'type': 'route', 'mode': 'team', 'read_only': False,
-                         'options': {'mode': 'team', 'runner': 'plan', 'write': True, 'memory': False}}
+                         'options': {'mode': 'team', 'runner': 'loop', 'write': True, 'memory': False}}
 
 
 async def test_a_message_may_pick_single_in_a_team_default_service(fake_runtime):
     async with service(execution_mode='team', team_options=SANDBOX) as svc:
         await svc.query_result('what is it?', 's', execution_mode='single')
     [single] = fake_runtime
-    assert not isinstance(single.planner, TeamPlanner)
-    assert 'runner_factory' not in single.options
+    assert single.options['step_description'] == LOOP_STEP
 
 
 async def test_writes_off_reuses_the_read_only_path(fake_runtime, read_only_calls):
@@ -141,7 +137,7 @@ async def test_auto_with_writes_off_never_asks_the_model_and_runs_single(fake_ru
     async with service(model=model, execution_mode='auto', team_options=SANDBOX) as svc:
         await svc.query_result('implement it', 's', allow_writes=False)
     model.generate.assert_not_called()                     # the host rule 'read_only' leaves only single
-    assert not isinstance(fake_runtime[0].planner, TeamPlanner) and read_only_calls == [True]
+    assert fake_runtime[0].options['step_description'] == LOOP_STEP and read_only_calls == [True]
 
 
 async def test_auto_with_writes_on_still_asks_the_model(fake_runtime):
@@ -149,7 +145,7 @@ async def test_auto_with_writes_on_still_asks_the_model(fake_runtime):
     model.generate.return_value = route_reply('team')
     async with service(model=model, execution_mode='auto', team_options=SANDBOX) as svc:
         await svc.query_result('implement it', 's')
-    assert isinstance(fake_runtime[0].planner, TeamPlanner)
+    assert fake_runtime[0].options['step_description'] == TEAM_STEP
 
 
 async def test_a_team_with_writes_off_gets_read_only_workers(fake_runtime, monkeypatch):
@@ -211,10 +207,10 @@ class api:
 
 
 def scripted(tmp_path, steps=(), turns=(), **kw):
-    planner, model = AsyncMock(), AsyncMock()
-    planner.generate.side_effect = [json.dumps({'steps': s, 'reason': None}) for s in steps]
+    """A service whose loop answers with these turns; steps is what plan mode used to plan (ignored)."""
+    model = AsyncMock()
     model.generate.side_effect = list(turns)
-    return RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
+    return RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                            memory_directory=tmp_path, **kw)
 
 
@@ -224,14 +220,14 @@ async def test_health_reports_what_each_message_may_choose(tmp_path):
     assert health['write_enabled'] is False and health['longterm_memory'] is False   # kept unchanged
     assert health['options'] == {'modes': ['single'], 'default_mode': 'single', 'write_available': False,
                                  'write_default': False, 'memory_available': False, 'memory_default': False,
-                                 'runners': ['plan', 'loop'], 'default_runner': 'plan'}
+                                 'runners': ['loop'], 'default_runner': 'loop'}
     svc = service(tmp_path, execution_mode='auto', team_options=SANDBOX, longterm_memory=FakeLongterm())
     async with api(svc, write_enabled=True) as web:
         health = (await web.client.get('/api/health')).json()
     assert health['options'] == {'modes': ['single', 'team', 'auto'], 'default_mode': 'auto',
                                  'write_available': True, 'write_default': True,
                                  'memory_available': True, 'memory_default': True,
-                                 'runners': ['plan', 'loop'], 'default_runner': 'plan'}
+                                 'runners': ['loop'], 'default_runner': 'loop'}
 
 
 @pytest.mark.parametrize('options, code', [
@@ -264,16 +260,16 @@ async def test_route_event_and_run_state_carry_the_options_in_effect(tmp_path, f
         state = await web.done('r1')
         route = next(e for e in await web.events('r1') if e['type'] == 'route')
         defaults = await web.done((await web.send('q', 'r2')).json()['run_id'])
-    expected = {'mode': 'team', 'runner': 'plan', 'write': True, 'memory': False}
+    expected = {'mode': 'team', 'runner': 'loop', 'write': True, 'memory': False}
     assert state['options'] == expected and route['options'] == expected and route['mode'] == 'team'
-    assert defaults['options'] == {'mode': 'single', 'runner': 'plan', 'write': True, 'memory': True}
+    assert defaults['options'] == {'mode': 'single', 'runner': 'loop', 'write': True, 'memory': True}
 
 
 async def test_omitted_options_follow_the_startup_defaults(tmp_path, fake_runtime, read_only_calls):
     async with api(service(tmp_path)) as web:
         state = await web.done((await web.send('q', 'r1', options={})).json()['run_id'])
     # Without a write root the default is no writing: the read-only path, as before (D-027).
-    assert state['options'] == {'mode': 'single', 'runner': 'plan', 'write': False, 'memory': False} and read_only_calls == [True]
+    assert state['options'] == {'mode': 'single', 'runner': 'loop', 'write': False, 'memory': False} and read_only_calls == [True]
 
 
 async def test_a_repeated_request_id_with_other_options_conflicts(tmp_path, fake_runtime):
@@ -303,7 +299,7 @@ async def test_a_resume_ignores_new_options_and_keeps_the_tasks_own(tmp_path, re
         assert (await web.client.get('/api/runs/r2')).json()['options'] == blocked['options']
         done = await web.done('r2')
         route = next(e for e in await web.events('r2') if e['type'] == 'route')
-    original = {'mode': 'single', 'runner': 'plan', 'write': False, 'memory': False}
+    original = {'mode': 'single', 'runner': 'loop', 'write': False, 'memory': False}
     assert blocked['options'] == original and done['options'] == original and route['options'] == original
     assert done['status'] == 'completed' and read_only_calls == [True, True]
 
@@ -313,7 +309,7 @@ async def test_a_resume_ignores_new_options_and_keeps_the_tasks_own(tmp_path, re
 @pytest.mark.parametrize('argv, write_root, sandbox, writes', [
     (['--execution-mode', 'single'], None, False, False),
     (['--execution-mode', 'auto', '--write-root', 'w'], 'w', False, True),
-    (['--execution-mode', 'single', '--single-runner', 'plan'], None, False, False),
+    (['--execution-mode', 'single', '--single-runner', 'loop'], None, False, False),
 ])
 async def test_the_web_launcher_always_prepares_the_team_but_keeps_the_default_mode(
         monkeypatch, tmp_path, argv, write_root, sandbox, writes):
@@ -353,7 +349,7 @@ async def test_the_web_launcher_always_prepares_the_team_but_keeps_the_default_m
         monkeypatch.setattr(config, name, value)
     assert await launcher.serve(launcher.build_parser().parse_args(argv)) == 0
     assert seen['execution_mode'] == argv[1]
-    assert seen['single_runner'] == ('plan' if '--single-runner' in argv else 'loop')
+    assert seen['single_runner'] == 'loop'
     team = seen['team_options']
     assert isinstance(team, DelegationOptions)
     assert ('write_file' in team.allowed_tools) is writes and team.require_passing_run is sandbox

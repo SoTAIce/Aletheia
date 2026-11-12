@@ -1,13 +1,14 @@
 # Agent Runtime
 
-The runtime assembles existing components in this order:
+Every task is one agent loop (D-076; plan mode and the plan/execute skeleton were removed in stage 4c):
 
 ```text
-Goal -> WorkingMemory -> Planner -> Executor.accept_plan()
-     -> next pending Step -> StepExecutor -> ToolCallingStepRunner
+Goal -> RunMemory(RunState + Resources)
+     -> RunAssembler: route (single / team / auto), read-only view, runner factory
+     -> LoopRun: lock, budget, step deadline, side-effect watch, events and trace
+     -> AgentLoopRunner (single) / ExploreLoopRunner (single with --delegate) / DelegatingLoopRunner (team)
      -> ToolRegistry -> local RAG / local tool / MCPToolAdapter -> MCPClient
-     -> successful commit / failed replan / blocked question
-     -> WorkingMemory.complete_task() after every plan step is complete
+     -> LoopRun commits: completed answer / blocked question / failed with a failure kind
 ```
 
 ## Responsibilities
@@ -22,118 +23,98 @@ Goal -> WorkingMemory -> Planner -> Executor.accept_plan()
   preserves evidence and the existing dataclass citations, distinguishes
   `ok`/`empty`/`error`, and registers successful evidence bundles in `Resources`.
   An empty result is a successful search with no factual evidence; an error
-  becomes a failed tool result. Neither registration nor loading changes the
-  selected planning context or invalidates an active execution token.
-- `PlanningModel` adapts the existing `ToolCallingModel` to Planner's
-  `generate(prompt) -> JSON string` contract. It supplies no executable tools.
-  The real inventory is pinned as task data so Planner can refer to available
-  tools without invoking them.
-- `Planner` still proposes plans; `Executor` still validates freshness and
-  installs them. Runtime chooses when to plan/replan and which pending step to
-  execute. `StepExecutor` owns starting, validating and committing each step.
-- `ToolCallingStepRunner` still owns the bounded tool loop. Runtime enables
-  `require_step_outcome=True`; its final model response must be exactly:
-
-  ```json
-  {"status": "succeeded", "content": "The requested step result", "reason": null}
-  ```
-
-  Status can be `succeeded`, `failed` or `blocked`. Failed/blocked outputs require
-  a non-empty reason. Missing, unknown or duplicate fields/statuses and plain
-  failure prose are rejected as step failures. Native tool calls remain native
-  tool calls. Existing low-level callers retain the default text-output mode.
+  becomes a failed tool result.
+- `RunAssembler` (`app/services/run_assembler.py`) chooses the mode once per task
+  (kept when a blocked task resumes), withdraws write and run tools from read-only
+  tasks, picks the runner factory and builds the task's `LoopRun`; a resumed task
+  is rebound to the request's fresh model and tools instead.
+- `LoopRun` (`app/agent/loop_run.py`) owns the host guarantees: one run at a time
+  per task, rebind invalidation (a late result or failure of an old binding is
+  stale), no commit after cancellation was requested, the state-version check, the
+  run budget, the step deadline (the time spent waiting for a user's approval is
+  not counted, D-061), the side-effect watch, the execution limit and the failure
+  kinds. It reports the task's one step as `plan` and `step` events and trace spans.
+  Runners only return output; `LoopRun` validates it (content trimmed, source
+  references must be registered resources) and commits it to `RunState`.
+- `AgentLoopRunner` (`app/agent/agent_loop.py`) calls tools until the model
+  replies with plain text, which is the final answer (no JSON envelope). Two
+  control tools never reach the registry: `todo` records the model's own
+  checklist, `ask_user` blocks the task with one question. The host repairs a
+  bounded number of mistakes (two each): undecodable tool arguments, calls to
+  tools that are not offered, and empty replies. When the round budget is spent
+  the model is asked once more for its answer with the tools shown but not
+  callable; asking for tools again then fails the step.
+- The team (`DelegatingLoopRunner`, D-075) is the same loop for the lead, with host
+  tools `delegate` (and `review`) instead of workspace tools; each delegation runs
+  a fresh member loop. `--delegate` lets the single loop hand wide read-only
+  research to a member (`ExploreLoopRunner`, off by default).
 
 ## Outcomes and limits
 
-Successful outputs alone are submitted to `commit_step_result()`. Tool evidence
-is saved as the latest observation, and step summaries become valid intermediate
-results. These are available to later steps and replacement plans of the same
-goal. A tool failure may be recovered by another tool call in the same step;
-the model must explicitly report whether the required step output was achieved.
+| What happens | Task result |
+| --- | --- |
+| plain-text reply | `COMPLETED`, content is the trimmed answer |
+| `ask_user` | `BLOCKED`, content is the question; a blocking question is recorded |
+| round limit, a refused or failing read, a timeout after reads only, unavailable tools after the repairs | `FAILED`, `limit` |
+| a write or run tool raised, or a timeout after a write or run | `FAILED`, `side_effect` (never replayed) |
+| repeated empty replies | `FAILED`, `format` |
+| provider error or request timeout | `FAILED`, `model` |
+| a gate refused a model or tool call | `FAILED`, `policy` |
+| the team's own time budget, or overflow recovery interrupted | `FAILED`, `timeout` |
+| token or time budget spent | `FAILED`, `budget` |
+| runner contract errors and other unexpected exceptions | `FAILED`, `internal` |
+| cancellation | the task is failed and `CancelledError` propagates; the registry context closes tools |
 
-Failed outputs and tool exceptions are recorded with `record_failure()`, return
-the task to planning, and trigger a replacement plan for the remaining work.
-The failure record includes the failed output and returned tool evidence when
-available. An exception before a tool returns may have no returned evidence.
-Runtime does not retry individual side-effecting calls automatically.
+Every failure kind has a Chinese explanation in `FAILURE_MESSAGES`
+(`AgentRunResult.user_message`); `content` keeps the English diagnostic. A loop
+never replays a failed task: there is no replanning (`replan_count` stays 0).
 
-Formatting is handled inside the current planning/step attempt. One complete
-JSON Markdown fence can be unwrapped, and malformed JSON permits at most two
-model repair requests. Step repairs retain the existing tool history and supply
-no tools; unexpected tool calls in a repair are rejected without execution.
-These requests do not count as new step executions or replacement plans and
-remain inside the existing planning/step timeout. Valid JSON with duplicate
-fields, unknown states or inconsistent status/reason values is rejected rather
-than rewritten into success. Exhausted format repair terminates as
-`StepFormatError`, without replanning or replaying tools.
+Defaults: 16 executions per task (counted across resumes); the loop's own limits
+are 20 tool rounds, 40 tool calls and 480 seconds (`LoopOptions`); the step
+deadline is the larger of `AGENT_STEP_TIMEOUT_SECONDS` (default 60) and the
+runner's limit plus 5 seconds, and a caller's run budget can only shorten it. The
+token budget is checked before and after the loop's step, not between the model
+calls inside it, so one step can finish its calls and then fail the task on
+`budget` (the step's receipt is kept).
 
-Tool exceptions (`StepToolError`) and explicit failed outcomes
-(`StepBusinessError`) can trigger a replacement business plan. Provider errors
-(`StepModelError`) and provider request timeouts (`StepTimeoutError`) terminate
-without a new plan. Overall step deadlines retain the existing failed-step
-replanning behavior; side effects may already exist. Blocking and cancellation
-behavior is unchanged. When the tool budget is reached, the final model request
-has no tools; requesting further calls still fails the enforced limit.
-
-`RAG_JSON_MODE=true` requests provider JSON-object output; the application's
-field/type/status validators remain authoritative. `RAG_ENABLE_THINKING` is
-optional and provider specific. The local Qwen validation uses `false` to reduce
-output latency. Unsupported provider options surface as errors, without an
-automatic unstructured fallback. Low-level text-mode adapters retain their
-original defaults.
-
-Blocked outputs mark the step/task `BLOCKED`, record a blocking question and
-release the active step. They publish no successful intermediate result. Runtime
-does not run dependent work or repeatedly replan until the question is answered.
-`resolved_questions` carries answers into both planning and execution contexts.
-
-Default bounds are 16 step executions, including failures and timeouts, and 2
-replacement plans. Initial planning is not a replan. Each planning/execution
-attempt has a 60-second timeout; the existing MCP client also bounds individual
-calls. Tool-loop limits remain 4 rounds and 8 calls per step. A failed initial
-plan, a failed replan, contract errors or exhausted bounds terminate the task
-as `FAILED`, preserving history. Cancellation terminates the owned task, releases
-the active step and propagates cancellation; the registry context closes tools.
-
-Counts persist when a runtime pauses and resumes. All plan steps must be
-completed, no current-goal blocker may remain, and resource-context checks must
-pass before `complete_task()` is called. Results rejected as stale never overwrite
-newer execution state. Runtime access is serialized; external callers must not
-mutate WorkingMemory during an active run.
+`RAG_JSON_MODE=true` requests provider JSON-object output. `RAG_ENABLE_THINKING` is
+optional and provider specific. Unsupported provider options surface as errors,
+without an automatic unstructured fallback.
 
 ## Memory and blocked-task resume
 
-WorkingMemory remains task scoped. ConversationMemory remains session scoped;
-the runtime imports its summary and last three turns as bounded historical data,
-then appends one complete user/assistant turn for each changed reported outcome.
-Repeated reads of an unchanged terminal/blocked result do not add duplicate turns.
-RAG query rewriting receives recent conversation and valid task results.
+`RunState` is the task's authoritative state; ConversationMemory remains session
+scoped. The loop sees the recent conversation, long-term memories and resource
+excerpts as pinned context, never as instructions.
 
 `RagAgentService` runs each query as a new task and retains ConversationMemory by
-session. Queries for the same session are serialized. It uses the new Runtime
-instead of the former `create_agent`/LangChain MCP execution path.
+session. Queries for the same session are serialized. A blocked task stays alive
+in the same service instance: answer it with `resume_task_id` (and `question_id`
+when more than one question is open). The resumed loop continues its own messages
+with the answer as the result of its `ask_user` call; after a restart only the
+archived history remains, and a new task starts with the answer in its context.
 
-For explicit blocked-task resume, keep the Runtime and registry context alive:
+At the lowest level the same steps look like this:
 
 ```python
-from app.agent.planner import Planner
-from app.agent.runtime import AgentRuntime
-from app.models.taskstate import TaskState, TaskStatus
-from app.models.working_memory import WorkingMemory
+from app.agent.agent_loop import AgentLoopRunner, LOOP_STEP, LoopResumeStore
+from app.agent.loop_run import LoopRun
+from app.models.run_state import RunMemory, RunState
+from app.models.taskstate import TaskStatus
 from app.tools.tool_loader import open_tool_registry
 
-# planner_model follows Planner's text contract; tool_model follows ToolCallingModel.
-async def execute_goal(goal, planner_model, tool_model, servers, get_answer):
-    memory = WorkingMemory(TaskState("user", goal))
+async def execute_goal(goal, model, servers, get_answer):
+    memory = RunMemory(RunState("user", goal))
+    store = LoopResumeStore()
     async with open_tool_registry(memory, mcp_servers=servers) as registry:
-        runtime = AgentRuntime(Planner(planner_model), tool_model, memory, registry)
-        result = await runtime.run()
+        run = LoopRun(memory, model, registry, step_description=LOOP_STEP, runner_factory=lambda deps:
+                      AgentLoopRunner(deps.model, deps.tool_registry, None, deps.context_manager, store))
+        result = await run.run()
         if result.status is TaskStatus.BLOCKED:
             for question in memory.task_state.scratchpad.open_questions:
                 if question.blocking and question.resolved_at is None:
-                    answer = await get_answer(question.content)
-                    memory.task_state.resolve_question(question.question_id, answer)
-            result = await runtime.run()
+                    memory.task_state.resolve_question(question.question_id, await get_answer(question.content))
+            result = await run.run()
         return result
 ```
 
@@ -149,33 +130,23 @@ restart restores the archived history, not the waiting task.
 
 ## Current limits
 
-The service reads `RAG_MODEL_TIMEOUT_SECONDS` (default 30),
-`AGENT_STEP_TIMEOUT_SECONDS` (default 60), and
-`AGENT_PLANNING_TIMEOUT_SECONDS` (default 60) from the environment. These are
-separate bounds: a step may include several model/tool calls. Explicit service
-constructor timeouts override the step/planning settings. For slower real API
-responses, increase these finite limits rather than disabling them. A request
-timeout remains a failed execution and may cause replanning; it never completes
-the step successfully.
+The service reads `RAG_MODEL_TIMEOUT_SECONDS` (default 30) and
+`AGENT_STEP_TIMEOUT_SECONDS` (default 60). `AGENT_PLANNING_TIMEOUT_SECONDS` is
+still accepted in `.env` but no longer read (plan mode was removed). For slower
+real API responses, increase these finite limits rather than disabling them; a
+request timeout is a failed execution, never a completed one.
 
-- This is sequential, process-local execution. No task checkpoint persistence or parallel steps,
+- This is sequential, process-local execution. No task checkpoint persistence,
   cross-process recovery or transactional rollback of external tool side effects
   is implemented. Timeout/cancellation may occur after a side effect has happened.
 - The default service uses stdio Filesystem/WebSearch MCP and local RAG/time
   tools. Historical HTTP CLS/monitor configuration is not wired into this
   runtime; the unused `aiops` experiment modules were removed on 2026-11-08
-  (cleanup-stage0-001). Legacy tool exports remain
-  available for compatibility; they are not used by the service's execution path.
+  (cleanup-stage0-001). Legacy tool exports remain available for compatibility.
 - `query_stream()` retains an event interface but emits final content/status,
-  not per-token output. Injected service models now follow `ToolCallingModel`,
-  rather than LangChain `ChatQwen`. `query_result()` is the status-aware API.
-- Service/CLI queries start new tasks. The low-level Runtime supports blocked
-  resume; the service does not persist paused tasks or expose a resume endpoint.
-  CLI history is process-local unless conversation storage is explicitly enabled.
-- The model declares step success under a validated protocol; this is not an
-  independent semantic verifier. Final content combines valid successful step
-  results, without an extra synthesis model call. Planner should include a final
-  synthesis step when the goal needs one.
+  not per-token output. `query_result()` is the status-aware API.
+- The model's plain-text reply is taken as the answer; this is not an independent
+  semantic verifier. The team's completion is decided by the host (D-075).
 - Tests use real stdio MCP subprocesses and the real provider-message adapter,
   with deterministic model, RAG and Tavily responses. Live validation separately
   requires working provider credentials, Milvus and the local reranker. Passing
@@ -191,7 +162,7 @@ to `MILVUS_HOST`/`MILVUS_PORT` in `LONGTERM_MEMORY_COLLECTION` (default
 store, index and model client through `open_longterm_memory()` and closes them on
 exit. Memories are scoped by `--user-id` (default `local`).
 
-- Recall: before planning a new task, up to `LONGTERM_RECALL_LIMIT` memories are
+- Recall: before a new task runs, up to `LONGTERM_RECALL_LIMIT` memories are
   recalled for the goal and pinned as `longterm_memory` within
   `LONGTERM_CONTEXT_TOKENS` (default 600), with a policy saying they are reference
   data, not instructions. Recall failures or a 3 s timeout only log a warning.
@@ -218,8 +189,8 @@ conflicting contents fail explicitly. Read/write failures propagate rather than
 silently accepting lost history. `clear`, `pop` and `remove` affect the in-memory
 view, not the durable archive; this is not a permanent deletion API.
 
-`WorkingMemory` remains the authoritative task state. `ContextManager` projects
-copies for Planner and ToolCallingStepRunner and never edits that state. Configure
+`RunState` remains the authoritative task state. `ContextManager` projects
+copies for the loop's model requests and never edits that state. Configure
 `CONTEXT_WINDOW_TOKENS`, `CONTEXT_OUTPUT_TOKENS` and `CONTEXT_SAFETY_TOKENS`
 (defaults 32768/8192/1024; the output cap was 2048 before D-036) for the deployed model. Estimates include serialized
 messages, system instructions, native tool schemas, tool responses and output

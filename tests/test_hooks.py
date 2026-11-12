@@ -10,7 +10,6 @@ from app.agent.hooks import (
     ALLOW, Decision, HookSet, HookedModel, HookedTool, HookedToolRegistry, PolicyDeniedError,
     summarize_arguments, using_hooks,
 )
-from app.agent.planning_model import PlanningModel
 from app.agent.step_models import ModelTurn, ToolCall, ToolDefinition, ToolOutput, ToolsShownOnly, UserMessage
 from app.models.taskstate import TaskStatus
 from app.services.rag_agent_service import RagAgentService
@@ -50,14 +49,13 @@ class DenyModel:
 
 
 def outcome(text):
-    return ModelTurn(json.dumps({'status': 'succeeded', 'content': text, 'reason': None}))
+    return ModelTurn(text)
 
 
 def service(tmp_path, turns, hooks, steps=('Answer',)):
-    planner, model = AsyncMock(), AsyncMock()
-    planner.generate.return_value = json.dumps({'steps': list(steps), 'reason': None})
+    model = AsyncMock()
     model.generate.side_effect = turns
-    return RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
+    return RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                            memory_directory=tmp_path, hooks=hooks), model
 
 
@@ -188,17 +186,16 @@ async def test_without_hooks_the_wrappers_only_pass_calls_through():
     assert (await HookedModel(inner).generate((UserMessage('hi'),), ())).content == 'ok'
 
 
-async def test_model_calls_are_labelled_plan_step_and_wrap_up():
+async def test_model_calls_are_labelled_step_and_wrap_up():
     inner, recorder = AsyncMock(), Recorder()
-    inner.generate.return_value = ModelTurn('{"steps": ["a"], "reason": null}')
+    inner.generate.return_value = ModelTurn('ok')
     model = HookedModel(inner)
     read = ToolDefinition('read_file', 'Read', {'type': 'object'})
     with using_hooks(HookSet([recorder])):
-        await PlanningModel(model).generate('plan this')
         await model.generate((UserMessage('hi'),), (read,))
         await model.generate((UserMessage('hi'),), ToolsShownOnly((read,)))
     before = [e for e in recorder.events if e['type'] == 'before_model']
-    assert [(e['purpose'], e['callable_tools']) for e in before] == [('plan', 0), ('step', 1), ('wrap_up', 0)]
+    assert [(e['purpose'], e['callable_tools']) for e in before] == [('step', 1), ('wrap_up', 0)]
     with using_hooks(HookSet(gates=[DenyModel()])):
         with pytest.raises(PolicyDeniedError):
             await model.generate((UserMessage('hi'),), ())

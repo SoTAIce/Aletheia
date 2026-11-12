@@ -1,4 +1,4 @@
-"""Session-facing service using Aletheia's single registry and AgentRuntime."""
+"""Session-facing service using Aletheia's single registry; every task runs in one LoopRun."""
 
 import asyncio
 import hashlib
@@ -20,17 +20,15 @@ from mcp import StdioServerParameters
 from openai import AsyncOpenAI
 
 from app.agent.openai_compatible_tool_calling_model import OpenAICompatibleToolCallingModel
-from app.agent.planning_model import PlanningModel
-from app.agent.runtime import AgentRunResult, AgentRuntime
+from app.agent.runtime import AgentRunResult
 from app.config import config
 from app.models.conversation_memory import (
     ConversationMemory, ConversationMessage, ConversationTurn, MessageRole, TurnStatus,
     finish_conversation_write as _durable,
 )
 from app.agent.step_models import StepExecutionReceipt, ToolCall, ToolResult
-from app.models.taskstate import TaskState, TaskStatus
-from app.models.working_memory import WorkingMemory, StaleExecutionError
-from app.models.run_state import RunMemory, RunState
+from app.models.taskstate import TaskStatus
+from app.models.run_state import RunMemory, RunState, StaleExecutionError
 from app.agent.loop_run import LoopRun
 from app.tools.tool_loader import local_mcp_servers, open_tool_registry
 from app.services.conversation_archive import ConversationArchive
@@ -116,25 +114,32 @@ def _check_choice(name, value) -> None:
 
 
 
+def _check_runner(value):
+    """'loop' is the only single-mode runner since stage 4c (D-076)."""
+    if value == 'plan':
+        raise ValueError('single_runner plan was removed in stage 4c (D-076); use loop')
+    if value != 'loop':
+        raise ValueError('single_runner must be loop')
+
+
 class RagAgentService:
     """Each accepted request is a turn; explicit resumes retain the same task.
 
-    Inject a ToolCallingModel and optionally a Planner text model for tests.
+    Inject a ToolCallingModel for tests.
     query_stream keeps the event API but emits the final result, not model tokens.
     """
 
     def __init__(
-        self, streaming: bool = True, model: Any | None = None, *, planner_model=None,
+        self, streaming: bool = True, model: Any | None = None, *,
         mcp_servers: Sequence[StdioServerParameters] | None = None,
         knowledge_search=None, include_knowledge: bool = True,
-        max_executions: int = 16, max_replans: int = 2,
-        step_timeout_seconds: float | None = None, planning_timeout_seconds: float | None = None,
+        max_executions: int = 16, step_timeout_seconds: float | None = None,
         memory_directory=None, conversation_compressor=None,
         longterm_memory:"LongTermMemoryService | None" = None,
         longterm_recall_limit: int = 5,
         longterm_timeout_seconds: float = 3.0,
         execution_mode: str = 'single', team_options=None, hooks=None,
-        single_runner: str = 'plan', loop_options=None, delegate: bool = False,
+        single_runner: str = 'loop', loop_options=None, delegate: bool = False,
         workspace_servers=None, workspace_policy=None, default_workspace: str | None = None,
     ) -> None:
         self.streaming = streaming
@@ -147,18 +152,15 @@ class RagAgentService:
         self._spent_tokens: dict = {}       # conversation key -> tokens used, for the cap (D-060)
         self._memory_directory = config.conversation_storage_dir if memory_directory is None else memory_directory
         self._conversation_compressor = conversation_compressor
-        self._planner_model = planner_model
         if execution_mode not in ('single', 'team', 'auto'):
             raise ValueError('execution_mode must be single, team or auto')
         from app.agent.delegation import DelegationOptions
         if team_options is not None and not isinstance(team_options, DelegationOptions):
             raise TypeError('team_options must be DelegationOptions')
         self._execution_mode = execution_mode
-        # How single mode runs (loop-trial-001): 'plan' plans then executes steps; 'loop' is one
-        # agent loop entered through a fixed one-step plan (docs/architecture_review.md stage 1).
-        # The library default stays 'plan'; the CLI, web and bench entry points default to 'loop' (D-072).
-        if single_runner not in ('plan', 'loop'):
-            raise ValueError('single_runner must be plan or loop')
+        # Single mode is one agent loop (D-072). 'plan' (plan then execute steps) was removed with the
+        # plan/execute skeleton in stage 4c (D-076); the option stays for old callers and takes only 'loop'.
+        _check_runner(single_runner)
         from app.agent.agent_loop import LoopOptions
         if loop_options is not None and not isinstance(loop_options, LoopOptions):
             raise TypeError('loop_options must be LoopOptions')
@@ -189,20 +191,17 @@ class RagAgentService:
         self._session_workspaces: dict = {}     # conversation key -> directory of its last task
         self._knowledge_search = knowledge_search
         self._include_knowledge = include_knowledge
-        self._limits = dict(max_executions=max_executions, max_replans=max_replans,
+        self._limits = dict(max_executions=max_executions,
                             step_timeout_seconds=(config.agent_step_timeout_seconds
-                                                  if step_timeout_seconds is None else step_timeout_seconds),
-                            planning_timeout_seconds=(config.agent_planning_timeout_seconds
-                                                      if planning_timeout_seconds is None else planning_timeout_seconds))
+                                                  if step_timeout_seconds is None else step_timeout_seconds))
         self._run_assembler = RunAssembler(
             team_options=self._team_options, loop_options=self._loop_options, delegate=self._delegate,
-            limits=self._limits, planner_model_injected=planner_model is not None,
-            routes=self._routes, task_options=self._task_options,
+            limits=self._limits, routes=self._routes, task_options=self._task_options,
             default_workspace=self._default_workspace, emit=_emit,
         )
         self._conversations: dict[object, ConversationMemory] = {}
         self._locks: dict[object, asyncio.Lock] = {}
-        self._tasks: dict[tuple[object, str], AgentRuntime] = {}
+        self._tasks: dict[tuple[object, str], LoopRun] = {}
         self._pending_outcomes: dict[tuple[object, str], tuple] = {}
         self._summary_scheduler = SummaryScheduler(self._conversations)
         self._closed = False
@@ -261,13 +260,13 @@ class RagAgentService:
         from app.agent.hooks import HookedModel, using_hooks
         hooks = hooks if hooks is not None else self._hooks
         with using_hooks(hooks) if hooks is not None else nullcontext():
-            async with self._base_models(cache_key) as (planner_model, model):
-                yield planner_model, HookedModel(model)
+            async with self._base_models(cache_key) as model:
+                yield HookedModel(model)
 
     @asynccontextmanager
     async def _base_models(self, cache_key: str | None = None):
         if self.model is not None:
-            yield self._planner_model or PlanningModel(self.model), self.model
+            yield self.model
             return
         base_url, api_key, model_name = config.agent_model_endpoint      # D-050
         async with AsyncOpenAI(
@@ -282,7 +281,7 @@ class RagAgentService:
                 max_output_tokens=config.context_output_tokens,
                 prompt_cache_key=cache_key,
             )
-            yield self._planner_model or PlanningModel(model), model
+            yield model
 
     async def _run_hooks(self, key, conversation, extra=None):
         """This run's hooks: the service's (or the caller's), the request's own (extra, e.g. the
@@ -311,7 +310,7 @@ class RagAgentService:
         default mode is always accepted. Team and auto need the team prepared at startup."""
         accepted = {'single', self._execution_mode} | ({'team', 'auto'} if self._team_options is not None else set())
         offered = {'modes': [m for m in MODES if m in accepted], 'default_mode': self._execution_mode,
-                   'runners': ['plan', 'loop'],
+                   'runners': ['loop'],
                    'default_runner': self._single_runner,
                    'memory_available': self._longterm_memory is not None}
         if self._workspace_servers is not None:      # only when offered, so the old answer stays as it was
@@ -370,7 +369,7 @@ class RagAgentService:
         attachments=None,
     ) -> AgentRunResult:
         """on_event, if given, receives host-authored progress records ('route',
-        then the runtime's 'plan' and 'step'); see AgentRuntime.run (D-045).
+        then LoopRun's 'plan' and 'step'); see LoopRun.run (D-045).
 
         execution_mode, single_runner, allow_writes and use_memory choose for this request only; None keeps the
         service default (D-051). allow_writes=False hides the write and run tools as for a read-only
@@ -420,8 +419,8 @@ class RagAgentService:
         self._validate_identity(user_id)
         if execution_mode is not None and execution_mode not in self.run_options()['modes']:
             raise ValueError('execution mode is not available')
-        if single_runner is not None and single_runner not in ('plan', 'loop'):
-            raise ValueError('single_runner must be plan or loop')
+        if single_runner is not None:
+            _check_runner(single_runner)
         _check_choice('allow_writes', allow_writes)
         _check_choice('use_memory', use_memory)
         _check_choice('workspace_confirmed', workspace_confirmed)
@@ -521,12 +520,7 @@ class RagAgentService:
             if self._workspace_servers is not None:
                 options['workspace'] = workspace       # None: the startup directory and its servers
         if memory is None:
-            # Loop and team tasks run in LoopRun over a RunState (stage 4b); auto with the plan
-            # runner may still route to the team and keeps the planned path until stage 4c.
-            if options['runner'] == 'loop' or options['mode'] == 'team':
-                memory = RunMemory(RunState(user_id or session_id, question))
-            else:
-                memory = WorkingMemory(TaskState(user_id or session_id, question))
+            memory = RunMemory(RunState(user_id or session_id, question))
         return runtime, memory, options, question_id
 
     async def _publish_input(self, conversation, turn, turn_id, outcome_key):
@@ -591,8 +585,7 @@ class RagAgentService:
         """Open the models and tools, run the task through the assembler and record its outcome."""
         cache_key = self._prompt_cache_key(self._archive_label(user_id, session_id))
         run_hooks, audit = await self._run_hooks(key, conversation, hooks)
-        async with self._models(cache_key, run_hooks) as (planner_model, model):
-            planner_model = self._run_assembler.prepare_planner_model(planner_model, model, context_manager)
+        async with self._models(cache_key, run_hooks) as model:
             async with open_tool_registry(
                 memory, mcp_servers=self._servers_for(options), conversation=conversation,
                 knowledge_search=self._knowledge_search, include_knowledge=self._include_knowledge,
@@ -602,9 +595,9 @@ class RagAgentService:
             ) as registry:
                 runtime, result = await self._run_assembler.run(
                     key=key, task=task, question=question, options=options, runtime=runtime,
-                    planner_model=planner_model, model=model, memory=memory, registry=registry,
+                    model=model, memory=memory, registry=registry,
                     context_manager=context_manager, audit=audit, on_event=on_event,
-                    runtime_factory=AgentRuntime, loop_run_factory=LoopRun,
+                    loop_run_factory=LoopRun,
                 )
                 if key in self._spent_tokens:
                     self._spent_tokens[key] += _total_tokens(result.usage)

@@ -5,36 +5,36 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.agent.step_models import ModelTurn
+from app.agent.agent_loop import LOOP_STEP
+from loop_fakes import loop_reply
 from app.models.taskstate import TaskStatus
 from app.services.conversation_archive import ConversationArchive
 from app.services.rag_agent_service import RagAgentService
 
 
-def _outcome(text, status='succeeded', reason=None):
-    return ModelTurn(json.dumps({'status': status, 'content': text, 'reason': reason}))
+_outcome = loop_reply
 
 
 def _service(tmp_path, plans, turns, **kw):
-    planner, model = AsyncMock(), AsyncMock()
-    planner.generate.side_effect = [json.dumps({'steps': steps, 'reason': None}) for steps in plans]
+    """A service whose loop answers with these turns; plans is what plan mode used to plan (ignored)."""
+    model = AsyncMock()
     model.generate.side_effect = turns
-    return RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
+    return RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                            memory_directory=tmp_path, **kw)
 
 
 async def test_progress_reports_route_plan_and_each_step_without_model_text(tmp_path):
     events = []
-    async with _service(tmp_path, [['Look it up', 'Answer']], [_outcome('secret draft'), _outcome('Paris')]) as service:
+    async with _service(tmp_path, [], [_outcome('Paris')]) as service:
         result = await service.query_result('Capital of France?', 's', on_event=events.append)
     assert result.status is TaskStatus.COMPLETED and result.content == 'Paris'
-    assert [e['type'] for e in events] == ['route', 'plan', 'step', 'step']
+    assert [e['type'] for e in events] == ['route', 'plan', 'step']
     assert events[0] == {'type': 'route', 'mode': 'single', 'read_only': False,
-                         'options': {'mode': 'single', 'runner': 'plan', 'write': True, 'memory': False}}     # D-065
-    assert events[1]['revision'] == 1 and events[1]['steps'] == ['Look it up', 'Answer']
+                         'options': {'mode': 'single', 'runner': 'loop', 'write': True, 'memory': False}}     # D-065
+    assert events[1]['revision'] == 1 and events[1]['steps'] == [LOOP_STEP]
     assert [e['step_id'] for e in events[2:]] == events[1]['step_ids']      # the page matches steps to the plan
-    assert [(e['step'], e['outcome'], e['tools']) for e in events[2:]] == [(1, 'succeeded', []), (2, 'succeeded', [])]
-    assert 'secret draft' not in json.dumps(events) and 'Paris' not in json.dumps(events)
+    assert [(e['step'], e['outcome'], e['tools']) for e in events[2:]] == [(1, 'succeeded', [])]
+    assert 'Paris' not in json.dumps(events)
     assert [{k: v for k, v in e.items() if k != 'type'} for e in events[2:]] == [dict(s) for s in result.step_log]
 
 

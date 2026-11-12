@@ -1,5 +1,13 @@
-"""Differential contract tests: the installed legacy loop is the oracle."""
+"""LoopRun contract tests against golden files recorded from the legacy loop path (stage 4c).
+
+Stage 4b compared LoopRun with the legacy AgentRuntime path run side by side (67 cases: results, step
+log, receipts, events and every model request). In 4c-1, before that path was deleted, its output for
+every case was recorded into tests/fixtures/loop_run_golden/ (one JSON file per case) while it still
+matched LoopRun; since 4c-3 LoopRun is compared with those files. The files are expected values, not
+snapshots to refresh: a difference is a behaviour change to explain, not to re-record.
+"""
 import asyncio
+import pathlib
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, UTC
 from enum import Enum
@@ -10,11 +18,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.agent.agent_loop import AgentLoopRunner, LoopOptions, LoopPlanner, TeamPlanner, LoopResumeStore
-from app.agent.runtime import AgentRuntime
+from app.agent.agent_loop import AgentLoopRunner, LOOP_STEP, LoopOptions, LoopResumeStore, TEAM_STEP
 from app.agent.step_models import ModelTurn, ToolCall, ToolDefinition, ToolOutput
-from app.models.taskstate import TaskState
-from app.models.working_memory import WorkingMemory
 from app.models.run_state import RunMemory, RunState
 from app.tools.tool_registry import ToolRegistry
 from app.services.context_manager import ContextManager
@@ -28,9 +33,7 @@ class FrozenDateTime(datetime):
 
 @pytest.fixture(autouse=True)
 def stable_dates(monkeypatch):
-    import app.models.taskstate as legacy
     import app.models.run_state as modern
-    monkeypatch.setattr(legacy, 'datetime', FrozenDateTime)
     monkeypatch.setattr(modern, 'datetime', FrozenDateTime)
     import app.agent.loop_run as loop_run
     monkeypatch.setattr(loop_run, 'datetime', FrozenDateTime)
@@ -65,6 +68,23 @@ def snapshot(result):
     }
 
 
+GOLDEN = pathlib.Path(__file__).parent / 'fixtures' / 'loop_run_golden'
+# LoopRun is the only path; the loops below keep their 4b shape (one entry per path).
+PATHS = (True,)
+
+
+def _plain(value):
+    return json.loads(json.dumps(value, ensure_ascii=False, sort_keys=True))
+
+
+def check_golden(request, outputs):
+    """outputs[-1] is LoopRun's; it must equal what the legacy path produced for the same case."""
+    name = re.sub(r'[^A-Za-z0-9_.-]+', '_', request.node.name).strip('_')
+    path = GOLDEN / f'{name}.json'
+    assert path.exists(), f'missing golden file {path.name}'
+    assert _plain(outputs[-1]) == json.loads(path.read_text(encoding='utf-8'))
+
+
 EVENTS = {'task_start', 'plan', 'step', 'task_end', 'scope_start', 'scope_end'}
 EVENT_OMIT = ('span_id', 'parent_id', 't', 'seconds', 'step_id', 'step_ids', 'task_id')
 
@@ -78,7 +98,7 @@ def build(new, turns, *, mode='loop', options=None, limits=None, invoke=None, wr
         registry.register(HookedTool(SimpleNamespace(
             definition=ToolDefinition(name, name, {'type': 'object'}),
             invoke=AsyncMock(side_effect=invoke or (lambda args: ToolOutput(True, 'tool evidence'))))))
-    memory = RunMemory(RunState('user', 'explain the module')) if new else WorkingMemory(TaskState('user', 'explain the module'))
+    memory = RunMemory(RunState('user', 'explain the module'))
     manager = ContextManager()
     options = options or LoopOptions()
     store = LoopResumeStore()
@@ -94,14 +114,10 @@ def build(new, turns, *, mode='loop', options=None, limits=None, invoke=None, wr
     def factory(deps):
         runner = assemble(deps)
         return wrap(runner, deps) if wrap is not None else runner
-    planner_type = TeamPlanner if mode == 'team' else LoopPlanner
-    kwargs = dict(runner_factory=factory, max_replans=0,
+    kwargs = dict(runner_factory=factory,
                   step_timeout_seconds=max(60, options.timeout_seconds + 5), context_manager=manager)
     kwargs.update(limits or {})
-    if new:
-        runtime = LoopRun(memory, model, registry, step_description=planner_type.STEP, **kwargs)
-    else:
-        runtime = AgentRuntime(planner_type(AsyncMock(), max_steps=1, context_manager=manager), model, memory, registry, **kwargs)
+    runtime = LoopRun(memory, model, registry, step_description=TEAM_STEP if mode == 'team' else LOOP_STEP, **kwargs)
     return runtime, model, store
 
 
@@ -126,7 +142,7 @@ async def capture(runtime, model, *, resume=False, lose_store=None):
         runtime.memory.task_state.resolve_question(question.question_id, 'parser.py')
         if lose_store is not None:
             lose_store._paused = None
-        runtime.rebind(LoopPlanner(AsyncMock()), model, runtime._registry, context_manager=ContextManager())
+        runtime.rebind(model, runtime._registry, context_manager=ContextManager())
         results.append(snapshot(await observed_run(runtime, events)))
     requests = [normalized({'messages': args.args[0], 'tools': [t.name for t in args.args[1]]})
                 for args in model.generate.await_args_list]
@@ -138,10 +154,12 @@ async def capture(runtime, model, *, resume=False, lose_store=None):
     ([call('r', path='parser.py'), ModelTurn('answer')], False),
     ([call('q', 'ask_user', question='Which file?'), ModelTurn('answer')], True),
 ], ids=['plain', 'read-only', 'blocked-resume'])
-async def test_initial_equivalence(turns, resume):
-    old, om, _ = build(False, turns)
-    new, nm, _ = build(True, turns)
-    assert await capture(new, nm, resume=resume) == await capture(old, om, resume=resume)
+async def test_initial_equivalence(request, turns, resume):
+    outputs = []
+    for new in PATHS:
+        runtime, nm, _ = build(new, turns)
+        outputs.append(await capture(runtime, nm, resume=resume))
+    check_golden(request, outputs)
     assert all('available_tools' not in m.content for args in nm.generate.await_args_list
                for m in args.args[0] if m.role == 'user')
 
@@ -162,7 +180,7 @@ from app.agent.hooks import PolicyDeniedError
     'model-contract', 'lost-resume-store', 'execution-limit', 'budget', 'explore',
     'team-read-only', 'team-passing-run', 'team-gate-reject',
 ])
-async def test_model_scenarios(scenario):
+async def test_model_scenarios(request, scenario):
     def script():
         kwargs, resume, lose, budget = {}, False, False, False
         turns = [ModelTurn('answer')]
@@ -213,14 +231,14 @@ async def test_model_scenarios(scenario):
         return turns, kwargs, resume, lose, budget
 
     outputs = []
-    for new in (False, True):
+    for new in PATHS:
         turns, kwargs, resume, lose, budget = script()
         runtime, model, store = build(new, turns, **kwargs)
         with metering(RunMeter(max_total_tokens=1)) as meter:
             if budget:
                 meter.prompt_tokens = 1
             outputs.append(await capture(runtime, model, resume=resume, lose_store=store if lose else None))
-    assert outputs[1] == outputs[0]
+    check_golden(request, outputs)
 
 
 def override(action):
@@ -236,9 +254,9 @@ def override(action):
     'failed-output', 'invalid-output', 'timeout-read', 'timeout-write', 'timeout-overflow',
     'timeout-team', 'resource-selected', 'stale-result', 'stale-error', 'stale-cancel',
 ])
-async def test_host_boundaries(kind):
+async def test_host_boundaries(request, kind):
     outputs = []
-    for new in (False, True):
+    for new in PATHS:
         holder = {}
         async def action(context, deps, runner):
             holder['context'] = context
@@ -278,7 +296,7 @@ async def test_host_boundaries(kind):
         runtime, model, _ = build(new, [ModelTurn('answer')], mode=mode, options=options, wrap=override(action))
         holder['runtime'] = runtime
         if kind.startswith('stale-'):
-            from app.models.working_memory import StaleExecutionError
+            from app.models.run_state import StaleExecutionError
             events = []
             with pytest.raises(StaleExecutionError):
                 await observed_run(runtime, events)
@@ -289,21 +307,17 @@ async def test_host_boundaries(kind):
         # Compare the context separately, retaining every field except the deliberately removed tool pin.
         context = asdict(holder['context'])
         context['pinned_contexts'] = [x for x in context['pinned_contexts'] if x['source'] != 'available_tools']
-        holder['normalized_context'] = normalized(context)
-        if not new:
-            legacy_context = holder['normalized_context']
-        else:
-            assert holder['normalized_context'] == legacy_context
-    assert outputs[1] == outputs[0]
+        outputs[-1] = {'output': outputs[-1], 'context': normalized(context)}
+    check_golden(request, outputs)
     if kind == 'resource-selected':
-        assert outputs[0][0][0]['result'][2] == 'internal'
-        assert outputs[0][0][0]['result'][1] == 'Execution failed: InvalidStateTransitionError'
+        assert outputs[-1]['output'][0][0]['result'][2] == 'internal'
+        assert outputs[-1]['output'][0][0]['result'][1] == 'Execution failed: InvalidStateTransitionError'
 
 
 @pytest.mark.parametrize('swallow', ['no', 'return', 'raise'])
-async def test_cancellation_never_commits(swallow):
+async def test_cancellation_never_commits(request, swallow):
     outputs = []
-    for new in (False, True):
+    for new in PATHS:
         entered = asyncio.Event()
         async def action(context, deps, runner):
             await runner.run(context)
@@ -329,14 +343,14 @@ async def test_cancellation_never_commits(swallow):
                         normalized(events, omit=EVENT_OMIT),
                         normalized(runtime._step_log, omit=('seconds', 'step_id')),
                         [normalized(a.args[0]) for a in model.generate.await_args_list]))
-    assert outputs[1] == outputs[0]
+    check_golden(request, outputs)
 
 
 @pytest.mark.parametrize('late_failure', [False, True])
-async def test_rebind_invalidates_late_old_binding(late_failure):
-    from app.models.working_memory import StaleExecutionError
+async def test_rebind_invalidates_late_old_binding(request, late_failure):
+    from app.models.run_state import StaleExecutionError
     outputs = []
-    for new in (False, True):
+    for new in PATHS:
         entered, release = asyncio.Event(), asyncio.Event()
         async def action(context, deps, runner):
             entered.set()
@@ -349,19 +363,19 @@ async def test_rebind_invalidates_late_old_binding(late_failure):
         old_binding = runtime._runner
         pending = asyncio.create_task(old_binding.run(None))
         await asyncio.wait_for(entered.wait(), 2)
-        runtime.rebind(LoopPlanner(AsyncMock()), model, ToolRegistry(), context_manager=ContextManager())
+        runtime.rebind(model, ToolRegistry(), context_manager=ContextManager())
         release.set()
         with pytest.raises(StaleExecutionError) as caught:
             await pending
         outputs.append((str(caught.value), runtime.memory.task_state.status))
-    assert outputs[1] == outputs[0]
+    check_golden(request, outputs)
 
 
-async def test_approval_wait_is_excluded_from_deadlines():
+async def test_approval_wait_is_excluded_from_deadlines(request):
     from app.api.approvals import ApprovalGate
     from app.agent.hooks import HookSet, using_hooks
     outputs = []
-    for new in (False, True):
+    for new in PATHS:
         pending = SimpleNamespace(approvals={}, add=lambda e: None)
         gate = ApprovalGate(pending, frozenset({'read_file'}), 2)
         runtime, model, _ = build(new, [call('r'), ModelTurn('approved')])
@@ -378,25 +392,25 @@ async def test_approval_wait_is_excluded_from_deadlines():
             outputs.append(await capture(runtime, model))
         await approving
         assert outputs[-1][0][0]['result'][0] == 'completed'
-    assert outputs[1] == outputs[0]
+    check_golden(request, outputs)
 
 
-async def test_real_team_timeout():
+async def test_real_team_timeout(request):
     outputs = []
-    for new in (False, True):
+    for new in PATHS:
         runtime, model, _ = build(new, [], mode='team', options=TeamOptions(timeout_seconds=0.02))
         async def wait(*args):
             await asyncio.Future()
         model.generate.side_effect = wait
         outputs.append(await capture(runtime, model))
         assert outputs[-1][0][0]['result'][2] == 'timeout'
-    assert outputs[1] == outputs[0]
+    check_golden(request, outputs)
 
 
-async def test_context_fields_and_normalized_receipt():
+async def test_context_fields_and_normalized_receipt(request):
     from app.models.resources import ResourceType
     contexts, outputs = [], []
-    for new in (False, True):
+    for new in PATHS:
         async def action(context, deps, runner):
             value = asdict(context)
             value['pinned_contexts'] = [x for x in value['pinned_contexts'] if x['source'] != 'available_tools']
@@ -413,22 +427,23 @@ async def test_context_fields_and_normalized_receipt():
         resource_id = runtime.memory.resources.register('a.py', ResourceType.FILE)
         runtime.memory.resources.select_context(resource_id, 'resource excerpt')
         outputs.append(await capture(runtime, model))
-    assert contexts[1] == contexts[0]
-    assert outputs[1] == outputs[0]
+    outputs = [{'output': output, 'context': context} for output, context in zip(outputs, contexts)]
+    check_golden(request, outputs)
 
 
-async def test_exact_execution_limit_can_still_complete():
-    old, om, _ = build(False, [ModelTurn('answer')], limits={'max_executions': 1})
-    new, nm, _ = build(True, [ModelTurn('answer')], limits={'max_executions': 1})
-    legacy = await capture(old, om)
-    assert legacy[0][0]['result'] == ['completed', 'answer', None, 1, 0]
-    assert await capture(new, nm) == legacy
+async def test_exact_execution_limit_can_still_complete(request):
+    outputs = []
+    for new in PATHS:
+        runtime, model, _ = build(new, [ModelTurn('answer')], limits={'max_executions': 1})
+        outputs.append(await capture(runtime, model))
+        assert outputs[-1][0][0]['result'] == ['completed', 'answer', None, 1, 0]
+    check_golden(request, outputs)
 
 
-async def test_second_execution_limit_check_is_limit_not_internal():
+async def test_second_execution_limit_check_is_limit_not_internal(request):
     from app.agent.hooks import HookSet, using_hooks
     outputs = []
-    for new in (False, True):
+    for new in PATHS:
         runtime, model, _ = build(new, [ModelTurn('unused')], limits={'max_executions': 1})
         def at_plan(event):
             if event['type'] == 'plan':
@@ -436,13 +451,13 @@ async def test_second_execution_limit_check_is_limit_not_internal():
         with using_hooks(HookSet((SimpleNamespace(observe=at_plan),))):
             outputs.append(await capture(runtime, model))
         assert outputs[-1][0][0]['result'] == ['failed', 'Agent execution limit reached', 'limit', 1, 0]
-    assert outputs[1] == outputs[0]
+    check_golden(request, outputs)
 
 
-async def test_budget_is_checked_after_successful_step_before_task_completion():
+async def test_budget_is_checked_after_successful_step_before_task_completion(request):
     from app.agent.run_meter import current_meter
     outputs = []
-    for new in (False, True):
+    for new in PATHS:
         async def action(context, deps, runner):
             output = await runner.run(context)
             current_meter().record(SimpleNamespace(prompt_tokens=2, completion_tokens=1))
@@ -452,7 +467,7 @@ async def test_budget_is_checked_after_successful_step_before_task_completion():
             outputs.append(await capture(runtime, model))
         assert outputs[-1][0][0]['result'][2] == 'budget'
         assert len(outputs[-1][0][0]['receipts']) == 1
-    assert outputs[1] == outputs[0]
+    check_golden(request, outputs)
 
 
 @pytest.mark.parametrize('output', [
@@ -479,13 +494,13 @@ async def test_budget_is_checked_after_successful_step_before_task_completion():
         'missing-failure-reason', 'empty-observation', 'refs-list', 'refs-type', 'calls-list',
         'call-type', 'empty-call-id', 'empty-tool-name', 'arguments-key', 'results-list',
         'result-type', 'success-type', 'result-content', 'empty-error'])
-async def test_output_validation_matches_legacy(output):
+async def test_output_validation_matches_legacy(request, output):
     results = []
-    for new in (False, True):
+    for new in PATHS:
         async def action(context, deps, runner):
             await runner.run(context)
             return output
         runtime, model, _ = build(new, [ModelTurn('answer')], wrap=override(action))
         results.append(await capture(runtime, model))
         assert results[-1][0][0]['result'][2] == 'internal'
-    assert results[1] == results[0]
+    check_golden(request, results)

@@ -302,7 +302,7 @@ async def main(args) -> int:
                                if config.workspace_choice else None),
             workspace_policy=policy, default_workspace=write_root or filesystem_root,
             include_knowledge=not args.no_knowledge,
-            max_executions=args.max_executions, max_replans=args.max_replans,
+            max_executions=args.max_executions,
             conversation_compressor=compressor,
             execution_mode=getattr(args, 'execution_mode', 'single'),
             team_options=team_options,
@@ -336,7 +336,7 @@ def _positive(kind):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description="Aletheia plan/execute/replan runtime")
+    parser = argparse.ArgumentParser(description="Aletheia agent: one agent loop per task")
     parser.add_argument("goal", nargs="?",
                         help="The task; omit it (or pass --interactive) for the interactive mode")
     parser.add_argument('-i', '--interactive', action='store_true',
@@ -352,8 +352,8 @@ def build_parser():
     parser.add_argument('--execution-mode', choices=['single', 'team', 'auto'], default='single',
                         help='single: ordinary tool calling; team: the delegating team; '
                              'auto: host rules, then one model call, pick per task (D-026)')
-    parser.add_argument('--single-runner', choices=['plan', 'loop'], default='loop',
-                        help="How single mode runs: one agent loop (default, D-072), or plan then steps")
+    parser.add_argument('--single-runner', choices=['loop'], default='loop',
+                        help="How single mode runs: one agent loop (D-072); plan mode was removed (D-076)")
     parser.add_argument('--delegate', action='store_true',
                         help='Let the single loop delegate wide read-only research to fresh members '
                              '(off by default, loop-delegate-001)')
@@ -361,7 +361,6 @@ def build_parser():
                         help='Let the agent run workspace code/tests in the Docker sandbox (needs --write-root)')
     parser.add_argument('--team-timeout', type=float, help='Team time budget in seconds (default 180)')
     parser.add_argument("--max-executions", type=int, default=16)
-    parser.add_argument("--max-replans", type=int, default=2)
     parser.add_argument('--compress-history', action='store_true',
                         help='Generate archived stage summaries using the existing local compressor')
     parser.add_argument('--max-tokens', type=_positive(int),

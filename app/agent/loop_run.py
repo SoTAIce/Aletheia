@@ -1,4 +1,9 @@
-"""Run one loop with the legacy runtime's host boundaries, without a plan executor."""
+"""Run one task as one agent loop and own its host guarantees (stage 4c, D-076).
+
+LoopRun holds the lock, rebind invalidation and the cancel guard, the version check, the budget, the step
+timeout with a pausable deadline, the side-effect watch, the execution limit, the failure kinds, and the
+plan/step events and trace spans. Runners only return output; LoopRun commits it to RunState.
+"""
 
 import asyncio
 from contextlib import contextmanager
@@ -10,33 +15,88 @@ from uuid import uuid4
 
 from loguru import logger
 
-from app.agent.runtime import (_BoundRunner, AgentRunResult, FAILURE_MESSAGES, _policy_denial, _int_or_none)
+from app.agent.runtime import AgentRunResult, FAILURE_MESSAGES, _policy_denial, _int_or_none
 from app.agent.run_meter import RunMeter, cache_text as _cache_text, call_text as _call_text, current_meter, metering
 from app.agent.side_effects import SideEffectWatch
 from app.agent.step_runner import (RunnerDependencies, RunnerLimits, StepBlockedError, StepRunError,
-    StepBusinessError, StepFormatError, StepModelError, StepToolError, StepRoutingError)
+    StepBusinessError, StepFormatError, StepModelError, StepToolError, StepRunner)
 from app.agent.step_models import (StepExecutionContext, StepExecutionReceipt, StepRunOutput,
     StepOutcome, ToolCall, ToolResult)
-from app.models.run_state import RunMemory
+from app.models.run_state import RunMemory, StaleExecutionError
 from app.models.taskstate import PlanStep, StepStatus, TaskStatus, InvalidStateTransitionError
-from app.models.working_memory import StaleExecutionError
 from app.services.context_manager import ContextManager
+
+
+def step_context(memory: RunMemory, step: PlanStep, plan_revision: int) -> StepExecutionContext:
+    """The runner's view of a started step: what LoopRun hands its runner (tests build it the same way)."""
+    snapshot = memory.task_state.snapshot()
+    scratch = snapshot.scratchpad
+    return StepExecutionContext(
+        task_id=snapshot.task_id, active_goal=snapshot.active_goal,
+        goal_revision=snapshot.goal_revision, plan_revision=plan_revision,
+        current_step=step, constraints=snapshot.constraints, pinned_contexts=snapshot.pinned_contexts,
+        intermediate_results=tuple(r for r in scratch.intermediate_results
+                                   if r.valid and r.goal_revision == snapshot.goal_revision),
+        last_observation=(scratch.last_observation if scratch.last_observation is not None
+                          and scratch.last_observation.goal_revision == snapshot.goal_revision else None),
+        open_question=tuple(q for q in scratch.open_questions if q.resolved_at is None
+                            and q.goal_revision == snapshot.goal_revision),
+        resource_contexts=tuple(r.selected_context for r in memory.resources.list_all()
+                                if r.selected_context is not None),
+        resolved_questions=tuple(q for q in scratch.open_questions if q.resolved_at is not None
+                                 and q.goal_revision == snapshot.goal_revision), final_step=True)
+
+
+class _BoundRunner:
+    """LoopRun's binding of one runner, with two guards:
+
+    - after rebind() the old binding is invalid, so a late result or failure from it is stale;
+    - when cancellation was requested while the runner ran, neither its output nor a declared
+      failure may be committed as if the step had finished normally.
+    """
+
+    def __init__(self, runner: StepRunner):
+        self.runner, self._valid = runner, True      # the bound runner itself, read-only for callers
+        self.runner_id = getattr(runner, 'runner_id', 'tool_calling')
+
+    @property
+    def format_repair_count(self) -> int:
+        return getattr(self.runner, 'format_repair_count', 0)
+
+    def invalidate(self) -> None:
+        self._valid = False
+
+    async def run(self, context):
+        if not self._valid:
+            raise StaleExecutionError('Runner binding is no longer current')
+        task = asyncio.current_task()
+        cancellations = task.cancelling()
+        try:
+            result = await self.runner.run(context)
+        except BaseException as exc:
+            if not self._valid:
+                raise StaleExecutionError('Late failure belongs to an invalid Runner binding') from exc
+            if task.cancelling() > cancellations and not isinstance(exc, asyncio.CancelledError):
+                raise asyncio.CancelledError('Runner failed after cancellation was requested') from exc
+            raise
+        if task.cancelling() > cancellations:
+            raise asyncio.CancelledError('Runner returned after cancellation was requested')
+        if not self._valid:
+            raise StaleExecutionError('Late output belongs to an invalid Runner binding')
+        return result
 
 
 class LoopRun:
     """One task's loop binding. Counters and receipts survive blocked/resumed runs."""
 
     def __init__(self, memory: RunMemory, model, registry, *, runner_factory,
-                 step_description: str, max_executions=16, max_replans=0,
-                 step_timeout_seconds=60.0, planning_timeout_seconds=60.0,
+                 step_description: str, max_executions=16, step_timeout_seconds=60.0,
                  max_tool_rounds=4, max_total_tool_calls=8, context_manager=None):
-        for name, value, minimum in (("max_executions", max_executions, 1), ("max_replans", max_replans, 0)):
-            if type(value) is not int or value < minimum:
-                raise ValueError(f"{name} must be an integer >= {minimum}")
-        for name, value in (("step_timeout_seconds", step_timeout_seconds),
-                            ("planning_timeout_seconds", planning_timeout_seconds)):
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
-                raise ValueError(f"{name} must be finite and positive")
+        if type(max_executions) is not int or max_executions < 1:
+            raise ValueError("max_executions must be an integer >= 1")
+        if (isinstance(step_timeout_seconds, bool) or not isinstance(step_timeout_seconds, (int, float))
+                or not math.isfinite(step_timeout_seconds) or step_timeout_seconds <= 0):
+            raise ValueError("step_timeout_seconds must be finite and positive")
         self.memory = memory
         self._registry = registry
         self._context_manager = context_manager or ContextManager()
@@ -45,7 +105,7 @@ class LoopRun:
         self._runner = self._assemble_runner(model, registry, self._context_manager)
         self._step_description = step_description
         self._max_executions = max_executions
-        # Compatibility arguments are validated above; loops never replay a failed task.
+        # A loop never replays a failed task: its one step is the whole task (D-076).
         self._max_replans = 0
         self._step_timeout = step_timeout_seconds
         self._execution_count = self._replan_count = self._plan_revision = 0
@@ -65,7 +125,7 @@ class LoopRun:
             raise TypeError("runner must provide an async run(context) method")
         return runner
 
-    def rebind(self, planner, model, registry, *, context_manager):
+    def rebind(self, model, registry, *, context_manager):
         if self._lock.locked() or self.memory.task_state.status is TaskStatus.RUNNING:
             raise RuntimeError('cannot rebind a running task')
         runner = self._assemble_runner(model, registry, context_manager)
@@ -281,22 +341,7 @@ class LoopRun:
         task.start(step.step_id)
         version = task.state_version
         current_step = replace(step, status=StepStatus.ACTIVE, started_at=datetime.now(UTC))
-        snapshot = task.snapshot()
-        scratch = snapshot.scratchpad
-        context = StepExecutionContext(
-            task_id=snapshot.task_id, active_goal=snapshot.active_goal,
-            goal_revision=snapshot.goal_revision, plan_revision=self._plan_revision,
-            current_step=current_step, constraints=snapshot.constraints, pinned_contexts=snapshot.pinned_contexts,
-            intermediate_results=tuple(r for r in scratch.intermediate_results
-                                       if r.valid and r.goal_revision == snapshot.goal_revision),
-            last_observation=(scratch.last_observation if scratch.last_observation is not None
-                              and scratch.last_observation.goal_revision == snapshot.goal_revision else None),
-            open_question=tuple(q for q in scratch.open_questions if q.resolved_at is None
-                                and q.goal_revision == snapshot.goal_revision),
-            resource_contexts=tuple(r.selected_context for r in self.memory.resources.list_all()
-                                    if r.selected_context is not None),
-            resolved_questions=tuple(q for q in scratch.open_questions if q.resolved_at is not None
-                                     and q.goal_revision == snapshot.goal_revision), final_step=True)
+        context = step_context(self.memory, current_step, self._plan_revision)
 
         def current():
             return (task.state_version == version and task.status is TaskStatus.RUNNING
@@ -324,7 +369,7 @@ class LoopRun:
                 task.block(exc.message, step.step_id, plan_revision=self._plan_revision, source_refs=refs)
             else:
                 message = exc.message
-                if isinstance(exc, (StepBusinessError, StepFormatError, StepModelError, StepToolError, StepRoutingError)):
+                if isinstance(exc, (StepBusinessError, StepFormatError, StepModelError, StepToolError)):
                     message = f"{type(exc).__name__}: {message}"
                 task.add_failure(message, source_refs=refs)
             raise

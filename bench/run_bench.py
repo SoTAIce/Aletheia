@@ -375,9 +375,9 @@ def main(argv=None):
     parser.add_argument('--sandbox', action='store_true',
                         help='file delivery plus run_tests/run_python in the Docker sandbox (implies --write)')
     parser.add_argument('--team-timeout', type=float, help='team time budget per run in seconds')
-    parser.add_argument('--single-runner', choices=['plan', 'loop'], default='loop',
-                        help='how single (and auto-routed single) mode runs: one agent loop (default, D-072), '
-                             'or plan then steps')
+    parser.add_argument('--single-runner', choices=['loop'], default='loop',
+                        help='how single (and auto-routed single) mode runs: one agent loop (D-072); '
+                             'plan mode was removed (D-076)')
     parser.add_argument('--delegate', action='store_true',
                         help='let the single loop delegate read-only research (loop-delegate-001)')
     parser.add_argument('--write', action='store_true',

@@ -9,12 +9,8 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
 from app.agent.openai_compatible_tool_calling_model import OpenAICompatibleToolCallingModel
-from app.agent.step_executor import StepExecutor
 from app.agent.step_models import ToolDefinition, ToolsShownOnly, UserMessage
-from app.agent.tool_calling_step_runner import CONTEXT_FIELD_ORDER, ToolCallingStepRunner
 from app.config import config
-from app.models.taskstate import TaskState
-from app.models.working_memory import WorkingMemory
 from app.services.rag_agent_service import RagAgentService
 from app.tools.tool_registry import ToolRegistry
 
@@ -94,32 +90,8 @@ async def test_the_service_passes_the_key_to_the_separate_endpoint(monkeypatch):
         monkeypatch.setattr(config, name, value)
     monkeypatch.setattr(module, 'AsyncOpenAI', lambda **kw: AsyncOpenAI(
         **kw, http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond))))
-    async with RagAgentService(mcp_servers=(), include_knowledge=False)._models('aletheia-k') as (_, model):
+    async with RagAgentService(mcp_servers=(), include_knowledge=False)._models('aletheia-k') as model:
         await model.generate((UserMessage('hi'),), ())
     assert seen == ['aletheia-k']
 
 
-def contexts(steps):
-    wm = WorkingMemory(TaskState('user', '解释 runtime.py'))
-    wm.task_state.pin_content('{"turns": ["earlier conversation"]}', 'conversation_history')
-    wm.task_state.start_planning()
-    wm.install_plan(steps)
-    built = []
-    for step in wm.task_state.plan:
-        wm.begin_step(step.step_id)
-        built.append(StepExecutor(wm, AsyncMock()).build_context(step.step_id))
-        wm.task_state.complete_step(step.step_id, f'result of {step.description}')
-    return built
-
-
-def test_stable_context_fields_come_first_and_later_steps_share_them():
-    runner = ToolCallingStepRunner(AsyncMock(), ToolRegistry())
-    first, second = (runner._build_initial_messages(c) for c in contexts(['读文件', '解释']))
-    payload = json.loads(first[1].content)
-    assert list(payload) == list(CONTEXT_FIELD_ORDER)
-    assert first[0] == second[0]                                          # same system message
-    a, b = first[1].content, second[1].content
-    shared = len(next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b))) * 'x')
-    # Everything before the step's own fields is the same in both steps; they differ only there.
-    assert '"pinned_contexts"' in a[:shared] and 'earlier conversation' in a[:shared]
-    assert a.index('"intermediate_results"') < shared < len(a)

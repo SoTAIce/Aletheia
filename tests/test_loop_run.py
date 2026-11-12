@@ -5,14 +5,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.agent.agent_loop import AgentLoopRunner, LoopOptions, LoopPlanner
+from app.agent.agent_loop import AgentLoopRunner, LoopOptions, LOOP_STEP
 from app.agent.loop_run import LoopRun
-from app.agent.runtime import AgentRuntime
 from app.agent.step_models import ModelTurn, StepRunOutput
 from app.agent.step_runner import StepRunError
 from app.models.run_state import RunMemory, RunState
-from app.models.taskstate import TaskState, TaskStatus
-from app.models.working_memory import WorkingMemory
+from app.models.taskstate import TaskStatus
 from app.tools.tool_registry import ToolRegistry
 from app.services.context_manager import ContextManager
 
@@ -21,33 +19,33 @@ def make(**kwargs):
     model = SimpleNamespace(generate=AsyncMock(return_value=ModelTurn('answer')))
     registry = ToolRegistry()
     factory = lambda d: AgentLoopRunner(d.model, d.tool_registry, LoopOptions(), d.context_manager)
-    options = dict(runner_factory=factory, step_description=LoopPlanner.STEP)
+    options = dict(runner_factory=factory, step_description=LOOP_STEP)
     options.update(kwargs)
     return LoopRun(RunMemory(RunState('user', 'goal')), model, registry, **options), model
 
 
 @pytest.mark.parametrize('name,values', [
     ('max_executions', [False, True, 0, -1, 1.5, None, '2']),
-    ('max_replans', [False, True, -1, 1.5, None, '2']),
     ('step_timeout_seconds', [False, True, 0, -1, float('inf'), float('nan'), None, '2']),
-    ('planning_timeout_seconds', [False, True, 0, -1, float('inf'), float('nan'), None, '2']),
     ('max_tool_rounds', [False, True, -1, 1.5, None, '2']),
     ('max_total_tool_calls', [False, True, -1, 1.5, None, '2']),
 ])
 def test_validation_matches_runtime(name, values):
+    # AgentRuntime's errors for the same values, recorded before stage 4c deleted it.
+    import json
+    from pathlib import Path
+    recorded = json.loads((Path(__file__).parent / 'fixtures' / 'loop_run_legacy_validation.json')
+                          .read_text(encoding='utf-8'))
     for value in values:
-        registry, model = ToolRegistry(), AsyncMock()
-        with pytest.raises((ValueError, TypeError)) as old:
-            AgentRuntime(LoopPlanner(AsyncMock()), model, WorkingMemory(TaskState('u', 'g')),
-                         registry, **{name: value})
-        with pytest.raises(type(old.value)) as new:
+        kind, message = recorded[f'{name}={value!r}']
+        with pytest.raises({'ValueError': ValueError, 'TypeError': TypeError}[kind]) as new:
             make(**{name: value})
-        assert str(new.value) == str(old.value)
+        assert type(new.value).__name__ == kind and str(new.value) == message
 
 
 @pytest.mark.parametrize('kwargs', [
-    {'max_executions': 1, 'max_replans': 0},
-    {'step_timeout_seconds': 0.01, 'planning_timeout_seconds': 1},
+    {'max_executions': 1},
+    {'step_timeout_seconds': 0.01},
     {'max_tool_rounds': 0, 'max_total_tool_calls': 0},
 ])
 def test_valid_limits(kwargs):
@@ -64,10 +62,10 @@ async def test_rebind_rejects_lock_or_running_state():
     runtime, model = make()
     async with runtime._lock:
         with pytest.raises(RuntimeError, match='cannot rebind a running task'):
-            runtime.rebind(None, model, ToolRegistry(), context_manager=ContextManager())
+            runtime.rebind(model, ToolRegistry(), context_manager=ContextManager())
     runtime.memory.task_state.start('active')
     with pytest.raises(RuntimeError, match='cannot rebind a running task'):
-        runtime.rebind(None, model, ToolRegistry(), context_manager=ContextManager())
+        runtime.rebind(model, ToolRegistry(), context_manager=ContextManager())
 
 
 async def test_concurrent_runs_serialize_and_reuse_final_result():
@@ -95,26 +93,3 @@ async def test_concurrent_runs_serialize_and_reuse_final_result():
     assert one.status is TaskStatus.COMPLETED
 
 
-async def test_format_repairs_and_rebind_ignore_planner():
-    runtime, model = make()
-    model.generate.side_effect = [ModelTurn(''), ModelTurn('answer')]
-    assert (await runtime.run()).content == 'answer'
-    assert runtime.format_repair_count == 1
-    previous = runtime._runner
-    runtime.rebind(object(), model, ToolRegistry(), context_manager=ContextManager())
-    assert runtime.format_repair_count == 0
-    from app.models.working_memory import StaleExecutionError
-    with pytest.raises(StaleExecutionError):
-        await previous.run(None)
-
-
-async def test_planning_compatibility_parameters_do_not_enable_replay():
-    async def run(context):
-        raise StepRunError('cannot finish')
-    runtime, _ = make(max_replans=3, planning_timeout_seconds=0.001,
-                      runner_factory=lambda d: SimpleNamespace(run=run, runner_id='agent_loop'))
-    result = await runtime.run()
-    assert result.execution_count == 1
-    assert result.replan_count == 0
-    assert result.failure_kind == 'limit'
-    assert result.content == 'Agent replanning limit reached; last failure: cannot finish'

@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from loop_fakes import loop_reply
+
 from app.agent import trace as trace_cli
 from app.agent.builtin_hooks import AUDIT_VERSION, TraceFileHook
 from app.agent.hooks import (
@@ -200,40 +202,23 @@ def test_model_names_are_short_printable_labels_only():
 # ---- 2/3. the runtime and the team -------------------------------------------------------
 
 def outcome(text, status='succeeded', reason=None):
-    return ModelTurn(json.dumps({'status': status, 'content': text, 'reason': reason}))
+    """Plan mode's step result as a loop reply (stage 4c)."""
+    return loop_reply(text, status, reason)
 
 
 TIME_CALL = ModelTurn(tool_calls=(ToolCall('c1', 'get_current_time', {}),))
 
 
-def service(tmp_path, turns, steps=(('Look', 'Answer'),), runner='plan', hooks=None):
-    planner, model = AsyncMock(), AsyncMock()
-    planner.generate.side_effect = [json.dumps({'steps': list(s), 'reason': None}) for s in steps]
+def service(tmp_path, turns, steps=(), runner='loop', hooks=None):
+    """A service whose loop answers with these turns; steps is what plan mode used to plan (ignored)."""
+    model = AsyncMock()
     model.generate.side_effect = list(turns)
-    return RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
+    return RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                            memory_directory=tmp_path, single_runner=runner, hooks=hooks)
 
 
 def tree_shape(span):
     return (span['kind'], [tree_shape(child) for child in span['children']])
-
-
-async def test_a_two_step_plan_run_is_a_tree_of_steps():
-    progress = []
-    recorder = Recorder()
-    svc = service(None, [TIME_CALL, outcome('a'), outcome('b')], hooks=HookSet([recorder]))
-    async with svc:
-        result = await svc.query_result('What time?', 's', on_event=progress.append)
-    assert result.status is TaskStatus.COMPLETED
-    trace = build_trace(recorder.events)
-    task, = trace['spans']
-    assert tree_shape(task) == ('task', [('plan', []), ('step', [('model', []), ('tool', []), ('model', [])]),
-                                         ('step', [('model', [])])])
-    assert trace['complete'] and trace['status'] == 'completed' and trace['totals']['tool_calls'] == 1
-    assert task['children'][1]['attrs']['runner'] == 'tool_calling'
-    # The progress callback still sees only its two record types, without span ids.
-    assert {e['type'] for e in progress} <= {'plan', 'step', 'route'}
-    assert not any('span_id' in e for e in progress)
 
 
 async def test_a_loop_run_hangs_its_calls_under_its_one_step(tmp_path):

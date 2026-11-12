@@ -1,42 +1,27 @@
 """Minimal deterministic harness tests: in-memory only, no models, MCP or DB.
 
-Restored test coverage is still absent (see docs/project_cleanup.md); this file
-only proves the test framework runs and guards one core WorkingMemory invariant.
+init.ps1 requires this file. It proves the test framework runs and guards one core invariant of the
+task state, RunState (stage 4c: it guarded WorkingMemory's plan commit before plan mode was removed).
 """
 
 import pytest
 
-from app.models.taskstate import TaskState, TaskStatus
-from app.models.working_memory import (
-    StaleExecutionError,
-    StepExecutionResult,
-    WorkingMemory,
-)
+from app.models.run_state import RunState
+from app.models.taskstate import InvalidStateTransitionError, TaskStatus
 
 
-def _planned_memory(steps: list[str]) -> WorkingMemory:
-    memory = WorkingMemory(TaskState("smoke-user", "smoke goal"))
-    memory.task_state.start_planning()
-    memory.install_plan(steps)
-    return memory
+def test_start_and_complete() -> None:
+    state = RunState("smoke-user", "smoke goal")
+    state.start("step")
+    state.complete()
+    assert state.status == TaskStatus.COMPLETED and state.active_step_id is None
 
 
-def test_plan_commit_and_complete() -> None:
-    memory = _planned_memory(["step one", "step two"])
-    for step in memory.task_state.plan:
-        token = memory.begin_step(step.step_id)
-        memory.commit_step_result(StepExecutionResult(token=token, content="ok"))
-    memory.complete_task()
-    assert memory.task_state.status == TaskStatus.COMPLETED
-
-
-def test_consumed_token_is_rejected_without_state_change() -> None:
-    memory = _planned_memory(["step one", "step two"])
-    first = memory.task_state.plan[0].step_id
-    token = memory.begin_step(first)
-    memory.commit_step_result(StepExecutionResult(token=token, content="ok"))
-    version = memory.task_state.state_version
-
-    with pytest.raises(StaleExecutionError):
-        memory.commit_step_result(StepExecutionResult(token=token, content="replay"))
-    assert memory.task_state.state_version == version
+def test_a_finished_task_rejects_writes_without_state_change() -> None:
+    state = RunState("smoke-user", "smoke goal")
+    state.start("step")
+    state.complete()
+    before = state.snapshot()
+    with pytest.raises(InvalidStateTransitionError):
+        state.pin_content("late", "conversation_memory")
+    assert state.snapshot() == before

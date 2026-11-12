@@ -135,8 +135,7 @@ def test_pytest_runs_and_reports(box):
 async def test_mcp_sandbox_server_runs_tests_end_to_end(tmp_path):
     """The MCP child gets only MCP's minimal env; it must still drive the docker CLI."""
     from app.agent.step_models import ToolCall
-    from app.models.taskstate import TaskState
-    from app.models.working_memory import WorkingMemory
+    from app.models.run_state import RunMemory, RunState
     from app.tools.tool_loader import local_mcp_servers, open_tool_registry
     if not DockerSandbox(tmp_path).available():
         pytest.skip('sandbox image not built')
@@ -144,7 +143,7 @@ async def test_mcp_sandbox_server_runs_tests_end_to_end(tmp_path):
     (tmp_path / 'test_calc.py').write_text('from calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n',
                                            encoding='utf-8')
     servers = local_mcp_servers(filesystem_root=tmp_path, write_root=tmp_path, sandbox=True)
-    memory = WorkingMemory(TaskState('u', 'goal'))
+    memory = RunMemory(RunState('u', 'goal'))
     async with open_tool_registry(memory, mcp_servers=servers, include_knowledge=False) as registry:
         names = {d.name for d in registry.list_definitions()}
         assert {'run_tests', 'run_python', 'write_file', 'read_file'} <= names

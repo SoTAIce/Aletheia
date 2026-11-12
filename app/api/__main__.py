@@ -101,7 +101,7 @@ async def serve(args) -> int:
         server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_config=None,
                                                access_log=False, server_header=False))
         print(f'Aletheia 网页后端：http://{host}:{port}（写文件：{"开启" if write_root else "关闭"}，'
-              f'执行方式：{"单一循环" if args.single_runner == "loop" else "按计划"}）', flush=True)
+              f'执行方式：单一循环）', flush=True)
         await server.serve()
     return 0
 
@@ -117,7 +117,8 @@ def build_parser():
                         help='Confirm a --filesystem-root/--write-root on the system drive (C:) without a prompt (D-074)')
     parser.add_argument('--no-knowledge', action='store_true', help='Disable RAG when no knowledge store is configured')
     parser.add_argument('--execution-mode', choices=['single', 'team', 'auto'], default='single')
-    parser.add_argument('--single-runner', choices=['plan', 'loop'], default='loop')
+    parser.add_argument('--single-runner', choices=['loop'], default='loop',
+                        help='one agent loop; plan mode was removed (D-076)')
     parser.add_argument('--delegate', action='store_true',
                         help='Let the single loop delegate wide read-only research (off by default)')
     return parser

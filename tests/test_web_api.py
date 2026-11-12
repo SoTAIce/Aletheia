@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
+from loop_fakes import loop_reply
+
 from app.agent.step_models import ModelTurn
 from app.api.__main__ import is_loopback, startup_problem
 from app.api.app import create_app
@@ -19,14 +21,14 @@ AUTH = {'Authorization': f'Bearer {TOKEN}'}
 
 
 def outcome(text, status='succeeded', reason=None):
-    return ModelTurn(json.dumps({'status': status, 'content': text, 'reason': reason}))
+    """Plan mode's step result as a loop reply (stage 4c)."""
+    return loop_reply(text, status, reason)
 
 
 def service_for(tmp_path, steps=(), turns=()):
-    planner, model = AsyncMock(), AsyncMock()
-    planner.generate.side_effect = [json.dumps({'steps': s, 'reason': None}) for s in steps]
+    model = AsyncMock()
     model.generate.side_effect = list(turns)
-    return RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
+    return RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                            memory_directory=tmp_path)
 
 
@@ -109,7 +111,7 @@ async def test_a_repeated_request_id_returns_the_same_run_and_a_changed_one_conf
         conflict = await web.send('s', 'other text', 'r')
         assert conflict.status_code == 409 and conflict.json()['code'] == 'request_conflict'
         await web.finished('r')
-        assert len(web.service._planner_model.generate.call_args_list) == 1
+        assert len(web.service.model.generate.call_args_list) == 1   # the task ran once
 
 
 async def test_a_blocked_question_is_answered_by_the_next_message(tmp_path):
@@ -200,7 +202,7 @@ async def test_the_token_is_required_everywhere(tmp_path):
         health = (await web.client.get('/api/health')).json()
         assert health == {'status': 'ok', 'longterm_memory': False, 'write_enabled': False, 'active_runs': 0,
                           'options': {'modes': ['single'], 'default_mode': 'single',     # D-051
-                                      'runners': ['plan', 'loop'], 'default_runner': 'plan',
+                                      'runners': ['loop'], 'default_runner': 'loop',
                                       'write_available': False, 'write_default': False,
                                       'memory_available': False, 'memory_default': False},
                           'approval_tools': []}                                          # D-061

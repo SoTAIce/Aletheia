@@ -86,23 +86,27 @@ def test_an_oversized_request_drops_the_last_memory_first():
 # ---- the service recalls before planning and degrades on failure ----
 
 def _service(longterm, **options):
-    planner, model = AsyncMock(), AsyncMock()
-    planner.generate.return_value = '{"steps":["Answer"],"reason":null}'
-    model.generate.return_value = ModelTurn(json.dumps({'status': 'succeeded', 'content': 'ok', 'reason': None}))
-    service = RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
+    model = AsyncMock()
+    model.generate.return_value = ModelTurn('ok')
+    service = RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                               memory_directory='', longterm_memory=longterm, **options)
-    return service, planner
+    return service, model
 
 
-async def test_recalled_memories_reach_the_planner_as_pinned_reference_data():
+def _request(model):
+    """The text of the loop's last model request."""
+    return '\n'.join(m.content or '' for m in model.generate.call_args.args[0])
+
+
+async def test_recalled_memories_reach_the_loop_as_pinned_reference_data():
     longterm = AsyncMock()
     longterm.recall.return_value = hits(memory('m1', 'Prefers Markdown reports', user='alice'))
-    service, planner = _service(longterm)
+    service, model = _service(longterm)
     async with service:
         result = await service.query_result('Write the weekly report', 's', user_id='alice')
     assert result.status is TaskStatus.COMPLETED
     longterm.recall.assert_awaited_once_with(user_id='alice', query='Write the weekly report', limit=5)
-    prompt = planner.generate.call_args.args[0]
+    prompt = _request(model)
     assert 'Prefers Markdown reports' in prompt and 'longterm_memory' in prompt
 
 
@@ -122,12 +126,12 @@ async def test_recall_failures_never_stop_the_task(failure, caplog):
         longterm.recall.side_effect = hang
     else:
         longterm.recall.side_effect = RuntimeError('SECRET connection string')
-    service, planner = _service(longterm, longterm_timeout_seconds=0.05)
+    service, model = _service(longterm, longterm_timeout_seconds=0.05)
     with caplog.at_level(logging.WARNING):
         async with service:
             result = await service.query_result('goal', 's', user_id='alice')
     assert result.status is TaskStatus.COMPLETED
-    assert 'longterm_memory' not in planner.generate.call_args.args[0]
+    assert 'longterm_memory' not in _request(model)
     assert 'Long-term recall unavailable' in caplog.text and 'SECRET' not in caplog.text
 
 

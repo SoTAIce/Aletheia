@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from loop_fakes import loop_reply
+
 from app.agent.step_models import ModelTurn, ToolCall
 from app.models.conversation_memory import ConversationMessage, ConversationTurn, MessageRole, TurnStatus
 from app.models.taskstate import TaskStatus
@@ -17,7 +19,8 @@ from app.services.summary_scheduler import SummaryScheduler
 
 
 def outcome(text, status='succeeded', reason=None):
-    return ModelTurn(json.dumps({'status': status, 'content': text, 'reason': reason}))
+    """Plan mode's step result as a loop reply (stage 4c)."""
+    return loop_reply(text, status, reason)
 
 
 async def wait_until(predicate):
@@ -67,19 +70,13 @@ async def test_full_agent_lifecycle_with_background_summary_faults(tmp_path, mod
 
     create_mock = AsyncMock(side_effect=create)
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock)))
-    model, planner = AsyncMock(), AsyncMock()
-    planner.generate.side_effect = [
-        '{"steps":["Collect clock evidence","Ask output format"],"reason":null}',
-        '{"steps":["Finish with supplied format"],"reason":null}',
-        '{"steps":["Read the archived Alpha summary"],"reason":null}',
-    ]
+    model = AsyncMock()
     model.generate.side_effect = [
         ModelTurn(tool_calls=(ToolCall('clock-once', 'get_current_time', {'timezone': 'UTC'}),)),
-        outcome('Clock evidence collected'),
-        outcome('Which output format?', 'blocked', 'Need output format'),
+        outcome('', 'blocked', 'Which output format?'),
         outcome('Report finished with earlier clock evidence'),
     ]
-    service = RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
+    service = RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                               memory_directory=tmp_path, conversation_compressor=LLMCompressor(client, 'offline-provider'))
     # The scheduler's timeout also covers the lock wait and archive reads before the provider
     # call; .15s expired before the provider was reached on a loaded machine. The provider
@@ -95,14 +92,16 @@ async def test_full_agent_lifecycle_with_background_summary_faults(tmp_path, mod
         done = await asyncio.wait_for(service.query_result('  Markdown\n', 's', request_id='answer',
                                                           resume_task_id=blocked.task_id), 5)
         assert done.status is TaskStatus.COMPLETED and done.task_id == blocked.task_id
-        assert done.execution_count == 3 and done.replan_count == 0   # answering a question replans without spending the budget (D-033)
-        assert model.generate.await_count == 4
-        calls = [c for receipt in done.steps for c in receipt.tool_calls]
-        assert [(c.call_id, c.tool_name) for c in calls] == [('clock-once', 'get_current_time')]
-        assert done.steps[0].tool_results[0].success
+        assert done.execution_count == 2 and done.replan_count == 0   # answering a question replans without spending the budget (D-033)
+        assert model.generate.await_count == 3
+        # The clock ran once, before the question; the resumed loop reuses its reply instead of calling again.
+        from app.agent.step_models import ToolMessage
+        resumed = model.generate.call_args_list[-1].args[0]
+        assert [m.call_id for m in resumed if isinstance(m, ToolMessage)] == ['clock-once', 'ask']
+        assert [c.call_id for receipt in done.steps for c in receipt.tool_calls] == []
         assert not release.is_set()
         assert await service.query_result('  Markdown\n', 's', request_id='answer', resume_task_id=done.task_id) == done
-        assert model.generate.await_count == 4
+        assert model.generate.await_count == 3
         memory = service._conversations['s']
         if mode == 'shutdown_cancel':
             await service.aclose(timeout_seconds=.03)
@@ -121,7 +120,8 @@ async def test_full_agent_lifecycle_with_background_summary_faults(tmp_path, mod
                 result = recall.steps[0].tool_results[0]
                 assert result.success and result.tool_name == 'read_context_artifact'
                 assert result.content == summary_body
-                assert ref in planner.generate.call_args.args[0]
+                first_request = model.generate.call_args_list[-2].args[0]
+                assert any(ref in (m.content or '') for m in first_request)   # the summary is offered up front
             else:
                 await wait_until(lambda: create_mock.await_count == 2)
                 await wait_until(lambda: not service._summary_scheduler._active)
@@ -143,11 +143,10 @@ async def test_full_agent_lifecycle_with_background_summary_faults(tmp_path, mod
         assert turns['request:answer'].status is TurnStatus.COMPLETED
         assert all(turns[t.turn_id] == t for t in originals)
         # A fresh service replays the durable receipt without planner/tools.
-        async with RagAgentService(model=AsyncMock(), planner_model=AsyncMock(), mcp_servers=(),
+        async with RagAgentService(model=AsyncMock(), mcp_servers=(),
                                     include_knowledge=False, memory_directory=tmp_path) as restarted:
             assert await restarted.query_result('  Markdown\n', 's', request_id='answer', resume_task_id=done.task_id) == done
             restarted.model.generate.assert_not_awaited()
-            restarted._planner_model.generate.assert_not_awaited()
     finally:
         release.set()
         await service.aclose()

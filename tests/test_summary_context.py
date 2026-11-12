@@ -110,17 +110,15 @@ async def test_read_failure_keeps_reference_and_clear_drops_pending_view(tmp_pat
     assert result['summary_bodies'] == [] and result['turns'] == [] and result['summary_index'] == []
 
 
-async def test_service_planner_and_runner_receive_body_without_tool_lookup(tmp_path):
+async def test_service_loop_receives_body_without_tool_lookup(tmp_path):
     memory, entry = await fixture(tmp_path, body='Alpha secret decision AX-904')
     for _ in range(22):
         memory.archive.save_turn(ConversationTurn([ConversationMessage(MessageRole.USER, 'neutral recent context')]))
-    planner, model = AsyncMock(), AsyncMock()
-    planner.generate.return_value = '{"steps":["Answer from supplied Alpha context"],"reason":null}'
-    model.generate.return_value = ModelTurn('{"status":"succeeded","content":"AX-904","reason":null}')
-    async with RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
+    model = AsyncMock()
+    model.generate.return_value = ModelTurn('AX-904')
+    async with RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                                 memory_directory=tmp_path) as service:
         result = await service.query_result('Recall Alpha', 's')
     assert result.content == 'AX-904'
-    assert 'Alpha secret decision AX-904' in planner.generate.call_args.args[0]
     assert 'Alpha secret decision AX-904' in model.generate.call_args.args[0][1].content
     assert result.steps[0].tool_calls == ()

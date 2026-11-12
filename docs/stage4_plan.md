@@ -1,6 +1,6 @@
 # 第 4 阶段：拆服务层、循环独立运行、删除规划—执行骨架（修改方案）
 
-日期：2026-11-11。状态：**用户已确认第 7 节；4a 已提交 `e6a9856`；4b 已实现并评测（第 10、11 节），未提交**（stage4-plan-001；4a 为 stage4a-001）。
+日期：2026-11-11。状态：**用户已确认第 7 节；4a 已提交 `e6a9856`；4b 已提交 `70f7470`；4c 已实现并评测，未提交（第 14 节）**（stage4-plan-001；4a 为 stage4a-001）。
 来源：用户 2026-11-11“提交吧，之后开启第四阶段”。依据是当前代码（`a0aa489`）、[架构梳理](architecture_review.md) 第 3、5、6 节和第 3 阶段的结果（[stage3_team_delegate_plan.md](stage3_team_delegate_plan.md) 第 10 节）。
 
 ## 1. 第 4 阶段原定内容和现在的情况
@@ -353,4 +353,320 @@ Codex 做完 `RunAssembler` 后又卡住了 20 多分钟（同样停在 `node_re
 团队的 `todo_html` 这次提示开销正常，仍以 `enter_key_and_trim` 失败；这一项在 3b 单一循环、开沙盒的单一循环评测（loop-sandbox-check-001）里都失败过，属于这道题本身的波动。
 
 合并计算（原 9 题加重跑的 2 题）：单一循环 11/11，团队 10/11。结论不变：4b 在调参集上看不出回退。
+
+
+## 12. 4c 详细设计（2026-11-11，用户“写设计吧，可以调用codeX”）
+
+状态：**设计稿，等你确认 12.9 的问题和第 13 节的测试清单；未改代码**（stage4c-001）。
+依据：当前代码 `70f7470`（4b 已提交）。测试逐项分类原本派给 Codex 做只读盘点，它中途用完额度（11 月 15 日恢复），改由 Claude 完成，结果见第 13 节。
+
+### 12.1 原则
+
+- **发给模型的请求逐字不变。** 4c 只删除不再走到的代码，不改循环和团队的行为。`StepExecutionContext` 的字段、`plan`/`step` 事件的形状、续跑时 `revision` 为 2、第 10 节列出的几处怪行为，都原样保留。这样 4c 的评测可以直接和 4b 比；要改这些行为，另开一步。
+- **能缩就不另起名字。** 保留模块名、只删内容，可以少改导入。只有被删的模块里还有要留的东西时，才搬到别处。
+- **你的三份笔记**：`planner.py`、`step_executor.py`、`tool_calling_step_runner.py` 整个删除。开工前你先自己保存，确认后才动；实现时再核对一次这三个文件的哈希，和第 10 节记下的一致才删。
+
+### 12.2 删除的文件
+
+| 文件 | 行数 | 说明 |
+|---|---|---|
+| `app/agent/planner.py` | 423 | `Planner`、`PlannerContext`、`PlanProposal` 和规划提示 |
+| `app/agent/executor.py` | 92 | `Executor`、`StalePlanError`、`PlanAcceptance` |
+| `app/agent/step_executor.py` | 280 | `StepExecutor`；`LoopRun` 已有自己的一份输出校验（4b 从这里复制） |
+| `app/agent/tool_calling_step_runner.py` | 469 | 规划模式逐步调用工具的执行器；循环和团队都不用它 |
+| `app/agent/planning_model.py` | 24 | 只给规划器用 |
+| `app/models/working_memory.py` | 228 | `WorkingMemory` 及其执行令牌、提交结果；`StaleExecutionError` 搬走（见 12.3） |
+
+以上合计约 1,500 行。
+
+### 12.3 缩小的文件
+
+- `app/agent/runtime.py`：删除 `AgentRuntime` 和 `_tool_calling_factory`。保留 `AgentRunResult`、`FAILURE_MESSAGES`、`_policy_denial`、`_int_or_none`，`loop_run.py` 和服务层仍从这里导入，模块说明改为“任务结果与失败分类”。`_BoundRunner` 搬进 `loop_run.py`，只有它用。
+- `app/agent/loop_run.py`：删除只为和 `AgentRuntime` 对齐而留的兼容参数：构造参数 `max_replans`、`planning_timeout_seconds`，以及 `rebind` 的 `planner` 参数；`rebind` 改为 `rebind(model, registry, *, context_manager=None)`。
+- `app/agent/agent_loop.py`：删除 `LoopPlanner`、`TeamPlanner`，以及对 `planner.py` 的导入。两段步骤文字改为模块常量 `LOOP_STEP`、`TEAM_STEP`，文字不变。
+- `app/agent/step_runner.py`：删除 `StepRoutingError`；`loop_run.py` 的失败分类里同时去掉它。现在没有任何地方抛出它。
+- `app/models/taskstate.py`：删除 `TaskState`、`TaskStateSnapshot` 两个类，约 700 行。保留值类型，因为 `RunState`、`step_models.py`、`LoopRun`、网页和命令行都还在用：`TaskStatus`、`StepStatus`、`PlanStep`、`IntermediateResult`、`Observation`、`OpenQuestion`、`FailureRecord`、`Scratchpad`、`PinnedContext`、`Constraint`、`InvalidStateTransitionError`。
+- `app/models/run_state.py`：接收 `StaleExecutionError`（原在 `working_memory.py`），并删除 `RunState._check_planning_change` 里与计划有关的说明。
+- `app/tools/tool_loader.py`、`app/tools/knowledge_registry_tool.py`：类型标注从 `WorkingMemory` 改为 `RunMemory`。它们本来就只读 `task_state` 和 `resources`，行为不变。
+- `app/agent/mcp_demo/web_search_client.py`：改用 `AgentLoopRunner` 加 `LoopRun` 运行一次联网搜索；`tests/tools/test_web_search_integration.py` 导入它，所以要保留并改写。见 12.9 第 2 问。
+
+### 12.4 服务层和入口
+
+- `RagAgentService`：
+  - 删除构造参数 `planner_model` 和 `max_replans`；`single_runner` 的默认值改为 `'loop'`，只接受 `'loop'`（传 `'plan'` 抛 `ValueError`，说明规划模式已在 4c 删除）。
+  - `_open_task` 一律建 `RunMemory`；`_models` 只产出一个模型，不再包 `PlanningModel`。
+  - `capabilities()` 的 `runners` 变为 `['loop']`，`default_runner` 为 `'loop'`。字段保留，旧前端也能用。
+  - `self._tasks` 的类型从 `AgentRuntime` 改为 `LoopRun`。
+- `RunAssembler`：删除 `prepare_planner_model`、`planner_model_injected` 参数、`runtime_factory` 参数和 `AgentRuntime` 分支，只剩 `LoopRun`；续跑时仍调用 `rebind`。
+- 命令行 `python -m app.agent`、网页后端 `python -m app.api`、评测 `bench.run_bench`：
+  - `--single-runner` 只剩 `loop` 一个选项，暂时保留，旧命令还能用，下一阶段再删；
+  - 命令行删除 `--max-replans`。
+- 网页：
+  - `app.py` 请求里的 `runner` 改为只接受 `'loop'`，传 `'plan'` 返回 422；
+  - `index.html` 删除“按计划”选项。`app.js` 在只有一个执行方式时本来就会隐藏下拉框（第 374 行），不用改；
+  - 第 344 行“旧服务端没有执行方式就当作规划模式”的兜底也删掉。
+- 评测报告的 `runner` 字段保留，值固定为 `loop`，旧报告仍可对比。
+
+### 12.5 不改的
+
+- 循环和团队的提示、预算、完成门槛；按需委派默认关闭；`route_selection` 的 `auto` 路由。
+- `StepExecutionContext`、`StepRunOutput` 等 `step_models.py` 的数据结构，以及 `plan`/`step` 事件、追踪区间、`AgentRunResult` 的字段。网页执行树、追踪查看器、评测的 `steps` 字段都不用改。
+- hooks、副作用保护、`RunMeter`、对话归档、长期记忆、工具注册表和 MCP。
+- `.env`、模型默认值、依赖。
+
+### 12.6 `AGENTS.md`、决策和文档
+
+- `AGENTS.md` 全局不变量改两条：
+  - 第一条改为：“一个任务一个循环：`LoopRun` 负责取消、超时、重新绑定、版本校验、预算和结果提交；执行器（`AgentLoopRunner`）只返回输出，不直接改权威状态。”
+  - “ConversationMemory 管会话视图，WorkingMemory 管任务真值”改为“`RunState` 管任务真值”。
+- `docs/DECISIONS.md` 新增 D-076：删除规划模式和规划—执行骨架。写明原因（默认不用，评测不占优，见 D-072）、保留了哪些宿主保证、事件和请求不变、哪些旧名字删了。
+- `CLAUDE.md` 架构概览改写。现在还写着 `team_v2.py`、`runner_registry.py` 等 3b 已删的文件，这次一并按现状改。
+- `docs/agent_runtime.md` 开头的流程图和职责说明改为 `LoopRun`。
+- `docs/DOCUMENT_INDEX.md`、`feature_list.json`（新增 stage4c-001）、`progress.md`、`session-handoff.md` 照常登记。
+
+### 12.7 4b 对照测试怎么办
+
+`tests/test_loop_run_equivalence.py` 拿旧路径 `AgentRuntime` 当标准，旧路径删了就没法再对照。做法：
+
+1. **删除前先定标准答案**：在当前代码上，把每个场景旧路径的结果、步骤日志、回执、事件序列和模型请求序列化成固定的期望值文件，放在 `tests/fixtures/loop_run_golden/`，每个场景一个文件，去掉编号和时间。
+2. 改写对照测试：只跑 `LoopRun`，和期望值文件逐项比较。
+3. 生成期望值的脚本只在第 1 步用一次，不进仓库；期望值文件进仓库。
+
+这样 4b 证明过的“新旧一致”，在 4c 删除旧路径之后仍然有测试守着。
+
+### 12.8 实现分块（每块单独测试，交给 Codex，挂监视）
+
+1. **4c-1 定标准答案**：生成期望值文件，把对照测试改为只跑 `LoopRun`，并对照期望值。这时旧路径还在，可以先确认改写后的测试在新旧两边都通过。不删任何东西。
+2. **4c-2 迁移测试**：第 13 节里标为“迁移”的测试改到循环路径上，标为“机械修改”的按说明改，补上第 13 节最后列出的、目前只在旧路径上测过的宿主保证。这时旧路径仍在，所有测试都应通过。
+3. **4c-3 删除**：先核对你那三个文件的哈希，再删 12.2 的文件，缩小 12.3 的文件，改 12.4 的服务层和入口，删除第 13 节里标为“删除”的测试；跑 `init.ps1`。
+4. **4c-4 文档**：12.6 的各项，Claude 来做。
+5. **评测**（要你授权）：调参集单一循环 11 次、团队 11 次（`--write --sandbox`），不低于 4b（11/11、10/11，按合并计算）；留出集单一循环 13 次，不低于 10/13。
+
+每块做完由 Claude 审查后，再派下一块。
+
+### 12.9 需要你确认的问题
+
+1. **测试清单**：第 13 节的删除、迁移、修改清单，可以吗？
+2. **联网搜索演示**：`app/agent/mcp_demo/web_search_client.py` 用的是要删的 `StepExecutor` 和 `ToolCallingStepRunner`。可选：
+   - (a) 改写成用循环跑一次搜索，保留它的集成测试；
+   - (b) 连同它的集成测试一起删除。README 已经不提它了。
+
+   建议 (a)，因为它是唯一一个用真实 stdio MCP 跑完整执行器的测试。
+3. **由谁实现**：Codex 额度用完了，要到 11 月 15 日才恢复。可选：
+   - (a) 等额度恢复，再交给 Codex；
+   - (b) 由 Claude 现在实现，仍按 12.8 分块，每块做完给你看结果。
+
+   4c-2 要改约 185 个测试函数，是第 4 阶段最大的一块。
+4. **你的三份笔记**：开始 4c-3 之前，请告诉我你已经保存好了。4c-1、4c-2 不删任何东西，可以先做。
+
+**用户回答（2026-11-11）**：第 1 问“可以”；第 2 问选 (a) 改写成循环；第 3 问选 (b) 由 Claude 现在实现；第 4 问在 4c-3 前再确认。
+
+## 13. 4c 测试清单（2026-11-11，先给你看，同意后再动）
+
+**用户回答（2026-11-11）**：“可以”，同意本节清单。
+
+### 13.1 怎么得出的
+
+- 正则扫描看不到辅助函数和夹具里间接用到的骨架，所以改用实测：在当前代码上跑一遍全部测试，用一个只在本机用的 pytest 插件，记录每项测试实际构造了哪些骨架类（`Planner`、`Executor`、`StepExecutor`、`ToolCallingStepRunner`、`AgentRuntime`、`WorkingMemory`、`TaskState`）。
+- 结果：共 997 个测试函数（2,100 项，含参数化），其中 348 个函数、分布在 48 个文件里，实际碰到了骨架。
+- 再逐个文件读测试，判断属于哪一类：
+  - **删除**：只测规划模式内部；或者循环路径上已有测同一件事的测试，注明是哪一项；
+  - **迁移**：测的是宿主保证或共用机制，但只经过旧路径，要在循环或 `LoopRun` 上重写；
+  - **修改**：只是因为服务层默认走规划模式，或者用 `WorkingMemory`、`TaskState` 当搭架子的材料；意图不变，换成循环再跑；
+  - **不动**：只用到保留下来的名字。
+- 另有少量测试没碰骨架，但断言了 `'plan'` 这个选项，例如 `runners == ['plan', 'loop']`。它们在 4c-3 改了服务层后会失败，届时按“修改”处理，不另列。
+
+合计约：**删除 153 个函数，迁移 14 个，修改约 185 个**，其余不动。
+
+### 13.2 整个删除的文件（13 个，128 个函数；另有 `test_runtime.py` 删 19 个、迁移 1 个）
+
+| 文件 | 函数 | 原因；循环路径上测同一件事的测试 |
+|---|---|---|
+| `tests/agent/test_planner.py` | 17 | 规划上下文、计划校验、规划提示、重新规划 |
+| `tests/agent/test_planner_repair.py` | 11 | 计划 JSON 的格式修复和规划超时重试 |
+| `tests/agent/test_executor.py` | 7 | `Executor.accept_plan` 和过期提议 |
+| `tests/agent/test_working_memory_v1.py` | 11 | 计划安装、步骤执行中改需求、资源选择和计划的配合 |
+| `tests/agent/test_step_executor.py` | 8 | `StepExecutor` 提交；输出校验的 4 项已由 `test_loop_run_equivalence.py::test_output_validation_matches_legacy` 覆盖 |
+| `tests/agent/test_step_outcomes.py` | 2 | 步骤结果的分发；由对照测试 `test_model_scenarios` 覆盖 |
+| `tests/agent/test_final_step.py` | 3 | 只有最后一步带收尾规则；循环只有一步 |
+| `tests/agent/test_tool_calling_step_runner.py` | 16 | 规划模式的执行器。循环的对应测试在 `test_agent_loop.py`：预算用完先请模型收尾、不可用工具、工具抛异常、空回复 |
+| `tests/agent/test_runtime.py` | 20 | 规划、重新规划、多步计划。取消、超时、执行次数上限、阻塞后续跑，由对照测试 `test_cancellation_never_commits`、`test_host_boundaries`、`test_exact_execution_limit_can_still_complete`、`test_model_scenarios` 覆盖。删除 19 个；`test_cancellation_with_real_mcp_session_closes_tools`（真实 MCP 会话，取消后工具连接关闭）迁移到 `LoopRun`，之后整个文件删除 |
+| `tests/models/test_execution_commit.py` | 7 | `WorkingMemory` 的执行令牌和提交 |
+| `tests/models/test_taskstate.py` | 11 | `TaskState` 的计划和步骤状态机；`RunState` 有自己的 `test_run_state.py` |
+| `tests/models/test_working_memory.py` | 7 | `WorkingMemory` 的组合和资源移除；资源移除在应用代码里没有调用方 |
+| `tests/test_step_tool_budget.py` | 4 | 规划模式执行器的收尾；循环对应 `test_agent_loop.py::test_a_spent_budget_asks_once_for_the_answer_then_fails`、`test_host_calls_in_one_batch_obey_call_budget` |
+| `tests/test_step_tool_list.py` | 5 | 规划模式的工具清单固定；循环对应 `test_agent_loop.py::test_the_context_skips_the_duplicated_tool_list_and_empty_fields` |
+
+### 13.3 部分删除、部分迁移的文件
+
+| 文件 | 删除 | 迁移到循环 / `LoopRun` | 其余 |
+|---|---|---|---|
+| `tests/agent/test_execution_reliability.py`（17） | 15：格式修复 4 项（规划模式的 JSON 结果，循环没有）；不可用工具 3 项（`test_agent_loop.py::test_an_unavailable_tool_is_answered_then_bounded` 覆盖）；读写抛异常和超时 4 项、失败分类 3 项（对照测试 `test_host_boundaries`、`test_model_scenarios` 覆盖）；回答问题不占重新规划次数 1 项 | `test_the_step_deadline_outlasts_a_sandbox_call` | `test_every_failure_kind_has_a_chinese_message` 不动（`FAILURE_MESSAGES` 保留） |
+| `tests/agent/test_context_integration.py`（5） | 2：规划器的上下文预算 | 3：必需上下文超预算时在调模型之前失败、不运行工具；溢出后重试不重复执行已完成的工具；溢出恢复超时不重放（实现时若发现对照测试已逐项覆盖，就改为删除） | — |
+| `tests/agent/test_observability.py`（16） | — | 5：结果带用量和不含工具原文的步骤日志；失败只记类型；令牌预算在两次模型调用之间生效；时间预算限制慢步骤；没有外部计量时每次运行单独计量、已完成的任务重复返回结果 | 11 项不动 |
+| `tests/test_tool_argument_repair.py`（5） | — | 3：工具参数修复，以及修复有上限、只修参数错误。循环里有同样的修复（`agent_loop.py` 的 `arg_repairs`），但目前只有团队成员的测试经过它 | 2 项（适配器）不动 |
+| `tests/test_prompt_cache_layout.py`（6） | — | 1：稳定的上下文字段排在前面，改到循环的 `_context_message` 上 | 5 项不动 |
+| `tests/agent/test_blocked_and_resume_prompts.py`（3） | 2：规划模式执行器的提问提示；循环由 `test_agent_loop.py::test_ask_user_blocks_with_the_question` 覆盖 | — | 第 3 项按“修改”处理 |
+| `tests/test_loop_run.py`（7） | 2：`test_format_repairs_and_rebind_ignore_planner`、`test_planning_compatibility_parameters_do_not_enable_replay`（兼容参数删除，见 12.3） | — | `test_validation_matches_runtime` 按“修改”：改为固定的期望错误 |
+| `tests/test_trace.py`（27） | 1：`test_a_two_step_plan_run_is_a_tree_of_steps`（多步计划） | — | 6 项按“修改” |
+| `tests/test_web_loop_runner.py`（14） | 2：`test_loop_override_does_not_change_the_next_tasks_plan_default`、`test_plan_resume_ignores_new_loop_choice` | — | `test_each_task_can_select_runner_or_keep_service_default` 改为“只能选循环，传 `plan` 被拒绝” |
+| `tests/test_run_assembler.py`（7） | 1：`test_plan_mode_keeps_the_service_limits` | — | 5 项按“修改” |
+
+### 13.4 修改的文件（意图不变，换到循环路径）
+
+**用 `RunMemory(RunState(...))` 替换 `WorkingMemory(TaskState(...))`，或者直接运行执行器、不再经过 `StepExecutor`：**
+- `tests/test_agent_loop.py`（19 个）、`tests/test_loop_delegate.py`（9 个）、`tests/test_delegation.py`（38 个）：这些测试本来就在测循环，只是借 `StepExecutor` 加 `WorkingMemory` 当测试架子。改为用 `LoopRun` 跑，或者直接构造 `StepExecutionContext` 调用执行器。
+- `tests/test_harness_smoke.py`（2 个）：`init.ps1` 要求这个文件存在。改为 `RunState` 的最小冒烟测试：开始 → 完成；完成后再写入被拒绝且状态不变。
+- `tests/tools/test_context_history.py`（2 个）、`tests/tools/test_tool_loader.py`（3 个）：只把记忆当参数传进去。
+- `tests/tools/test_web_search_integration.py`（2 个）：跟着演示脚本改，见 12.9 第 2 问。
+
+**定成固定期望值：**
+- `tests/test_loop_run_equivalence.py`（12 个，67 项）：见 12.7。
+- `tests/test_run_state.py`（7 个）：现在拿 `TaskState` 当标准比较异常类型和文字，改为直接写出期望值，值取自当前 `TaskState` 的实际输出。
+
+**服务层测试：去掉 `planner_model`，替身模型改为按循环的方式回复：**
+
+现在这些测试给规划器一份计划 JSON，再给执行器一份步骤结果 JSON；改为给一个模型一串 `ModelTurn`，比如“调一次工具，再回答”。实现时先加一个共用的替身模型 `tests/loop_fakes.py`，各文件尽量改用它，避免每个文件各写一份。
+
+| 文件 | 个数 | 文件 | 个数 |
+|---|---|---|---|
+| `tests/test_turn_lifecycle.py` | 12 | `tests/test_run_options.py` | 10 |
+| `tests/test_web_api.py` | 9 | `tests/test_web_approvals.py` | 8 |
+| `tests/test_workspace.py` | 7 | `tests/test_progress_and_history.py` | 7 |
+| `tests/test_trace.py` | 6 | `tests/test_builtin_hooks.py` | 5 |
+| `tests/test_route_selection.py` | 5 | `tests/test_run_assembler.py` | 5 |
+| `tests/test_hooks.py` | 4 | `tests/agent/test_runtime_service.py` | 3 |
+| `tests/test_longterm_memory_wiring.py` | 2 | `tests/agent/test_persistent_service.py` | 2 |
+| `tests/test_summary_scheduler.py` | 2 | `tests/test_summary_context.py` | 1 |
+| `tests/agent/test_summary_lifecycle_e2e.py` | 1（10 项参数化） | `tests/agent/test_blocked_and_resume_prompts.py` | 1 |
+
+其中有两项要改写，不只是换替身：
+- `test_turn_lifecycle.py::test_service_blocked_task_resumes_in_new_turn_without_repeating_completed_step`：原来测“多步计划续跑时不重做已完成的步骤”，改为“循环回答问题后续跑，不重复已经执行过的工具调用”。
+- `test_longterm_memory_wiring.py::test_recalled_memories_reach_the_planner_as_pinned_reference_data`：改为“召回的记忆作为固定参考资料出现在循环的上下文里”。
+
+### 13.5 目前只在旧路径上测过的宿主保证（4c-2 要在 `LoopRun` 上补测试）
+
+1. 单一循环的工具参数修复：修复有上限、报告错误类型链、只修参数错误。
+2. 上下文预算：必需上下文超预算时在调模型之前失败；溢出后重试不重复执行已完成的工具。
+3. 计量：令牌预算在两次模型调用之间生效；时间预算限制慢步骤；步骤日志不含工具原文，失败只记类型。
+4. 单步时限比沙盒调用长：时限 = max(服务的单步时限, 执行器时限 + 5)。
+5. 稳定的上下文字段排在请求前面（提示缓存，D-057）。
+6. 用真实 stdio MCP 会话运行时被取消，工具连接随之关闭。
+
+审计记录、网页确认、hooks 事件、追踪、工作目录、长期记忆这些服务层的保证，在 13.4 把服务层测试换到循环之后，就由原来那些测试在循环路径上守着，不用另补。
+
+## 14. 4c 实现记录
+
+### 4c-1 定标准答案（2026-11-11，Claude）
+
+用户选择由 Claude 现在实现（12.9 第 3 问），Codex 额度 11 月 15 日恢复。
+
+- `tests/test_loop_run_equivalence.py` 改为与期望值文件比较：
+  - 文件放在 `tests/fixtures/loop_run_golden/`，每个测试用例一个，共 67 个、约 390 KB。内容就是 4b 对照时比较的那些：结果、步骤日志、回执、事件序列、每一次模型请求，以及两项测试里传给执行器的上下文；
+  - 默认只跑 `LoopRun`，再和文件逐项比较；
+  - 设 `LOOP_RUN_RECORD=1` 时，旧路径也跑，先断言新旧一致，再用旧路径的输出重写文件。这个模式只保留到 4c-3，届时连同旧路径一起删除。
+- 验证：
+  - 录制模式 67 项通过，即新旧仍然一致，文件由旧路径的输出写成；
+  - 默认模式 67 项通过，即 `LoopRun` 与文件一致；
+  - 故意把一个文件里的 `completed` 改成 `failed`，对应测试失败，改回后通过；
+  - 文件里没有本机路径。
+- 除了把 `assert outputs[1] == outputs[0]` 改为与文件比较，各测试原有的断言都保留。
+
+### 4c-2 迁移和修改测试（2026-11-11，Claude）
+
+这一块不删任何文件，旧路径还在，所有测试都要通过。
+
+**应用代码，三处小改动，行为不变或只改库默认值：**
+- `app/agent/loop_run.py`：把 `LoopRun` 构建执行上下文的代码提成模块函数 `step_context(memory, step, plan_revision)`，`LoopRun` 自己也调用它。测试用同一个函数构建上下文，不再借 `StepExecutor.build_context`。期望值文件确认行为不变。
+- `app/agent/agent_loop.py`：新增模块常量 `LOOP_STEP`、`TEAM_STEP`，`LoopPlanner.STEP`、`TeamPlanner.STEP` 改为引用它们，文字不变。
+- `app/services/rag_agent_service.py`：库默认值 `single_runner` 从 `'plan'` 改为 `'loop'`。原定在 4c-3 改，提前到这里，是为了不用在上百处服务层调用里逐个写 `single_runner='loop'`。命令行、网页、评测本来就默认循环；规划模式此时仍可选。
+- `app/agent/mcp_demo/web_search_client.py`：改为用 `AgentLoopRunner` 加 `LoopRun` 跑一次联网搜索（12.9 第 2 问选 (a)）。
+
+**测试：**
+- 新增 `tests/loop_fakes.py`：`started_context()` 在 `RunMemory` 上开始一步并返回 `LoopRun` 会给执行器的上下文；`loop_reply()` 把规划模式的步骤结果换成循环的回复（答案本身，或者 `ask_user` 调用）。
+- 新增 `tests/test_loop_run_guarantees.py`，12 项，对应 13.5 列出的宿主保证：参数修复 3 项、上下文预算 2 项、计量 5 项、请求开头稳定 1 项、真实 MCP 会话取消 1 项。
+- 测试架子换掉：`test_agent_loop.py`、`test_loop_delegate.py`、`test_sandbox_step1.py::_context`（`test_delegation.py`、`test_sandbox_step3.py`、`test_trace.py` 共用它）改用 `started_context()`。
+- `test_delegation.py`：基于 `AgentRuntime` 的 9 项宿主保证测试（重新绑定、取消、超时、过期结果、服务层过期清理等）改在 `LoopRun` 上跑；删除 3 项只测规划模式的：`test_plain_worker_overflows_on_whole_file_writes`（旧执行器的基线）、`test_default_factory_preserves_exact_output_and_model_messages`（规划模式的默认工厂）、`test_single_step_planner_never_calls_the_planning_model`（`TeamPlanner`）。
+- 定成固定期望值：`test_run_state.py` 把 `TaskState` 的 115 条报错录成 `tests/fixtures/run_state_legacy_errors.json`，测试里不再出现 `TaskState`；`test_loop_run.py::test_validation_matches_runtime` 把 `AgentRuntime` 的 41 条参数校验报错录成 `tests/fixtures/loop_run_legacy_validation.json`。
+- 服务层测试换到循环：去掉 `planner_model`，步骤结果 JSON 换成答案本身或 `ask_user` 调用；原来查规划器提示的断言，改为查循环发给模型的请求。涉及 `test_run_options`、`test_progress_and_history`、`test_web_api`、`test_turn_lifecycle`、`test_runtime_service`、`test_workspace`、`test_web_loop_runner`、`test_longterm_memory_wiring`、`test_web_approvals`、`test_summary_scheduler`、`test_persistent_service`、`test_summary_context`、`test_route_selection`、`test_hooks`、`test_builtin_hooks`、`test_blocked_and_resume_prompts`、`test_summary_lifecycle_e2e`、`test_trace`。两项按 13.4 改写了意图：
+  - 续跑不重复已完成的工作：改为续跑时模型收到的消息里只有一条时钟工具的回复，没有再调用；
+  - 召回的记忆出现在循环的上下文里，不再查规划器提示。
+- `test_harness_smoke.py` 改为 `RunState` 的冒烟测试；`tests/tools/test_context_history.py`、`test_tool_loader.py`、`test_web_search_integration.py` 改用 `RunMemory`、`LoopRun`。
+- 结果：全部测试 2093 项通过、16 项跳过（4c-1 时 2084 项：新增 12 项，删除 3 项）。
+
+**和第 13 节清单的出入：**
+- 多出 3 项要在 4c-3 删除，都只测规划模式：
+  - `test_turn_lifecycle.py::test_standalone_runtime_records_input_before_execution_and_on_cancel` 和 `::test_pending_standalone_outcome_does_not_hide_resolved_question`：测的是 `AgentRuntime` 的 `conversation=` 参数，`LoopRun` 没有这个参数（9.3）；
+  - `test_route_selection.py::test_single_mode_answers_with_the_last_step_result`：两步计划。
+- `test_execution_reliability.py::test_the_step_deadline_outlasts_a_sandbox_call` 其实没有经过旧路径，它测的是命令行的 `step_timeout_for`，归为“不动”。所以迁移是 13 项，不是 14 项。
+- `test_run_assembler.py` 的 6 项测的是 `RunAssembler` 的规划分支和 `planner_model`、`runtime_factory` 参数，留到 4c-3 和组装器一起改。
+- 重新跑探针：仍碰到骨架的测试函数从 348 个降到 174 个。除了 `test_run_assembler.py` 6 项、`test_web_loop_runner.py` 1 项（选执行方式）和对照测试里 3 处传给 `rebind` 的 `LoopPlanner`（这三处都在 4c-3 跟着代码改），其余都是 4c-3 要删除的。
+
+**发现一处原有行为，记下来，没有改：** 循环的令牌预算只在一步开始前和结束后检查，一步里面的多次模型调用之间不检查。规划模式每一步只调一次模型，所以以前看起来是“在两次调用之间停下”。现在一个循环步会把它的调用做完，然后整个任务以 `budget` 失败，成功回执保留。时间预算不受影响，单步时限会被剩余时间截短。这是 D-072 以来循环一直有的行为；`test_loop_run_guarantees.py::test_the_token_budget_is_checked_before_and_after_the_loop_step_not_inside_it` 把它固定了下来。要不要在循环里每次调用前检查，另行决定。
+
+### 4c-3 删除（2026-11-11，Claude）
+
+开工前用户确认“已保存”三份笔记（12.9 第 4 问）；删除前核对 `planner.py`、`step_executor.py`、`tool_calling_step_runner.py` 的哈希，与第 10 节记下的一致。这三个文件里有用户未提交的改动，`git rm` 因此拒绝删除；改为直接从工作区删除，没有暂存任何东西。
+
+**删除的文件（12.2）**：`app/agent/planner.py`、`executor.py`、`step_executor.py`、`tool_calling_step_runner.py`、`planning_model.py`，`app/models/working_memory.py`。
+
+**缩小的文件（12.3）：**
+- `app/agent/runtime.py` 只剩 `AgentRunResult`、`FAILURE_MESSAGES`、`_policy_denial`、`_int_or_none`（474 行 → 61 行）；`_BoundRunner` 搬进 `loop_run.py`。
+- `app/models/taskstate.py` 只剩值类型（928 行 → 122 行）；`StaleExecutionError` 搬进 `run_state.py`。
+- `app/agent/agent_loop.py` 删除 `LoopPlanner`、`TeamPlanner`，只留 `LOOP_STEP`、`TEAM_STEP`；`step_runner.py` 删除 `StepRoutingError`。
+- `LoopRun` 删除兼容参数 `max_replans`、`planning_timeout_seconds`，`rebind(model, registry, *, context_manager)` 不再收 `planner`。
+- `tool_loader.py`、`knowledge_registry_tool.py` 的类型标注改为 `RunMemory`。
+
+**服务层和入口（12.4）：**
+- `RagAgentService` 删除 `planner_model`、`max_replans`、`planning_timeout_seconds`；`single_runner` 只收 `'loop'`，传 `'plan'` 报“single_runner plan was removed in stage 4c (D-076); use loop”。每个任务都建 `RunMemory`，`_models` 只给一个模型，`run_options()['runners']` 为 `['loop']`。
+- `RunAssembler` 删除 `planner_model_injected`、`prepare_planner_model`、`planner_model`、`runtime_factory` 和 `AgentRuntime` 分支。
+- 命令行、网页后端、评测的 `--single-runner` 只剩 `loop`；命令行删除 `--max-replans`。网页请求的 `runner` 只收 `'loop'`，传 `'plan'` 返回 400（参数校验失败，代码 `invalid_input`，与其他非法选项相同）；页面删除“按计划”选项，下拉框默认隐藏。
+- `app/config.py` 的 `agent_planning_timeout_seconds` 没有删：`.env` 里可能还有这一项，删掉配置字段要另改 `.env.example`；现在没有代码读它。
+
+**测试：**
+- 整个删除 15 个文件：13.2 的 14 个，加上 `tests/agent/test_context_integration.py`（两项规划器测试；另两项已迁到 `test_loop_run_guarantees.py`；“溢出恢复超时不重放”由期望值文件 `test_host_boundaries_timeout-overflow` 覆盖）。
+- 部分删除：`test_execution_reliability.py`（留 2 项）、`test_observability.py`（删 5 项）、`test_tool_argument_repair.py`（删 3 项）、`test_prompt_cache_layout.py`（删 1 项）、`test_blocked_and_resume_prompts.py`（删 2 项）、`test_loop_run.py`（删 2 项和兼容参数的校验用例）、`test_trace.py`、`test_route_selection.py`（各删 1 项）、`test_turn_lifecycle.py`（删 2 项）、`test_tool_result_budgets.py`（删 1 项规划提示测试，盘点时漏掉了：它只读 `Planner._build_prompt` 的源码，没有构造规划器）。
+- 对照测试删除录制模式和旧路径，只和期望值文件比较：67 项全部通过，说明删除前后 `LoopRun` 的行为逐项不变。
+- 改写：`test_run_assembler.py`（只剩循环）、`test_web_loop_runner.py`（只能选循环，`plan` 在服务、网页、命令行都被拒绝）、`test_hooks.py`（不再有规划模型，调用只标 `step`、`wrap_up`）、`test_stage3_cleanup.py`（检查对象从 `AgentRuntime` 换成 `LoopRun`）、`test_tool_boundaries.py`、`test_sandbox_docker.py`（真实容器测试，默认跳过，本轮没跑）。
+- 新增 `tests/test_stage4_cleanup.py`：删除的模块和名字不能回来，服务层和 `LoopRun` 不再有规划参数。
+- 结果：`init.ps1` 通过，1731 项通过、16 项跳过（4c-2 后 2093 项）。
+
+**行数**（相对 `70f7470`，含 4c-2）：`app/` 24 个文件，新增 185 行、删除 2,861 行。删除的行里包括用户在三个文件里写的中文笔记，用户已自行保存。
+
+**还没做：** 4c-4 文档（`AGENTS.md` 两条不变量、D-076、`CLAUDE.md` 架构概览、`docs/agent_runtime.md`）和评测。
+
+### 4c-4 文档（2026-11-11，Claude）
+
+- `AGENTS.md`：第一条全局不变量改为“一个任务一个循环：`LoopRun` 负责取消、超时、重新绑定、版本校验、预算和结果提交；执行器（`AgentLoopRunner`）只返回输出，不直接改权威状态”；“WorkingMemory 管任务真值”改为“`RunState` 管任务真值”；测试数改为 1731。
+- `docs/DECISIONS.md` 新增 D-076。
+- `CLAUDE.md`：架构概览按现状重写（`LoopRun`、`RunState`、`RunAssembler`，单一循环和团队），顺带去掉 3b 已删的 `team_v2.py`、`runner_registry.py` 等；示例测试命令改为 `tests/test_loop_run.py`。
+- `docs/agent_runtime.md`：前半部分重写：流程图、职责、失败分类对照表（逐项对过期望值文件）、默认上限、阻塞续跑和底层示例（示例代码用替身模型跑过一次：先阻塞，回答后完成，2 次执行）；长期记忆和上下文两节只改了提到规划器的两处。
+- `docs/PROJECT_HANDOVER.md` 第 1、3、5、7 节，`README.md` 的近期更改和用法，`docs/DOCUMENT_INDEX.md` 两条。
+- 早于第 4 阶段的设计文档（`executor_v1.md`、`working_memory_v1.md`、`multi_runner_infrastructure.md` 等）是历史记录，原样保留。
+- 基线清单刷新为 `docs/harness/history/baseline-2026-11-11-stage4c.json`（`docs/harness/baseline.md` 指向它）。用户自己的未提交差异只剩 `scripts/` 下三个脚本的删除；三个笔记文件已按用户确认删除，它们最后的哈希记在清单的 `user_deleted_after_confirmation` 里。
+
+剩下：评测（要用户授权）：调参集单一循环 11 次、团队 11 次（`--write --sandbox`），留出集单一循环 13 次（12.8 第 5 项）。
+
+### 4c 评测（2026-11-11，用户“跑评测”）
+
+真实模型，每题 1 次，三组依次运行。调参集参数同 4b（单一循环只交答案，团队 `--write --sandbox`）；留出集单一循环只交答案。输出：`output/bench-tune-loop-4c.json`、`bench-tune-team-4c.json`、`bench-holdout-loop-4c.json` 和对应的 `traces-*-4c`。
+
+| | 4c | 4b（合并重跑） | 标准 |
+|---|---|---|---|
+| 调参集单一循环 | 9/11（586,984 令牌 / 28 次调用） | 11/11 | 不低于 4b |
+| 调参集团队 | 10/11（1,807,939 / 75） | 10/11 | 不低于 4b |
+| 留出集单一循环 | 6/13（276,368 / 30） | —（D-072 三次：12、10、11） | 不低于 10/13 |
+
+按数字，单一循环两组都没达到标准，团队持平。
+
+**调参集。** 所有题第一次请求的提示令牌都正常（约 2 万）。
+- `todo_html` 两种模式都以 `enter_key_and_trim` 失败，3b、4b 都失败过，属于这道题本身的波动。
+- 单一循环 `fix_inventory` 以 `_guard`、`_reason` 失败（答案被静态检查拦下），3b、4b 都通过。没有保留答案（未加 `--keep-answers`），看不到具体写了什么。只此一次，判断不了是不是回退。
+
+**留出集。** 这一组有 9 题处在服务商的“少开销”状态：第一次请求只有 1,457～1,845 或约 6,400 提示令牌，平时约 2 万（D-072、第 11 节）。同一次评测里，前两组的请求都正常，代码没变，67 项对照测试也保证请求和 4b 逐字相同，所以这是服务商一侧的状态，不是 4c 改的。
+- 4 道写代码的题（`business_days`、`csv_line`、`expr_eval`、`fix_split_amount`）都以 `_load` 失败（交上来的代码载入不了），而且都处在少开销状态；开销正常的 2 道代码题（`fix_topo_sort`、`fix_word_wrap`）都通过。`fix_split_amount` 在 1109 和 1109b 两次评测里也处在少开销状态（1,494、1,901），也都失败；开销正常的那次（`bench-holdout-loop-todo.json`，20,184）通过。前 3 道题以往开销正常时 3 次都通过。
+- `side_effects_qa` 的 `mutates_arguments` 以往 3 次都失败，这次也失败，和状态无关。
+- `edge_eval_qa`（`window_9_10`）、`failing_tests_qa`（`failing_tests`、`passed_count`）这次处在约 6,400 的状态，以往开销正常时都通过。第 11.1 节已经说明，问答题的失败和开销缺失没有确定的因果关系，这里只记下来。
+
+结论：调参集看不出 4c 的回退（团队持平；单一循环少的两题，一题是老问题，一题只出现一次）。留出集 6/13 低于标准，但 7 道失败里有 6 道处在服务商的少开销状态，另一道以往一直失败；代码题的失败和这个状态高度相关（4 次评测里，代码题处在少开销状态共 6 次，全部失败；开销正常共 18 次，全部通过），仍属相关，没有证明因果。按 D-035 不据此调提示。要拿可比的数字，可以在服务商状态正常时重跑留出集；用户 2026-11-11 决定今天先停在 4c，是否重跑另定。
 

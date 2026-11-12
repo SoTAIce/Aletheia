@@ -678,3 +678,16 @@
 - `StepRoutingError` 暂留在 `step_runner.py`：只因用户未提交的 `step_executor.py` 还导入它；没有任何代码再抛出它，第 4 阶段随该导入一起删。3b 没有修改用户的 `planner.py`、`step_executor.py`、`tool_calling_step_runner.py`、`README.md`（哈希与基线清单一致）。
 - 证据：基线（旧实现）调参集团队模式 7/11；3a 新实现 9/11（代码类同为 6/7）、单一循环 10/11（方案 10.1、10.2）。3b 只删除和搬移，团队提示文字与 3a 逐字相同（由脚本对比确认）。
 - 来源：用户 2026-11-10“先进行架构第三阶段方案确定吧”“都按建议”“跑评测”“提交并做 3b”。3a 由 Codex 实现；3b 由 Codex 做到一半时额度用完，余下由 Claude 完成。
+
+## D-076 2026-11-11 删除规划模式和规划—执行骨架；一个任务一个循环
+
+- 决定：按 [第 4 阶段方案](stage4_plan.md) 第 12～14 节（stage4c-001）删除规划模式（`--single-runner plan`）和规划—执行骨架：`app/agent/planner.py`、`executor.py`、`step_executor.py`、`tool_calling_step_runner.py`、`planning_model.py`，`app/models/working_memory.py`，`runtime.py` 里的 `AgentRuntime`，`taskstate.py` 里的 `TaskState`，`agent_loop.py` 里的 `LoopPlanner`/`TeamPlanner`，以及 `StepRoutingError`。单一循环、团队、按需委派都在 `app/agent/loop_run.py` 的 `LoopRun` 里运行，任务状态是 `app/models/run_state.py` 的 `RunState`（4b，`70f7470`）。
+- 原因：D-072 起命令行、网页、评测默认都用单一循环，调参集上循环不低于规划模式（D-072 记录的留出集：循环 12/13、10/13、11/13，规划 11/13）；留着规划模式会让 `TaskState` 的计划状态机和约 350 个测试函数一直背着它。
+- 保留的宿主保证（都由 `LoopRun` 负责，原样搬自旧运行时）：锁、重新绑定后旧执行器作废（`_BoundRunner`）、取消后不提交、版本校验、预算、单步时限加等待确认不计时（D-061）、副作用不确定不重试（`SideEffectWatch`）、执行次数上限、失败分类和中文说明、`plan`/`step` 事件和追踪区间。发给模型的请求、事件形状和结果字段都不变：删除前把旧路径在 67 个场景下的输出录成期望值文件（`tests/fixtures/loop_run_golden/`），删除后 `LoopRun` 与之逐项一致。
+- 接口变化：`RagAgentService` 去掉 `planner_model`、`max_replans`、`planning_timeout_seconds`，`single_runner` 只收 `'loop'`（传 `'plan'` 报错说明已删除）；`run_options()['runners']` 为 `['loop']`；`LoopRun` 去掉 `max_replans`、`planning_timeout_seconds`，`rebind(model, registry, *, context_manager)`。命令行、网页后端、评测的 `--single-runner` 只剩 `loop`；命令行去掉 `--max-replans`；网页请求的 `runner` 只收 `'loop'`，页面去掉“按计划”。
+- `AGENTS.md` 改两条全局不变量：第一条由“保留 Plan–Execute–Replan”改为“一个任务一个循环：`LoopRun` 负责取消、超时、重新绑定、版本校验、预算和结果提交；执行器只返回输出，不直接改权威状态”；“WorkingMemory 管任务真值”改为“`RunState` 管任务真值”。
+- 原样保留的旧行为（期望值文件固定，另行决定要不要改）：续跑时 `plan` 事件的 `revision` 为 2；规划前执行次数用尽，失败类型为 `internal`；成功提交后还查一次预算；执行期间资源选择变化，失败类型为 `internal`。另外记下：循环的令牌预算只在一步开始前和结束后检查，一步内的多次模型调用之间不查（`test_loop_run_guarantees.py` 固定了这一点）。
+- 没删的：`app/config.py` 的 `agent_planning_timeout_seconds`（`.env` 里可能还有这一项，现在没有代码读它）；`FAILURE_MESSAGES` 的 `planning` 说明；评测脚本对旧输出里 `Planning failed:` 前缀的识别。
+- 用户的三份中文笔记（`planner.py`、`step_executor.py`、`tool_calling_step_runner.py` 里未提交的文档字符串）随文件删除；用户在删除前确认已自行保存（“已保存，做 4c-3”），删除前核对过哈希。
+- 证据：`init.ps1` 1731 项通过、16 项跳过；方案第 14 节。真实模型评测待用户授权。
+- 来源：用户 2026-11-11“都按建议”（第 7 节）、“写设计吧，可以调用codeX”、测试清单“可以”、“继续 4c-2”、“已保存，做 4c-3”、“继续 4c-4”。Codex 额度用完（11 月 15 日恢复），4c 由 Claude 实现。

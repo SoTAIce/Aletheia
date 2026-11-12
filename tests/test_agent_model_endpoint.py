@@ -63,6 +63,6 @@ async def test_the_service_sends_agent_requests_to_the_separate_endpoint(monkeyp
         monkeypatch.setattr(config, name, value)
     monkeypatch.setattr(module, 'AsyncOpenAI', lambda **kw: AsyncOpenAI(
         **kw, http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond))))
-    async with RagAgentService(mcp_servers=(), include_knowledge=False)._models() as (_, model):
+    async with RagAgentService(mcp_servers=(), include_knowledge=False)._models() as model:
         assert (await model.generate((UserMessage('hi'),), ())).content == 'ok'
     assert seen == [('https://relay.test/v1/chat/completions', 'Bearer relay-key', 'gpt-4o')]

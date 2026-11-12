@@ -1,7 +1,10 @@
-"""RunState contracts, including error compatibility with TaskState."""
+"""RunState contracts. Its errors match what TaskState raised; those were recorded before stage 4c
+deleted TaskState (tests/fixtures/run_state_legacy_errors.json)."""
 
+import json
 from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -10,8 +13,29 @@ from app.models.run_state import RunMemory, RunState, RunStateSnapshot
 from app.models.resources import Resources
 from app.models.taskstate import (
     Constraint, FailureRecord, InvalidStateTransitionError, OpenQuestion,
-    PinnedContext, Scratchpad, TaskState, TaskStatus,
+    PinnedContext, Scratchpad, TaskStatus,
 )
+
+
+LEGACY_ERRORS = Path(__file__).parent / "fixtures" / "run_state_legacy_errors.json"
+# TaskState's error type and text for each rejected call, recorded before stage 4c deleted TaskState.
+_LEGACY = json.loads(LEGACY_ERRORS.read_text(encoding="utf-8"))
+_ERRORS = {cls.__name__: cls for cls in (ValueError, TypeError, KeyError, InvalidStateTransitionError)}
+_case = {}
+
+
+@pytest.fixture(autouse=True)
+def _current_case(request):
+    _case.update(name=request.node.name, calls=0)
+    yield
+
+
+def legacy_error():
+    """The (type, message) TaskState raised for this test's next rejected call."""
+    key = f"{_case['name']}#{_case['calls']}"
+    _case['calls'] += 1
+    name, message = _LEGACY[key]
+    return _ERRORS[name], message
 
 
 @pytest.fixture
@@ -29,10 +53,8 @@ def rejected(state, method, args, error, message):
     assert state.snapshot() == before
 
 
-def parity(state, legacy, method, args):
-    with pytest.raises(Exception) as expected:
-        getattr(legacy, method)(*args)
-    rejected(state, method, args, type(expected.value), str(expected.value))
+def parity(state, method, args):
+    rejected(state, method, args, *legacy_error())
 
 
 def changed(state, method, *args):
@@ -79,11 +101,10 @@ def test_constructor_and_independent_instances(state):
 @pytest.mark.parametrize("field", ["user_id", "active_goal"])
 def test_constructor_validation_matches_taskstate(field, value):
     args = {"user_id": "user", "active_goal": "goal", field: value}
-    with pytest.raises(ValueError) as expected:
-        TaskState(**args)
-    with pytest.raises(ValueError) as actual:
+    error, message = legacy_error()
+    with pytest.raises(error) as actual:
         RunState(**args)
-    assert str(actual.value) == str(expected.value)
+    assert str(actual.value) == message
 
 
 @pytest.mark.parametrize("method,args,record_type", [
@@ -129,10 +150,9 @@ def test_planning_inputs_append_without_changing_status(state, method, args, rec
 ])
 @pytest.mark.parametrize("status", [TaskStatus.CREATED, TaskStatus.RUNNING, TaskStatus.COMPLETED])
 def test_argument_errors_match_taskstate_and_precede_status(state, method, args, status):
-    legacy = TaskState("user", "goal")
-    state._status = legacy._status = status
-    state._active_step_id = legacy._active_step_id = "step" if status is TaskStatus.RUNNING else None
-    parity(state, legacy, method, args)
+    state._status = status
+    state._active_step_id = "step" if status is TaskStatus.RUNNING else None
+    parity(state, method, args)
 
 
 @pytest.mark.parametrize("status", [TaskStatus.COMPLETED, TaskStatus.FAILED])
@@ -141,9 +161,8 @@ def test_argument_errors_match_taskstate_and_precede_status(state, method, args,
     ("resolve_question", ("missing", "answer")), ("fail_task", ("failure",)),
 ])
 def test_terminal_errors_match_taskstate(state, status, method, args):
-    legacy = TaskState("user", "goal")
-    state._status = legacy._status = status
-    parity(state, legacy, method, args)
+    state._status = status
+    parity(state, method, args)
 
 
 @pytest.mark.parametrize("method,args", [
@@ -151,14 +170,9 @@ def test_terminal_errors_match_taskstate(state, status, method, args):
     ("resolve_question", ("q", "answer")),
 ])
 def test_active_step_planning_errors_match_taskstate(state, method, args):
-    legacy = TaskState("user", "goal")
     questions(state, "q")
-    legacy._scratchpad = state.scratchpad
     state.start("step")
-    legacy.start_planning()
-    legacy.set_plan(["work"])
-    legacy.start_step(legacy.plan[0].step_id)
-    parity(state, legacy, method, args)
+    parity(state, method, args)
 
 
 def test_start_from_created_and_ready(state):
@@ -245,19 +259,15 @@ def test_resolve_preserves_nonblocked_status(state, status):
 
 @pytest.mark.parametrize("qid", ["missing", "", None, 3])
 def test_resolve_missing_matches_taskstate(state, qid):
-    parity(state, TaskState("user", "goal"), "resolve_question", (qid, "answer"))
+    parity(state, "resolve_question", (qid, "answer"))
 
 
 def test_resolve_already_resolved_matches_taskstate_before_active_guard(state):
     questions(state, "q")
-    legacy = TaskState("user", "goal")
-    legacy._scratchpad = state.scratchpad
     state.resolve_question("q", "answer")
-    legacy.resolve_question("q", "answer")
     state.start("step")
-    legacy._active_step_id = "step"
-    parity(state, legacy, "resolve_question", ("q", "again"))
-    parity(state, legacy, "resolve_question", ("missing", "answer"))
+    parity(state, "resolve_question", ("q", "again"))
+    parity(state, "resolve_question", ("missing", "answer"))
 
 
 @pytest.mark.parametrize("refs", [(), ("ref-1", "ref-2")])
@@ -281,9 +291,8 @@ def test_add_failure_preserves_history_and_returns_ready(state, refs):
 
 @pytest.mark.parametrize("status", [s for s in TaskStatus if s is not TaskStatus.RUNNING])
 def test_add_failure_requires_running_like_taskstate(state, status):
-    legacy = TaskState("user", "goal")
-    state._status = legacy._status = status
-    parity(state, legacy, "add_failure", ("failure",))
+    state._status = status
+    parity(state, "add_failure", ("failure",))
 
 
 @pytest.mark.parametrize("status", [s for s in TaskStatus if s is not TaskStatus.RUNNING])
@@ -380,7 +389,7 @@ def test_runmemory_defaults_and_supplied_resources(state):
             setattr(memory, name, None)
 
 
-@pytest.mark.parametrize("value", [None, object(), "state", TaskState("user", "goal")])
+@pytest.mark.parametrize("value", [None, object(), "state", RunMemory(RunState("user", "goal"))])
 def test_runmemory_rejects_other_state_types(value):
     with pytest.raises(TypeError, match="^task_state must be a RunState$"):
         RunMemory(value)

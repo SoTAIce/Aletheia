@@ -10,7 +10,7 @@ from app.agent.route_selection import ModeChoice, allowed_modes, choose_mode
 from app.agent.runtime import AgentRunResult
 from app.agent.step_models import ModelTurn, ToolCall
 from app.agent.delegation import READ_TOOLS, DelegationOptions
-from app.agent.agent_loop import TeamPlanner
+from app.agent.agent_loop import TEAM_STEP
 from app.models.taskstate import TaskStatus
 
 SANDBOX = DelegationOptions(allowed_tools=READ_TOOLS | {'write_file', 'run_tests', 'run_python'},
@@ -143,14 +143,10 @@ def test_bench_passes_team_flags_to_auto_and_reads_the_decision(monkeypatch):
 class FakeRuntime:
     created = []
 
-    def __init__(self, planner, model, memory, registry, **options):
-        self.planner, self.memory, self.registry, self.options = planner, memory, registry, options
+    def __init__(self, memory, model, registry, **options):
+        # Stands in for LoopRun(memory, model, registry, step_description=..., runner_factory=..., ...).
+        self.memory, self.registry, self.options = memory, registry, options
         FakeRuntime.created.append(self)
-
-    @classmethod
-    def loop(cls, memory, model, registry, **options):
-        # Stage 4b: loop and team tasks are built as LoopRun(memory, model, registry, step_description=...).
-        return cls(None, model, memory, registry, **options)
 
     async def run(self, **kwargs):
         status = FakeRuntime.status
@@ -160,8 +156,7 @@ class FakeRuntime:
 def _service(monkeypatch, model, status=TaskStatus.COMPLETED, **kw):
     from app.services import rag_agent_service as module
     FakeRuntime.created, FakeRuntime.status = [], status
-    monkeypatch.setattr(module, 'AgentRuntime', FakeRuntime)
-    monkeypatch.setattr(module, 'LoopRun', FakeRuntime.loop)
+    monkeypatch.setattr(module, 'LoopRun', FakeRuntime)
     return module.RagAgentService(model=model, mcp_servers=(), include_knowledge=False, **kw)
 
 
@@ -172,12 +167,13 @@ async def test_auto_service_routes_each_task_and_binds_the_chosen_runner(monkeyp
         await service.query_result('implement parse_duration with tests', 's')
         await service.query_result('what does parse_duration do?', 's')
     team, single = FakeRuntime.created
-    assert isinstance(team.planner, TeamPlanner) and not isinstance(single.planner, TeamPlanner)
+    from app.agent.agent_loop import LOOP_STEP, TEAM_STEP
+    assert team.options['step_description'] == TEAM_STEP and single.options['step_description'] == LOOP_STEP
     from app.agent.step_runner import RunnerDependencies, RunnerLimits
     from app.tools.tool_registry import ToolRegistry
     runner = team.options['runner_factory'](RunnerDependencies(model, ToolRegistry(), None, RunnerLimits()))
     assert runner.runner_id == 'agent_team'
-    assert 'runner_factory' not in single.options
+    assert single.options['runner_factory'](RunnerDependencies(model, ToolRegistry(), None, RunnerLimits())).runner_id == 'agent_loop'
     assert service._routes == {}                                     # finished tasks forget their route
 
 
@@ -185,7 +181,8 @@ async def test_auto_without_team_options_never_asks_the_model(monkeypatch):
     service = _service(monkeypatch, Model(), execution_mode='auto')
     async with service:
         await service.query_result('implement it', 's')
-    assert not isinstance(FakeRuntime.created[0].planner, TeamPlanner)
+    from app.agent.agent_loop import LOOP_STEP
+    assert FakeRuntime.created[0].options['step_description'] == LOOP_STEP
 
 
 async def test_a_blocked_task_keeps_its_route_for_the_resume(monkeypatch):
@@ -202,7 +199,7 @@ async def test_fixed_modes_keep_their_runner_and_log_a_user_decision(monkeypatch
     service = _service(monkeypatch, Model(), execution_mode='team', team_options=SANDBOX)
     async with service:
         await service.query_result('anything', 's')
-    assert FakeRuntime.created[0].options['step_description'] == TeamPlanner.STEP
+    assert FakeRuntime.created[0].options['step_description'] == TEAM_STEP
     assert '"source": "user", "rule": "team"' in caplog.text
 
 
@@ -271,30 +268,6 @@ async def test_a_read_only_task_runs_without_write_tools(monkeypatch):
     # D-028: the read-only task keeps a read-only run tool; the writing task never sees it.
     assert [d.name for d in read_only.registry.list_definitions()] == ['read_file', 'run_python_code']
     assert [d.name for d in writer.registry.list_definitions()] == ['read_file', 'write_file', 'run_python']
-
-
-async def test_single_mode_answers_with_the_last_step_result():
-    from datetime import datetime, timezone
-    from app.agent.planner import Planner, PlanProposal
-    from app.agent.runtime import AgentRuntime
-    from app.models.taskstate import TaskState
-    from app.models.working_memory import WorkingMemory
-
-    class TwoSteps(Planner):
-        async def plan(self, context):
-            return PlanProposal(steps=('read billing.py', 'answer as one JSON object'),
-                                goal_revision=context.goal_revision, base_state_version=context.state_version,
-                                reason=None, created_at=datetime.now(timezone.utc), task_id=context.task_id,
-                                base_resource_context_version=context.resource_context_version)
-
-    def done(content):
-        return ModelTurn(content=json.dumps({'status': 'succeeded', 'content': content, 'reason': None}))
-    model = Model(done('read billing.py: MAX_RETRIES = 3'), done('{"max_retries": 3}'))
-    memory = WorkingMemory(TaskState('u', 'how many retries?'))
-    result = await AgentRuntime(TwoSteps(None), model, memory, _tools('read_file')).run()
-    assert result.status is TaskStatus.COMPLETED and result.content == '{"max_retries": 3}'
-    assert [r.content for r in memory.task_state.scratchpad.intermediate_results] == [
-        'read billing.py: MAX_RETRIES = 3', '{"max_retries": 3}']     # earlier results are kept
 
 
 def test_task_registry_keeps_the_read_only_run_tool_for_read_only_tasks_only():

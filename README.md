@@ -18,7 +18,7 @@ Aletheia 是用 Python 写的智能体项目，包括：
 ### 运行时与执行方式
 
 - **默认改用单一智能体循环**（`45291d9`，D-072）。命令行、网页和评测默认都用一个工具循环做完整个任务，不再先列计划再逐步执行。
-  - 原来的“规划—执行—重规划”保留为 `--single-runner plan`。
+  - 原来的“规划—执行—重规划”当时保留为 `--single-runner plan`，第 4 阶段已删除（D-076）。
   - 循环带两个控制工具：`todo` 记录进度，`ask_user` 向用户提问。
   - 任务被问题阻塞后，用户回答了，循环会在原来的消息上接着做（`ea5783b`，D-064）。
 - **团队模式重写**（第 3 阶段，`cefcd2d`、`bab704a`，D-075）：
@@ -29,8 +29,7 @@ Aletheia 是用 Python 写的智能体项目，包括：
 - **服务层拆分**（第 4 阶段 4a，`e6a9856`）：
   - `RagAgentService.query_result` 拆成若干小方法。
   - 选择执行方式和组装运行器的逻辑移到 `app/services/run_assembler.py` 的 `RunAssembler`。
-
-  第 4 阶段后续还要让循环和团队脱离规划—执行骨架，再删除规划模式，计划见 [stage4_plan.md](docs/stage4_plan.md)。
+- **删除规划模式和规划—执行骨架**（第 4 阶段 4b、4c，`70f7470` 及之后，D-076）：每个任务都是一个循环，由 `app/agent/loop_run.py` 的 `LoopRun` 负责取消、超时、重新绑定、预算和结果提交，任务状态在 `RunState`。`--single-runner` 只剩 `loop`。删除前把旧路径在 67 个场景下的输出录成期望值文件，删除后逐项一致。见 [stage4_plan.md](docs/stage4_plan.md)。
 - **省令牌**（`6199d90`、`7835fa2`，D-063）：
   - 循环在 `todo` 上花的调用减少了。
   - 规划模式的每一步不再重复发送固定的工具列表。
@@ -74,7 +73,7 @@ Aletheia 是用 Python 写的智能体项目，包括：
 - 兼容 OpenAI 接口的对话和嵌入客户端（配置项沿用 `DASHSCOPE_*` 的名字）
 - Milvus 向量库，附本地 Docker Compose 配置
 - MCP 工具：文件系统、联网搜索（Tavily）、Docker 沙箱
-- 执行方式：single（默认单一循环，也可以按计划执行）、team、auto（宿主规则加一次模型判断，为每个任务选一种）
+- 执行方式：single（单一循环）、team、auto（宿主规则加一次模型判断，为每个任务选一种）
 - 对话记忆（会话视图、任务状态、上下文投影、归档和后台摘要），长期记忆以 PostgreSQL 为准
 - 钩子、预算计量、副作用保护、本地追踪
 
@@ -118,7 +117,6 @@ Compose 文件里的账号密码只是开发用的默认值，部署到生产环
 常用参数：
 
 - `--execution-mode {single,team,auto}`：执行方式
-- `--single-runner {plan,loop}`：single 模式按计划执行还是用单一循环
 - `--delegate`：开启按需委派
 - `--write-root`：允许写入的目录
 - `--sandbox`：开启 Docker 沙箱，需要同时给 `--write-root`
@@ -129,7 +127,7 @@ Compose 文件里的账号密码只是开发用的默认值，部署到生产环
 
 ```text
 app/
-  agent/       运行时、单一循环、团队、钩子、计量、追踪
+  agent/       任务运行（LoopRun）、单一循环、团队、钩子、计量、追踪
   api/         FastAPI 网页后端和静态页面
   knowledge/   建库命令
   models/      对话记忆和任务状态

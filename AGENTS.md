@@ -17,18 +17,18 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1
 ```
 
 做管理文件、JSON、Python compile、CLI 加载检查，并运行确定性 pytest 套件（basetemp 放在 TEMP）；不执行模型、MCP、数据库或完整任务。启动时再运行 [基线核对](docs/harness/baseline.md)。
-原 tests/ 和验证脚本曾按用户要求删除；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-10 为 1807 项通过、16 项跳过；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，历史开启记录为 1231 项通过，本轮未运行）。历史 1093/2 不是当前回归。后续行为修改须恢复对应测试或在 tests/ 中补充测试；参见 [清理记录](docs/project_cleanup.md)。
+原 tests/ 和验证脚本曾按用户要求删除；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-11 为 1731 项通过、16 项跳过；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，历史开启记录为 1231 项通过，本轮未运行）。历史 1093/2 不是当前回归。后续行为修改须恢复对应测试或在 tests/ 中补充测试；参见 [清理记录](docs/project_cleanup.md)。
 
 ## Global Invariants
 
-- 保留 Plan–Execute–Replan：Planner 提议、Executor 安装、Runtime 调度、StepExecutor 校验并提交；Runner 不直接改权威状态。
+- 一个任务一个循环：`LoopRun` 负责取消、超时、重新绑定、版本校验、预算和结果提交；执行器（`AgentLoopRunner`）只返回输出，不直接改权威状态（D-076，取代原“保留 Plan–Execute–Replan”）。
 - 团队是单一循环里的 `delegate` 工具；成员是独立上下文的子循环，不嵌套 Runtime；完成由宿主判定（D-075）。
 - 执行方式由宿主选择（`route_selection` 的宿主规则在前，模型只能在规则允许的范围内选），模型不能放宽；修改状态语义或执行器接口（`runner_factory`）前先说明兼容影响。
 - 宿主拥有最终输出契约和验收门；Lead 内部要求、Reviewer 意见及 Member 协议不能覆盖它。
 - 保留取消、超时、rebind、版本校验与预算上限；格式修复不得重放完成的工具；外部副作用不确定时不得自动重试。
 - MCP 连接覆盖执行期，进入/退出须在拥有它的同一 asyncio task；暂停后不能复用已关闭适配器。
 - Archive 保留原文、sidecar、顺序、幂等、原子发布、旧格式读取及 session/path 隔离；clear 不是磁盘删除。
-- ConversationMemory 管会话视图，WorkingMemory 管任务真值，ContextManager 只投影；摘要不能覆盖当前指令或原文。
+- ConversationMemory 管会话视图，`RunState` 管任务真值，ContextManager 只投影；摘要不能覆盖当前指令或原文。
 - 长期记忆 PostgreSQL 权威、Milvus 为独立可重建索引；保留用户隔离与版本校验；索引失败不得盲重跑 remember。
 - 不自动改 .env、模型默认值、依赖或业务数据，不安装/下载，不自动提交、amend、推送或发布；按本轮实际授权执行。
 - 不记录密钥、完整私有对话、provider 原文或不受控异常；历史 API 授权不扩大到新材料或无限调用。

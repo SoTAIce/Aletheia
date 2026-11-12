@@ -33,11 +33,6 @@ class StepRunError(RuntimeError):
         self.source_refs = source_refs
 
 
-class StepRoutingError(StepRunError):
-    """Kept only because step_executor.py still names it (user-owned file, stage 3b); nothing raises it
-    since the runner registry and routing were removed. Remove it with that import in stage 4."""
-
-
 class ToolRoundLimitError(StepRunError):
     """The tool-calling loop exceeded its allowed number of rounds."""
 

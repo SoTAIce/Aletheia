@@ -1,14 +1,14 @@
 # Aletheia 项目交接：给 Claude / 下一位维护者
 
-更新：2026-11-04。此文整合现有 docs 的架构、决策和验收结论，并核对当前源码入口。无需依赖之前的聊天记录；原始报告与计划均保留，见 [完整索引](DOCUMENT_INDEX.md)。
+更新：2026-11-04；2026-11-11 按 D-076 改第 1、3、5、7 节（规划模式和骨架已删除）。此文整合现有 docs 的架构、决策和验收结论，并核对当前源码入口。无需依赖之前的聊天记录；原始报告与计划均保留，见 [完整索引](DOCUMENT_INDEX.md)。
 
 ## 1. 接手时先知道这六件事
 
-1. Aletheia 是 Python Agent/RAG 项目，主执行链为 Plan–Execute–Replan；单 Agent 和 Team 是平级 Runner。
+1. Aletheia 是 Python Agent/RAG 项目。每个任务是一个循环：`LoopRun` 负责宿主保证，单一循环和团队负责人都是 `AgentLoopRunner`（D-076；原 Plan–Execute–Replan 骨架已在第 4 阶段删除）。
 2. 团队模式只剩 V2（2026-11-05 删除 V1，决策 D-025）：负责人委派给全新上下文的执行者，宿主判定完成。在 parse_duration、fix_inventory 上严格交付好于普通模式，但样本少，见第 7 节。
-3. ConversationMemory、WorkingMemory、长期记忆和 ContextManager 各有职责；不要再建一套重复 Memory 框架。
+3. ConversationMemory、`RunState`（任务真值）、长期记忆和 ContextManager 各有职责；不要再建一套重复 Memory 框架。
 4. 历史原文可恢复；运行中任务只能在同一服务实例暂停恢复，不能跨进程恢复执行。
-5. 用户刚清理了 tests、验证脚本与临时产物。1093 passed/2 skipped 是清理前的历史回归；当前可直接运行的是 init.ps1（静态/入口 + `tests/` 下的确定性 pytest）；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-10 为 1807 项通过、16 项跳过；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，历史开启记录为 1231 项通过，本轮未运行）。
+5. 用户刚清理了 tests、验证脚本与临时产物。1093 passed/2 skipped 是清理前的历史回归；当前可直接运行的是 init.ps1（静态/入口 + `tests/` 下的确定性 pytest）；当前 `tests/` 已恢复历史测试（D-030），init.ps1 运行它们（2026-11-11 为 1731 项通过、16 项跳过；真实容器测试需设 `ALETHEIA_DOCKER_TESTS=1`，历史开启记录为 1231 项通过，本轮未运行）。
 6. 当前工作区有用户未提交源码与删除项，不能把它当成干净的冻结提交，也不能擅自 reset、commit 或 push。
 
 ## 2. 仓库状态与启动
@@ -62,34 +62,28 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1
 CLI / 调用方
   -> RagAgentService：身份、Turn、模型/工具生命周期、暂停恢复
        auto 模式：每个新任务先选模式（宿主规则，再一次模型判断，D-026）
-  -> WorkingMemory(TaskState + Resources)
-  -> Planner 提议 -> Executor 校验并安装
-  -> AgentRuntime 取下一步 / Replan / 完成或阻塞
-  -> StepExecutor 开始、校验、提交 Step
-  -> 服务按模式传入一个执行器工厂（第 3 阶段起没有注册表和路由，D-075）
-       -> AgentLoopRunner：单一循环，经 LoopPlanner 固定一步进入（命令行、网页、评测的普通模式默认，D-072）
-       -> ToolCallingStepRunner：按计划逐步执行的单 Agent 工具循环（`--single-runner plan`，运行时默认工厂）
+  -> RunMemory(RunState + Resources)
+  -> RunAssembler：选模式、只读收回、按模式选执行器工厂（没有注册表和路由，D-075）
+  -> LoopRun：锁、预算、单步时限、副作用监视、重新绑定作废、取消不提交、事件和追踪（D-076）
+       -> AgentLoopRunner：单一循环，纯文本即答案（D-072）；`--delegate` 时为 ExploreLoopRunner
        -> DelegatingLoopRunner：团队，负责人是单一循环，`delegate` 是宿主工具，成员是子循环，宿主判定完成
-  -> StepRunOutput -> 公共提交路径 -> Task Completion / Turn outcome
+  -> StepRunOutput -> LoopRun 校验并提交 -> Task Completion / Turn outcome
 ```
 
 | 模块 | 文件 | 职责与不可越界之处 |
 | --- | --- | --- |
-| 服务装配 | `app/services/rag_agent_service.py` | 创建/恢复会话，按 user/session 隔离，管理请求锁、模型、工具注册、Runtime rebind 与结果记录 |
-| 任务状态 | `app/models/taskstate.py`、`working_memory.py`、`resources.py` | 目标/计划/步骤真值，版本与 execution token，证据/上下文资源 |
-| 规划 | `app/agent/planner.py`、`planning_model.py`、`executor.py` | LLM 提议结构化计划；可信版本信息由程序绑定；Executor 决定是否安装 |
-| 调度 | `app/agent/runtime.py` | 自动推进剩余步骤，处理成功/失败/阻塞、有限执行/Replan；不承担具体工具循环 |
-| 单步提交 | `app/agent/step_executor.py`、`step_models.py`、`step_runner.py` | 执行边界、失效结果拒绝、统一输出和异常类别 |
-| 执行器绑定 | `app/agent/runtime.py`（`_BoundRunner`）、`step_runner.py`（`RunnerDependencies`、`RunnerFactory`） | 运行时用工厂造执行器；重新绑定后旧执行器的迟到结果作废，取消请求后的结果不提交（原路由执行器的两条保护，D-075） |
-| 单一循环 | `app/agent/agent_loop.py` | 普通模式默认执行方式（D-062～D-064、D-072）：整任务一个循环，纯文本即最终答案，`todo`/`ask_user` 控制工具，不重新规划，阻塞恢复只在内存里 |
+| 服务装配 | `app/services/rag_agent_service.py`、`run_assembler.py` | 创建/恢复会话，按 user/session 隔离，管理请求锁、模型、工具注册、任务的 `LoopRun` 与结果记录；`RunAssembler` 选模式并组装运行 |
+| 任务状态 | `app/models/run_state.py`、`taskstate.py`、`resources.py` | `RunState`/`RunMemory` 是任务真值（目标、状态、约束、固定上下文、问题、失败）；`taskstate.py` 只剩值类型；证据/上下文资源 |
+| 任务运行 | `app/agent/loop_run.py`、`runtime.py` | `LoopRun` 负责锁、重新绑定作废（`_BoundRunner`）、取消不提交、版本校验、预算、单步时限、副作用监视、执行次数上限、失败分类和事件；`runtime.py` 只剩 `AgentRunResult` 和 `FAILURE_MESSAGES`（D-076） |
+| 执行器接口 | `app/agent/step_models.py`、`step_runner.py` | 统一输出、上下文和异常类别；`RunnerDependencies`、`RunnerFactory` |
+| 单一循环 | `app/agent/agent_loop.py` | 普通模式唯一的执行方式（D-062～D-064、D-072、D-076）：整任务一个循环，纯文本即最终答案，`todo`/`ask_user` 控制工具，不重新规划，阻塞恢复只在内存里 |
 | 工作目录 | `app/services/workspace.py`、`app/tools/tool_loader.workspace_servers` | 按会话选择工作目录（D-074）：检查拒绝名单和禁止目录，系统盘要确认（服务端校验）；每次运行按目录启动文件和沙盒服务，禁止目录用 `--deny` 传给它们 |
 | 追踪 | `app/agent/hooks.py`（`trace_scope`）、`trace_view.py`、`trace.py` | 事件带区间编号和父子关系（审计第 2 版，D-073）；`build_trace` 拼成树，命令行 `python -m app.agent.trace`、网页“执行记录”面板查看；不记原文 |
-| 单 Agent | `app/agent/tool_calling_step_runner.py` | 按计划模式的有界模型/工具循环和局部 JSON 修复 |
 | 适配模型 | `app/agent/openai_compatible_tool_calling_model.py`、`tool_calling_model.py`、`json_output.py` | provider 适配、类型化错误、严格响应解析 |
 
-WorkingMemory 的 goal_revision、plan_revision、state_version 与 Resources.context_version 有不同语义。Planner 旧快照、旧执行 token、旧 rebind 结果不能覆盖新状态。不要绕过 Executor/WorkingMemory 直接安装或提交。
+`RunState` 的 state_version 与 Resources.context_version 有不同语义。旧绑定的迟到结果、执行期间被别处改过的状态都不能被提交（`StaleExecutionError`）。不要绕过 `LoopRun` 直接改任务状态。
 
-成功输出才完成 Step；失败说明不等于完成。格式修复局限当前尝试且不带业务工具，不重复执行已有工具。工具/业务错误可触发有限 Replan；格式耗尽、provider/配置错误与 Team terminal 错误不应盲重跑。具体分支以当前 runtime/step_runner 源码为准。
+循环的纯文本回复才完成任务；循环不重新规划，失败就按失败分类结束（[运行时文档](agent_runtime.md) 有对照表）。宿主修复有上限（工具参数、不可用工具、空回复各两次），不重复执行已有工具；写入或运行类工具出错不自动重试。具体分支以 `loop_run.py`、`agent_loop.py` 为准。
 
 ## 4. 工具、MCP 与 RAG
 
@@ -111,7 +105,7 @@ RAG：`knowledge_registry_tool.py` → `rag_search_service.py` → query rewrite
 | --- | --- | --- |
 | ConversationTurn/Memory | `app/models/conversation_memory.py` | 一次用户交互及近期完整 Turns、阶段摘要索引；一个 Task 可跨多个 Turn |
 | ConversationArchive | `app/services/conversation_archive.py` | 原始用户输入、不可变完成 sidecar、摘要正文、工具 artifact、来源引用；持久化权威 |
-| WorkingMemory | `app/models/working_memory.py` | 当前任务的目标、步骤、结果、约束和证据；不是跨会话用户档案 |
+| RunState / RunMemory | `app/models/run_state.py` | 当前任务的目标、状态、约束、固定上下文、问题和失败，加上资源表；不是跨会话用户档案 |
 | ContextManager | `app/services/context_manager.py` | 从记忆构造预算内模型请求；不修改原始历史和任务真值 |
 | LLMCompressor | `app/services/memory_compression/llm_compressor.py` | 由原始 Turns 生成有结构、有来源但有损的摘要 |
 | SummaryScheduler | `app/services/summary_scheduler.py` | 有界后台排队、合并通知、重试、超时与关闭 |
@@ -122,7 +116,7 @@ RAG：`knowledge_registry_tool.py` → `rag_search_service.py` → query rewrite
 先持久化精确用户输入 RECEIVED，再调用模型/工具；最终发布不可变完成 sidecar：COMPLETED/BLOCKED/FAILED/CANCELLED。
 request_id 控制同次请求幂等：相同身份/原文/映射可回放结果，冲突拒绝；未完成原文不能自动重放不确定的外部操作。
 BLOCKED 只结束这次交互。保持同一个服务实例，使用 `resume_task_id`（必要时 `question_id`）回答，形成关联同一 Task 的新 Turn。
-重启可恢复历史和已完成结果，不能重建运行中 WorkingMemory/Team 执行检查点。`clear()` 清视图，不删磁盘。
+重启可恢复历史和已完成结果，不能重建运行中的任务状态或团队执行检查点。`clear()` 清视图，不删磁盘。
 原文 v1 与新 v2/sidecar 保持兼容；并发保障是单进程多实例锁，不是跨进程写者协调或抵抗恶意文件改写。
 
 ### 已落地的摘要和上下文
@@ -158,7 +152,7 @@ BLOCKED 只结束这次交互。保持同一个服务实例，使用 `resume_tas
 
 ## 7. Agent Team（第 3 阶段起为单一循环里的委派工具，D-075）
 
-`app/agent/delegation.py` 的 `DelegatingLoopRunner`（执行器编号仍是 `agent_team`）。团队模式下服务用 `TeamPlanner`（`agent_loop.py`）只产生一步计划，整件任务交给团队。负责人是一个 `AgentLoopRunner`，没有工作区工具，只有宿主工具 `delegate`（可选 `review`）和 `todo`，不能向用户提问；每次委派都新建一个子循环成员，只拿到授予的工具，上下文是全新的，回纯文本报告；审查员用 `review_decision` 给结论。
+`app/agent/delegation.py` 的 `DelegatingLoopRunner`（执行器编号仍是 `agent_team`）。团队任务在 `LoopRun` 里作为一步运行（步骤文字 `TEAM_STEP`），整件任务交给团队。负责人是一个 `AgentLoopRunner`，没有工作区工具，只有宿主工具 `delegate`（可选 `review`）和 `todo`，不能向用户提问；每次委派都新建一个子循环成员，只拿到授予的工具，上下文是全新的，回纯文本报告；审查员用 `review_decision` 给结论。
 
 完成由宿主判定：开启沙盒时，**本次运行写过文件**才要求最后一次写入之后有一次通过的 `run_tests`/`run_python`（`builtin_hooks.PassingRunGate`，挂在新的 `before_finish` 拦截事件上）；写过文件且条件满足时宿主直接结束，答案取该成员报告；没写文件时由负责人回答。工具结果由宿主自己记录，成员出错也不丢证据（D-023）。独立验收测试（`--team-acceptance`、`verify`）已删除。成员上下文按两档压缩，防止超窗（`model_view.py`）。
 

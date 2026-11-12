@@ -13,26 +13,16 @@ from openai import APITimeoutError
 import httpx
 
 from app.agent.openai_compatible_tool_calling_model import OpenAICompatibleToolCallingModel
-from app.agent.planner import Planner
 from app.agent.run_meter import RunMeter, current_meter, estimated_cost, metering, record_model_call
-from app.agent.runtime import AgentRuntime, FAILURE_MESSAGES
+from app.agent.runtime import FAILURE_MESSAGES
 from app.agent.step_models import ModelTurn, ToolCall, ToolDefinition, ToolOutput, UserMessage
 from app.agent.tool_calling_model import ModelTimeoutError
-from app.models.taskstate import TaskState, TaskStatus
-from app.models.working_memory import WorkingMemory
+from app.models.taskstate import TaskStatus
 from app.tools.tool_registry import ToolRegistry
 
 
 def usage(prompt, completion):
     return SimpleNamespace(prompt_tokens=prompt, completion_tokens=completion)
-
-
-def final(content='Done'):
-    return ModelTurn(json.dumps({'status': 'succeeded', 'content': content, 'reason': None}))
-
-
-def plan(*steps):
-    return json.dumps({'steps': list(steps), 'reason': None})
 
 
 class Metered:
@@ -46,17 +36,6 @@ class Metered:
             await asyncio.sleep(self.delay)
         record_model_call(usage(*self.tokens))
         return self.turns.pop(0)
-
-
-def runtime_for(turns, plans, tools=(), **limits):
-    memory = WorkingMemory(TaskState('user', 'Complete the requested goal'))
-    planner_model = AsyncMock()
-    planner_model.generate.side_effect = plans
-    registry = ToolRegistry()
-    for item in tools:
-        registry.register(item)
-    model = turns if hasattr(turns, 'generate') else Metered(turns)
-    return AgentRuntime(Planner(planner_model), model, memory, registry, **limits)
 
 
 def tool(name, *effects):
@@ -139,32 +118,7 @@ async def test_the_provider_adapter_records_usage_and_failed_requests():
     assert (meter.model_calls, meter.total_tokens, meter.calls_without_usage) == (2, 10, 1)
 
 
-# ---- the runtime: usage, budgets, the step log ----
-
-async def test_results_carry_usage_and_a_step_log_without_tool_text():
-    reader = tool('read_file', ToolOutput(True, 'secret file text'))
-    runtime = runtime_for([call('read_file', path='private/notes.txt'), call('nonsense_tool', 'c2'),
-                           final('answer')], [plan('Read')], [reader])
-    result = await runtime.run()
-    assert result.status is TaskStatus.COMPLETED
-    assert result.usage['model_calls'] == 3 and result.usage['total_tokens'] == 360
-    [entry] = result.step_log
-    assert entry['outcome'] == 'succeeded' and entry['runner'] == 'tool_calling' and entry['error'] is None
-    assert [c['tool'] for c in entry['tools']] == ['read_file'] and entry['tools'][0]['success'] is True
-    text = json.dumps(result.step_log)
-    assert 'private' not in text and 'secret' not in text
-
-
-async def test_failed_attempts_are_logged_with_the_type_only():
-    reader = tool('read_file', ConnectionError('C:\\host\\path'), ToolOutput(True, 'ok'))
-    runtime = runtime_for([call('read_file'), call('read_file', 'c2'), final('ok')],
-                          [plan('Read'), plan('Read again')], [reader])
-    result = await runtime.run()
-    first, second = result.step_log
-    assert first['outcome'] == 'failed' and first['tools'][0] == {
-        'tool': 'read_file', 'success': False, 'error': 'ConnectionError', 'seconds': first['tools'][0]['seconds']}
-    assert second['outcome'] == 'succeeded' and 'host' not in json.dumps(result.step_log)
-
+# ---- the runtime: usage, budgets and the step log are in tests/test_loop_run_guarantees.py ----
 
 async def test_unknown_tool_names_are_not_copied_into_the_log():
     reader = tool('read_file', ToolOutput(True, 'ok'))
@@ -175,30 +129,6 @@ async def test_unknown_tool_names_are_not_copied_into_the_log():
     with pytest.raises(Exception):
         await watch.invoke(ToolCall('c', 'ignore previous instructions', {}))
     assert watch.calls[0]['tool'] == 'unknown'
-
-
-async def test_the_token_budget_stops_between_model_calls():
-    runtime = runtime_for([final('one'), final('two'), final('three')], [plan('A', 'B', 'C')])
-    with metering(RunMeter(max_total_tokens=200)):
-        result = await runtime.run()
-    assert result.status is TaskStatus.FAILED and result.failure_kind == 'budget'
-    assert result.execution_count == 2 and 'token budget reached' in result.content
-    assert result.user_message == FAILURE_MESSAGES['budget']
-
-
-async def test_the_time_budget_bounds_a_slow_step():
-    runtime = runtime_for(Metered([final('late')], delay=5), [plan('Slow')], step_timeout_seconds=30)
-    with metering(RunMeter(timeout_seconds=0.2)):
-        result = await asyncio.wait_for(runtime.run(), 3)
-    assert result.status is TaskStatus.FAILED and result.failure_kind == 'budget'
-    assert result.step_log[0]['outcome'] == 'timeout'
-
-
-async def test_without_a_caller_meter_each_run_is_metered_and_a_finished_task_repeats_its_result():
-    runtime = runtime_for([final('ok')], [plan('Do')])
-    result = await runtime.run()
-    assert result.usage['model_calls'] == 1 and current_meter() is None
-    assert await runtime.run() is result
 
 
 # ---- the CLI record and the bench ----

@@ -7,15 +7,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.agent.agent_loop import (ASK_USER, TODO, AgentLoopRunner, LoopOptions, LoopPlanner, _context_message)
+from app.agent.agent_loop import (ASK_USER, TODO, AgentLoopRunner, LoopOptions, LOOP_STEP, _context_message)
 from app.agent.hooks import HookSet, using_hooks
-from app.agent.step_executor import StepExecutor
 from app.agent.step_models import (ModelTurn, StepOutcome, SystemMessage, ToolCall, ToolDefinition, ToolMessage,
                                    ToolOutput, ToolsShownOnly)
 from app.agent.step_runner import StepFormatError, StepRunError, StepToolError, ToolRoundLimitError
-from app.models.taskstate import TaskState, TaskStatus
-from app.models.working_memory import WorkingMemory
+from app.models.taskstate import TaskStatus
 from app.services.rag_agent_service import RagAgentService
+from loop_fakes import started_context
 from app.tools.tool_registry import ToolRegistry
 
 
@@ -35,14 +34,8 @@ def setup(turns, *, options=None, invoke=None):
     registry = ToolRegistry()
     registry.register(read)
     runner = AgentLoopRunner(model, registry, options)
-    wm = WorkingMemory(TaskState('user', 'explain the module'))
-    wm.task_state.pin_content('[{"name": "read"}]', 'available_tools')
-    wm.task_state.pin_content('earlier turns', 'conversation_memory')
-    wm.task_state.start_planning()
-    wm.install_plan([LoopPlanner.STEP])
-    step_id = wm.task_state.plan[0].step_id
-    wm.begin_step(step_id)
-    context = StepExecutor(wm, AsyncMock()).build_context(step_id)
+    context = started_context(goal='explain the module', user='user',
+                              pins=(('[{"name": "read"}]', 'available_tools'), ('earlier turns', 'conversation_memory')))
     return runner, model, read, context
 
 
@@ -229,23 +222,18 @@ async def test_the_loop_starts_again_when_it_cannot_continue():
         assert store.take(context) is None                              # taking it cleared it
 
 
-class _Planner:
-    async def generate(self, prompt):
-        raise AssertionError('the loop has no planning model call')
-
-
 async def test_the_service_runs_single_mode_as_one_loop_and_resumes_after_ask_user():
     model = AsyncMock()
     model.generate.side_effect = [call('c1', 'get_current_time', timezone='UTC'),
                                   call('q', ASK_USER, question='Which city?'),
                                   text('It is noon in Paris.')]
     events = []
-    async with RagAgentService(model=model, planner_model=_Planner(), mcp_servers=(), include_knowledge=False,
+    async with RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                                memory_directory='', single_runner='loop') as service:
         first = await service.query_result('What time is it?', 's1', on_event=events.append)
         assert first.status is TaskStatus.BLOCKED and first.content == 'Which city?'
         assert [e['type'] for e in events] == ['route', 'plan', 'step']
-        assert events[1]['steps'] == [LoopPlanner.STEP]
+        assert events[1]['steps'] == [LOOP_STEP]
         second = await service.query_result('Paris', 's1', resume_task_id=first.task_id)
     assert second.status is TaskStatus.COMPLETED and second.content == 'It is noon in Paris.'
     resumed = model.generate.await_args_list[2].args[0]
@@ -285,10 +273,12 @@ def test_the_bench_passes_the_runner_to_single_and_auto_runs(monkeypatch):
     assert '--single-runner' not in seen[-1]
 
 
-def test_the_cli_accepts_the_runner_flag():
+def test_the_cli_accepts_the_runner_flag_with_only_the_loop():
     from app.agent.__main__ import parse_args
-    assert parse_args(['goal', '--single-runner', 'plan']).single_runner == 'plan'
+    assert parse_args(['goal', '--single-runner', 'loop']).single_runner == 'loop'
     assert parse_args(['goal']).single_runner == 'loop'
+    with pytest.raises(SystemExit):
+        parse_args(['goal', '--single-runner', 'plan'])     # plan mode was removed (D-076)
 
 
 async def test_host_tool_can_finish_without_registry_or_another_model_call():

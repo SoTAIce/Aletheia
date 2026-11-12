@@ -1,4 +1,4 @@
-"""Authoritative state for a single loop run, independent of plan execution."""
+"""Authoritative state of one task run (stage 4c: the only task state; TaskState went with plan mode)."""
 
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -15,6 +15,10 @@ from app.models.taskstate import (
     Scratchpad,
     TaskStatus,
 )
+
+
+class StaleExecutionError(ValueError):
+    """An execution has expired, already committed, or belongs elsewhere."""
 
 
 @dataclass(frozen=True, slots=True)

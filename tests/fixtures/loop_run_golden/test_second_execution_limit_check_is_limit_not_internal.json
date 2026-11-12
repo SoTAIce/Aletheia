@@ -1,0 +1,46 @@
+[
+ [
+  {
+   "log": [],
+   "receipts": [],
+   "result": [
+    "failed",
+    "Agent execution limit reached",
+    "limit",
+    1,
+    0
+   ]
+  }
+ ],
+ [
+  {
+   "type": "task_start"
+  },
+  {
+   "kind": "plan",
+   "revision": 1,
+   "type": "scope_start"
+  },
+  {
+   "error": null,
+   "kind": "plan",
+   "type": "scope_end"
+  },
+  {
+   "revision": 1,
+   "steps": [
+    "Deliver the active goal in one agent loop."
+   ],
+   "type": "plan"
+  },
+  {
+   "cached_prompt_tokens": 0,
+   "failure_kind": "limit",
+   "model_calls": 0,
+   "status": "failed",
+   "total_tokens": 0,
+   "type": "task_end"
+  }
+ ],
+ []
+]

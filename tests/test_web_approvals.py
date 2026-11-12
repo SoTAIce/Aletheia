@@ -20,10 +20,9 @@ def call(n=1):
 
 
 def service(tmp_path, turns, steps=('Work',), **kw):
-    planner, model = AsyncMock(), AsyncMock()
-    planner.generate.return_value = json.dumps({'steps': list(steps), 'reason': None})
+    model = AsyncMock()
     model.generate.side_effect = list(turns)
-    return RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
+    return RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                            memory_directory=tmp_path, **kw)
 
 

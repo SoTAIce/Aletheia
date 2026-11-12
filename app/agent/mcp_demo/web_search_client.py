@@ -1,4 +1,4 @@
-"""Run a search step: python -m app.agent.mcp_demo.web_search_client QUERY."""
+"""Answer one question with web search in an agent loop: python -m app.agent.mcp_demo.web_search_client QUERY."""
 
 import argparse
 import asyncio
@@ -9,12 +9,11 @@ import sys
 from mcp import StdioServerParameters
 from openai import AsyncOpenAI
 
+from app.agent.agent_loop import AgentLoopRunner, LOOP_STEP, LoopResumeStore
+from app.agent.loop_run import LoopRun
 from app.agent.openai_compatible_tool_calling_model import OpenAICompatibleToolCallingModel
-from app.agent.step_executor import StepExecutor
-from app.agent.tool_calling_step_runner import ToolCallingStepRunner
 from app.config import config
-from app.models.taskstate import TaskState
-from app.models.working_memory import WorkingMemory
+from app.models.run_state import RunMemory, RunState
 from app.tools.mcp_client import MCPClient
 from app.tools.mcp_tool_loader import register_mcp_tools
 from app.tools.tool_registry import ToolRegistry
@@ -30,9 +29,7 @@ async def main(query: str) -> None:
         cwd=str(Path(__file__).resolve().parents[3]),
         env={"TAVILY_API_KEY": api_key},
     )
-    memory = WorkingMemory(TaskState("user", query))
-    memory.task_state.start_planning()
-    memory.install_plan([f"Search the web and answer using the results: {query}"])
+    memory = RunMemory(RunState("user", query))
     registry = ToolRegistry()
     async with AsyncOpenAI(
         api_key=config.dashscope_api_key, base_url=config.dashscope_base_url
@@ -40,13 +37,14 @@ async def main(query: str) -> None:
         model = OpenAICompatibleToolCallingModel(model_client, config.dashscope_model)
         async with MCPClient.connect(parameters) as client:
             await register_mcp_tools(client, registry)
-            runner = ToolCallingStepRunner(model, registry)
-            executor = StepExecutor(memory, runner)
-            result = await executor.execute(memory.task_state.plan[0].step_id)
-            print(result.result_summary)
+            # The whole run stays inside the connection: the registry's adapters use the live client.
+            run = LoopRun(memory, model, registry, step_description=LOOP_STEP, runner_factory=lambda deps:
+                          AgentLoopRunner(deps.model, deps.tool_registry, None, deps.context_manager, LoopResumeStore()))
+            result = await run.run()
+            print(result.content)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run an Aletheia web-search step")
+    parser = argparse.ArgumentParser(description="Answer a question with Aletheia web search")
     parser.add_argument("query")
     asyncio.run(main(parser.parse_args().query))

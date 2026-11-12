@@ -339,9 +339,9 @@ const MODE_NAMES = {single: '普通模式', team: '团队模式', auto: '自动�
 function applyCaps(caps) {
   // An older server without per-run options keeps the controls hidden.
   if (!caps || !Array.isArray(caps.modes)) { state.caps = null; $('run-options').hidden = true; return; }
-  // A server from before D-065 offers no runner choice: treat it as plan only and never send one.
+  // A server from before D-065 offers no runner choice: never send one. Since D-076 the only runner is the loop.
   const runnerSupported = Array.isArray(caps.runners) && caps.runners.length > 0;
-  const runners = runnerSupported ? caps.runners : ['plan'];
+  const runners = runnerSupported ? caps.runners : ['loop'];
   caps = {...caps, runners, runner_supported: runnerSupported,
           default_runner: runners.includes(caps.default_runner) ? caps.default_runner : runners[0]};
   const first = !state.caps;

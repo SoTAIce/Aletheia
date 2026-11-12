@@ -19,7 +19,7 @@
 | [建库命令：超长块与排除方案](kb_index_v3_plan.md) | 2026-11-09：切块后超过 8000 字节的块再切；`--exclude` 按相对路径排除（如 `harness/history`），配合 `--prune` 清掉已建入的块；测试、待用户决定的真实验证和约束；未实现，打算交给 Codex |
 | [建库命令改进方案](kb_index_v2_plan.md) | 2026-11-09：先写新块再删旧块，避免嵌入失败时丢数据；失败时说明是哪一步；`--prune` 清掉目录里已删除文件的块；测试、待用户决定的真实验证和约束；已按 kb-index-cli-002 实现，真实验证待用户授权 |
 | [执行步骤去掉重复工具清单方案](step_tool_list_plan.md) | 2026-11-08：规划模式执行步骤时不再重复发送钉住的工具清单；规划器和团队负责人为什么保留；共用常量、测试、离线对比、待授权的调参集评测和约束；已实现（tool-list-dedup-001，D-069），调参集 11/11 |
-| [第 4 阶段方案](stage4_plan.md) | 2026-11-11：分 4a 拆服务层、4b 循环脱离规划—执行骨架（新增 `LoopRun`、`RunState`）、4c 删除规划模式和骨架、4d 模型档案（建议推迟）；4c 会删除用户有中文笔记的三个文件，并要改写 `AGENTS.md` 第一条不变量；待用户确认第 7 节 |
+| [第 4 阶段方案](stage4_plan.md) | 2026-11-11：分 4a 拆服务层、4b 循环脱离规划—执行骨架（新增 `LoopRun`、`RunState`）、4c 删除规划模式和骨架、4d 模型档案（建议推迟）；用户已确认第 7 节；4a、4b 已提交；第 12、13 节是 4c 详细设计和测试清单（用户已确认），第 14 节是 4c 实现记录：规划模式和骨架已删除（D-076），评测待授权 |
 | [单一循环按需委派](loop_delegate_plan.md) | 2026-11-10：参照 Claude Code 子智能体，给单一循环加只读的 `delegate`（调研成员，全新上下文，只交回结论）；触发靠宿主规则（默认关、每任务最多 2 次、第 1 轮不提供、剩余预算不足不提供）加“什么时候用/不用”的工具说明；已实现并评测（第 10、11 节），`--delegate` 默认关闭，已提交 `a0aa489` |
 | [第 3 阶段：团队改为委派工具](stage3_team_delegate_plan.md) | 2026-11-10：团队由单一循环担任负责人，`delegate` 成为循环里的宿主工具，成员改为子循环；完成条件改为新的 `before_finish` 拦截；分 3a（新旧并存、评测对比）和 3b（删除 `team_v2.py`、执行器注册表与路由）；先跑团队基线；兼容影响与待用户确认的问题见第 7、9 节；未实现 |
 | [第 0 阶段清理方案](stage0_cleanup_plan.md) | 2026-11-08：删除没人用的 `aiops/`、`app/agent/mcp_client.py` 和两个 `mcp_demo` 客户端；保留测试在用的两个 `mcp_demo` 文件和唯一的建库代码 `vector_index_service.py`；文档改正、防回退测试、记录和约束；已按 cleanup-stage0-001 实现，验收见 progress.md 与 D-066 |
@@ -46,7 +46,7 @@
 
 | 原始文档 | 内容与当前解释 |
 | --- | --- |
-| [agent_runtime.md](agent_runtime.md) | 主执行链、结果/异常/格式修复；较早示意图只画单 Runner，Team 见后续文档 |
+| [agent_runtime.md](agent_runtime.md) | 主执行链（2026-11-11 按 D-076 改写：每个任务一个 `LoopRun`）、失败分类对照表、默认上限、阻塞续跑、长期记忆与上下文 |
 | [working_memory_v1.md](working_memory_v1.md) | 状态、版本、资源和提交边界；了解任务真值优先读它 |
 | [executor_v1.md](executor_v1.md) | Planner 提案/Executor 安装的历史适配说明；部分文本已有乱码，精确接口核对源码 |
 | [multi_runner_infrastructure.md](multi_runner_infrastructure.md) | 注册/能力/路由/DI/取消与 rebind，V1 冻结；随后 Team 通过既有扩展点接入 |

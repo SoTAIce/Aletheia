@@ -1,6 +1,8 @@
-"""Per-task plan/loop selection through the real service and ASGI API (D-065).
+"""The single-mode runner option through the real service and ASGI API (D-065).
 
-Scripted models and local tools only; no model HTTP requests, databases or MCP.
+Since stage 4c (D-076) the loop is the only runner: the option is kept for old callers, takes only
+'loop', and 'plan' is refused at every entry point. Scripted models and local tools only; no model HTTP
+requests, databases or MCP.
 """
 
 import asyncio
@@ -12,7 +14,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from app.agent.agent_loop import ASK_USER, LoopPlanner
+from app.agent.agent_loop import ASK_USER, LOOP_STEP, TEAM_STEP
 from app.agent.runtime import AgentRunResult
 from app.agent.step_models import ModelTurn, ToolCall, ToolMessage
 from app.api.app import create_app
@@ -22,12 +24,11 @@ from app.services.rag_agent_service import RagAgentService
 
 
 def make_service(*, turns=(), **kwargs):
-    planner, model = AsyncMock(), AsyncMock()
-    planner.generate.return_value = json.dumps({'steps': ['Answer'], 'reason': None})
+    model = AsyncMock()
     model.generate.side_effect = list(turns)
-    service = RagAgentService(model=model, planner_model=planner, mcp_servers=(),
+    service = RagAgentService(model=model, mcp_servers=(),
                               include_knowledge=False, memory_directory='', **kwargs)
-    return service, planner, model
+    return service, model
 
 
 @asynccontextmanager
@@ -47,40 +48,35 @@ async def finished(runs, run_id):
     return run
 
 
-@pytest.mark.parametrize('default,requested,expected', [
-    ('plan', None, 'plan'), ('plan', 'loop', 'loop'),
-    ('loop', None, 'loop'), ('loop', 'plan', 'plan'),
-])
-async def test_each_task_can_select_runner_or_keep_service_default(default, requested, expected):
-    result = 'done' if expected == 'loop' else json.dumps(
-        {'status': 'succeeded', 'content': 'done', 'reason': None})
-    service, planner, _ = make_service(single_runner=default, turns=[ModelTurn(result)])
+@pytest.mark.parametrize('requested', [None, 'loop'])
+async def test_each_task_runs_as_the_loop(requested):
+    service, _ = make_service(turns=[ModelTurn('done')])
     events = []
     async with service:
         output = await service.query_result('Answer', 's', single_runner=requested, on_event=events.append)
     assert output.status is TaskStatus.COMPLETED and output.content == 'done'
-    assert events[0]['options']['runner'] == expected
+    assert events[0]['options']['runner'] == 'loop'
     assert 'runner' not in events[0]  # one host-owned options envelope, no duplicate field
-    if expected == 'loop':
-        planner.generate.assert_not_called()
-        assert events[1]['steps'] == [LoopPlanner.STEP]
-    else:
-        planner.generate.assert_awaited_once()
+    assert events[1]['steps'] == [LOOP_STEP]
 
 
-@pytest.mark.parametrize('requested', ['steps', '', False, 1])
+def test_the_service_refuses_plan_mode_at_startup():
+    with pytest.raises(ValueError, match='removed in stage 4c'):
+        RagAgentService(model=AsyncMock(), mcp_servers=(), include_knowledge=False, single_runner='plan')
+
+
+@pytest.mark.parametrize('requested', ['plan', 'steps', '', False, 1])
 async def test_invalid_runner_is_rejected_before_model_or_history(requested):
-    service, planner, model = make_service()
+    service, model = make_service()
     async with service:
         with pytest.raises(ValueError, match='single_runner'):
             await service.query_result('Answer', 's', single_runner=requested)
         assert await service.list_sessions() == []
-    planner.generate.assert_not_called()
     model.generate.assert_not_called()
 
 
 async def test_resume_retains_loop_choice_and_completed_tool_messages():
-    service, planner, model = make_service(turns=[
+    service, model = make_service(turns=[
         ModelTurn(tool_calls=(ToolCall('clock', 'get_current_time', {'timezone': 'UTC'}),)),
         ModelTurn(tool_calls=(ToolCall('ask', ASK_USER, {'question': 'Which city?'}),)),
         ModelTurn('Paris'),
@@ -90,77 +86,49 @@ async def test_resume_retains_loop_choice_and_completed_tool_messages():
         blocked = await service.query_result('Time?', 's', single_runner='loop')
         assert blocked.status is TaskStatus.BLOCKED
         assert service.task_options('s', blocked.task_id)['runner'] == 'loop'
-        output = await service.query_result('Paris', 's', resume_task_id=blocked.task_id,
-                                            single_runner='plan', on_event=events.append)
+        output = await service.query_result('Paris', 's', resume_task_id=blocked.task_id, on_event=events.append)
     assert output.status is TaskStatus.COMPLETED and output.replan_count == 0
     assert output.execution_count == 2 and model.generate.await_count == 3
     assert events[0]['options']['runner'] == 'loop'
-    planner.generate.assert_not_called()
     resumed = model.generate.await_args_list[-1].args[0]
     replies = [m for m in resumed if isinstance(m, ToolMessage)]
     assert [m.call_id for m in replies] == ['clock', 'ask']
     assert json.loads(replies[-1].content)['content'] == 'Paris'
 
 
-async def test_health_exposes_runner_choices_and_configured_default():
-    service, _, _ = make_service(single_runner='loop')
+async def test_health_exposes_the_one_runner():
+    service, _ = make_service()
     async with web_service(service) as (client, _):
         options = (await client.get('/api/health')).json()['options']
-    assert options['runners'] == ['plan', 'loop'] and options['default_runner'] == 'loop'
+    assert options['runners'] == ['loop'] and options['default_runner'] == 'loop'
 
 
-async def test_plan_resume_ignores_new_loop_choice():
-    service, _, _ = make_service(turns=[
-        ModelTurn(json.dumps({'status': 'blocked', 'content': 'Need answer', 'reason': 'Which?'})),
-        ModelTurn(json.dumps({'status': 'succeeded', 'content': 'done', 'reason': None})),
-    ])
-    async with service:
-        blocked = await service.query_result('Answer', 's')
-        assert blocked.status is TaskStatus.BLOCKED
-        result = await service.query_result('chosen', 's', resume_task_id=blocked.task_id, single_runner='loop')
-    assert result.status is TaskStatus.COMPLETED
-
-
-async def test_loop_override_does_not_change_the_next_tasks_plan_default():
-    service, planner, _ = make_service(turns=[ModelTurn('loop answer'), ModelTurn(json.dumps(
-        {'status': 'succeeded', 'content': 'plan answer', 'reason': None}))])
+async def test_auto_that_routes_single_runs_the_loop():
+    service, _ = make_service(execution_mode='auto', turns=[ModelTurn('done')])
     events = []
     async with service:
-        await service.query_result('First', 's', single_runner='loop')
-        second = await service.query_result('Second', 's', on_event=events.append)
-    assert second.content == 'plan answer' and events[0]['options']['runner'] == 'plan'
-    planner.generate.assert_awaited_once()
-
-
-async def test_auto_that_routes_single_honours_the_loop_choice():
-    service, planner, _ = make_service(execution_mode='auto', turns=[ModelTurn('done')])
-    events = []
-    async with service:
-        result = await service.query_result('Answer', 's', allow_writes=False,
-                                            single_runner='loop', on_event=events.append)
+        result = await service.query_result('Answer', 's', allow_writes=False, on_event=events.append)
     assert result.status is TaskStatus.COMPLETED
     assert events[0]['mode'] == 'single' and events[0]['options']['mode'] == 'auto'
-    planner.generate.assert_not_called()
+    assert events[1]['steps'] == [LOOP_STEP]
 
 
-async def test_explicit_team_does_not_use_loop_even_if_runner_choice_is_loop(monkeypatch):
-    from app.agent.agent_loop import TeamPlanner
+async def test_explicit_team_runs_the_team_lead_loop(monkeypatch):
     from app.services import rag_agent_service as module
     seen = []
 
     def runtime(memory, model, registry, **options):
-        # Stage 4b: a team task is built as LoopRun(memory, model, registry, step_description=...).
         seen.append((options.pop('step_description'), options))
         return SimpleNamespace(run=AsyncMock(return_value=AgentRunResult(
             memory.task_state.task_id, TaskStatus.COMPLETED, 'done', (), 1, 0)))
 
     monkeypatch.setattr(module, 'LoopRun', runtime)
-    service, _, _ = make_service(execution_mode='team')
+    service, _ = make_service(execution_mode='team')
     async with service:
         result = await service.query_result('Review', 's', single_runner='loop')
     assert result.status is TaskStatus.COMPLETED
     step, options = seen[0]
-    assert step == TeamPlanner.STEP
+    assert step == TEAM_STEP
     from app.agent.delegation import DelegatingLoopRunner
     from app.agent.step_runner import RunnerDependencies, RunnerLimits
     from app.tools.tool_registry import ToolRegistry
@@ -168,8 +136,8 @@ async def test_explicit_team_does_not_use_loop_even_if_runner_choice_is_loop(mon
                       DelegatingLoopRunner)
 
 
-async def test_web_loop_choice_reaches_service_and_resume_keeps_original_choice():
-    service, planner, _ = make_service(turns=[
+async def test_web_loop_choice_reaches_service_and_resume_keeps_it():
+    service, _ = make_service(turns=[
         ModelTurn(tool_calls=(ToolCall('ask', ASK_USER, {'question': 'Which?'}),)), ModelTurn('chosen'),
     ])
     original = service.query_result
@@ -182,17 +150,15 @@ async def test_web_loop_choice_reaches_service_and_resume_keeps_original_choice(
         assert first.status == 'blocked' and first.options['runner'] == 'loop'
         assert service.query_result.await_args_list[0].kwargs['single_runner'] == 'loop'
         response = await client.post('/api/sessions/s/messages', json={
-            'content': 'choice', 'request_id': 'second', 'resume_task_id': first.snapshot()['result']['task_id'],
-            'options': {'runner': 'plan'}})
+            'content': 'choice', 'request_id': 'second', 'resume_task_id': first.snapshot()['result']['task_id']})
         assert response.status_code == 202
         second = await finished(runs, 'second')
         assert second.status == 'completed' and second.options['runner'] == 'loop'
-    planner.generate.assert_not_called()
 
 
-@pytest.mark.parametrize('options', [{'runner': 'steps'}, {'runner': ''}])
-async def test_web_rejects_invalid_runner(options):
-    service, _, model = make_service()
+@pytest.mark.parametrize('options', [{'runner': 'plan'}, {'runner': 'steps'}, {'runner': ''}])
+async def test_web_rejects_other_runners(options):
+    service, model = make_service()
     async with web_service(service) as (client, _):
         response = await client.post('/api/sessions/s/messages', json={
             'content': 'Answer', 'request_id': 'r', 'options': options})
@@ -200,38 +166,25 @@ async def test_web_rejects_invalid_runner(options):
     model.generate.assert_not_called()
 
 
-async def test_legacy_run_options_without_runner_use_service_default():
-    service, planner, _ = make_service(single_runner='loop', turns=[ModelTurn('done')])
+async def test_legacy_run_options_without_runner_use_the_loop():
+    service, _ = make_service(turns=[ModelTurn('done')])
     async with service:
         runs = RunManager(service, user_id='local', max_concurrent=1, retention_seconds=60)
         run, _ = runs.start('s', 'Answer', 'r', options={'mode': 'single', 'write': False, 'memory': False})
         await finished(runs, run.run_id)
     assert run.status == 'completed' and run.options['runner'] == 'loop'
-    planner.generate.assert_not_called()
 
 
-async def test_request_id_conflicts_when_only_runner_choice_changes():
-    service, _, model = make_service(turns=[ModelTurn('done')])
-    async with web_service(service) as (client, runs):
-        body = {'content': 'Answer', 'request_id': 'r', 'options': {'runner': 'loop'}}
-        assert (await client.post('/api/sessions/s/messages', json=body)).status_code == 202
-        await finished(runs, 'r')
-        body['options'] = {'runner': 'plan'}
-        response = await client.post('/api/sessions/s/messages', json=body)
-        assert response.status_code == 409 and response.json()['code'] == 'request_conflict'
-    assert model.generate.await_count == 1
-
-
-def test_web_parser_defaults_to_loop_and_accepts_plan():
-    from app.api.__main__ import build_parser
-    assert build_parser().parse_args([]).single_runner == 'loop'
-    assert build_parser().parse_args(['--single-runner', 'plan']).single_runner == 'plan'
-
-
-def test_entry_points_default_to_loop_but_the_service_class_keeps_plan():
+def test_the_entry_points_take_only_the_loop():
     import inspect
     from app.agent.__main__ import parse_args
+    from app.api.__main__ import build_parser
     from bench.run_bench import run_one
     assert parse_args(['goal']).single_runner == 'loop'
+    assert build_parser().parse_args([]).single_runner == 'loop'
     assert inspect.signature(run_one).parameters['single_runner'].default == 'loop'
-    assert inspect.signature(RagAgentService).parameters['single_runner'].default == 'plan'
+    assert inspect.signature(RagAgentService).parameters['single_runner'].default == 'loop'
+    for parse in (lambda: parse_args(['goal', '--single-runner', 'plan']),
+                  lambda: build_parser().parse_args(['--single-runner', 'plan'])):
+        with pytest.raises(SystemExit):
+            parse()

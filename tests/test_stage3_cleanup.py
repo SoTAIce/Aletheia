@@ -31,8 +31,8 @@ def test_no_imports_of_removed_modules(directory):
 
 @pytest.mark.parametrize('target', ['service', 'runtime'])
 def test_removed_constructor_parameters(target):
-    from app.agent.runtime import AgentRuntime
+    from app.agent.loop_run import LoopRun
     from app.services.rag_agent_service import RagAgentService
-    cls = RagAgentService if target == 'service' else AgentRuntime
+    cls = RagAgentService if target == 'service' else LoopRun    # AgentRuntime itself went in stage 4c
     removed = {'runner_registry', 'routing_policy', 'runner_requirements', 'team_impl'}
     assert removed.isdisjoint(inspect.signature(cls).parameters)

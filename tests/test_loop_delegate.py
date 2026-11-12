@@ -6,15 +6,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.agent.agent_loop import ASK_USER, TODO, AgentLoopRunner, LoopOptions, LoopPlanner
+from app.agent.agent_loop import ASK_USER, TODO, AgentLoopRunner, LoopOptions
 from app.agent.delegation import (DELEGATE, EXPLORE_INSTRUCTIONS, ExploreDelegation, ExploreLoopRunner,
                                   ExploreOptions)
 from app.agent.hooks import HookSet, using_hooks
 from app.agent.run_meter import RunMeter, metering, record_model_call
-from app.agent.step_executor import StepExecutor
+from loop_fakes import started_context
 from app.agent.step_models import ModelTurn, ToolCall, ToolDefinition, ToolOutput
-from app.models.taskstate import TaskState
-from app.models.working_memory import WorkingMemory
 from app.tools.tool_registry import ToolRegistry
 
 
@@ -41,13 +39,8 @@ def setup(turns, *, loop_options=None, options=None, tally=None):
     for name in ('read_file', 'search_files', 'write_file'):
         registry.register(_tool(name, log))
     runner = ExploreLoopRunner(model, registry, loop_options, options=options, tally=tally)
-    wm = WorkingMemory(TaskState('user', 'explain the whole project'))
-    wm.task_state.pin_content('earlier turns', 'conversation_memory')
-    wm.task_state.start_planning()
-    wm.install_plan([LoopPlanner.STEP])
-    step_id = wm.task_state.plan[0].step_id
-    wm.begin_step(step_id)
-    context = StepExecutor(wm, AsyncMock()).build_context(step_id)
+    context = started_context(goal='explain the whole project', user='user',
+                              pins=(('earlier turns', 'conversation_memory'),))
     return runner, model, log, context
 
 
@@ -211,17 +204,12 @@ async def test_without_delegate_the_loop_request_is_unchanged():
     assert DELEGATE not in first.args[0][0].content and EXPLORE_INSTRUCTIONS not in first.args[0][0].content
 
 
-class _Planner:
-    async def generate(self, prompt):
-        raise AssertionError('the loop has no planning model call')
-
-
 async def test_the_service_offers_delegate_only_when_enabled():
     from app.services.rag_agent_service import RagAgentService
     for enabled in (False, True):
         model = AsyncMock()
         model.generate.side_effect = [call('c', 'get_current_time', timezone='UTC'), text('noon')]
-        async with RagAgentService(model=model, planner_model=_Planner(), mcp_servers=(), include_knowledge=False,
+        async with RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                                    memory_directory='', single_runner='loop', delegate=enabled) as service:
             result = await service.query_result('What time is it?', 's1')
         assert result.content == 'noon'

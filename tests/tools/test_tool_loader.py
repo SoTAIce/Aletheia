@@ -6,8 +6,7 @@ from mcp import StdioServerParameters
 from mcp.types import Tool
 import pytest
 
-from app.models.taskstate import TaskState
-from app.models.working_memory import WorkingMemory
+from app.models.run_state import RunMemory, RunState
 from app.schemas.rag import Citation
 from app.tools.knowledge_registry_tool import KnowledgeRegistryTool
 from app.tools.tool_loader import local_mcp_servers, open_tool_registry
@@ -16,7 +15,7 @@ from app.tools.tool_loader import local_mcp_servers, open_tool_registry
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status", ["ok", "empty", "error"])
 async def test_rag_artifact_status_and_resource_identity(status):
-    memory = WorkingMemory(TaskState("user", "goal"))
+    memory = RunMemory(RunState("user", "goal"))
     search = AsyncMock(return_value=("evidence", {"status": status, "error": "unavailable", "citations": []}))
     tool = KnowledgeRegistryTool(memory, search=search)
     result = await tool.invoke({"query": "query"})
@@ -46,7 +45,7 @@ async def test_duplicate_registration_closes_all_opened_clients(monkeypatch):
         finally:
             closed.append(parameters.command)
     monkeypatch.setattr(tool_loader.MCPClient, "connect", connect)
-    memory = WorkingMemory(TaskState("user", "goal"))
+    memory = RunMemory(RunState("user", "goal"))
     with pytest.raises(ValueError, match="already registered"):
         async with open_tool_registry(memory, mcp_servers=[
             StdioServerParameters(command="one"), StdioServerParameters(command="two"),
@@ -67,7 +66,7 @@ def test_configured_mcp_servers_do_not_expose_unrequested_write_access(tmp_path)
 
 @pytest.mark.asyncio
 async def test_rag_uses_existing_dataclass_citations_and_preserves_provenance():
-    memory = WorkingMemory(TaskState("user", "goal"))
+    memory = RunMemory(RunState("user", "goal"))
     citation = Citation(1, "docs/report.md", "report.md", "Findings", 3, 8, 0.1)
     search = AsyncMock(return_value=("[ref:1] Finding", {"status": "ok", "citations": [citation]}))
     tool = KnowledgeRegistryTool(memory, search=search)

@@ -111,10 +111,9 @@ async def test_memory_only_lifecycle_keeps_original_and_result():
 def service(tmp_path, **kwargs):
     from app.agent.step_models import ModelTurn
     from app.services.rag_agent_service import RagAgentService
-    model, planner = AsyncMock(), AsyncMock()
-    model.generate.return_value = ModelTurn('{"status":"succeeded","content":"done","reason":null}')
-    planner.generate.return_value = '{"steps":["Answer"],"reason":null}'
-    return RagAgentService(model=model, planner_model=planner, mcp_servers=(),
+    model = AsyncMock()
+    model.generate.return_value = ModelTurn('done')
+    return RagAgentService(model=model, mcp_servers=(),
                            include_knowledge=False, memory_directory=tmp_path, **kwargs)
 
 
@@ -126,7 +125,7 @@ async def test_service_persists_raw_input_before_model_and_replays_after_restart
         turn = s._conversations['s'].archive.load_turns()[0]
         assert turn.status is TurnStatus.RECEIVED
         assert turn.messages[0].content == '  raw goal\n'
-        return ModelTurn('{"status":"succeeded","content":"done","reason":null}')
+        return ModelTurn('done')
     s.model.generate.side_effect = generate
     first = await s.query_result('  raw goal\n', 's', request_id='r')
     second = await s.query_result('  raw goal\n', 's', request_id='r')
@@ -140,37 +139,34 @@ async def test_service_persists_raw_input_before_model_and_replays_after_restart
 
 
 async def test_service_blocked_task_resumes_in_new_turn_without_repeating_completed_step(tmp_path):
+    """Stage 4c: on the loop, 'completed step' is the tool call made before the question; the resumed
+    run continues the same messages, so the call is not made again."""
     from app.models.conversation_memory import TurnStatus
     from app.models.taskstate import TaskStatus
-    from app.agent.step_models import ModelTurn, ToolCall
+    from app.agent.step_models import ModelTurn, ToolCall, ToolMessage
     s = service(tmp_path)
-    s._planner_model.generate.side_effect = [
-        '{"steps":["Collect evidence","Ask destination"],"reason":null}',
-        '{"steps":["Finish with supplied destination"],"reason":null}',
-    ]
     s.model.generate.side_effect = [
         ModelTurn(tool_calls=(ToolCall('clock', 'get_current_time', {'timezone': 'UTC'}),)),
-        ModelTurn('{"status":"succeeded","content":"evidence saved","reason":null}'),
-        ModelTurn('{"status":"blocked","content":"Which destination?","reason":"Need destination"}'),
-        ModelTurn('{"status":"succeeded","content":"finished","reason":null}'),
+        ModelTurn(tool_calls=(ToolCall('ask', 'ask_user', {'question': 'Which destination?'}),)),
+        ModelTurn('finished'),
     ]
     blocked = await s.query_result('Original goal', 's', request_id='first')
-    assert blocked.status is TaskStatus.BLOCKED
+    assert blocked.status is TaskStatus.BLOCKED and blocked.content == 'Which destination?'
     with pytest.raises(ValueError):
         await s.query_result('destination', 'other', resume_task_id=blocked.task_id)
     done = await s.query_result('  destination A\n', 's', request_id='second', resume_task_id=blocked.task_id)
-    assert done.task_id == blocked.task_id and done.status is TaskStatus.COMPLETED
-    assert done.execution_count == 3 and done.replan_count == 0   # answering a question replans without spending the budget (D-033)
-    assert s.model.generate.await_count == 4
-    assert len(done.steps[0].tool_results) == 1 and done.steps[0].tool_results[0].call_id == 'clock'
-    prompt = s._planner_model.generate.call_args.args[0]
-    assert 'evidence saved' in prompt and 'destination A' in prompt
+    assert done.task_id == blocked.task_id and done.status is TaskStatus.COMPLETED and done.content == 'finished'
+    assert done.execution_count == 2 and done.replan_count == 0   # answering a question replans without spending the budget (D-033)
+    assert s.model.generate.await_count == 3
+    resumed = s.model.generate.call_args.args[0]
+    clock_results = [m for m in resumed if isinstance(m, ToolMessage) and m.call_id == 'clock']
+    assert len(clock_results) == 1 and 'destination A' in resumed[-1].content
     turns = s._conversations['s'].archive.load_turns()
     assert [t.status for t in turns] == [TurnStatus.BLOCKED, TurnStatus.COMPLETED]
     assert turns[1].messages[0].content == '  destination A\n'
     assert turns[1].question_id
     assert await s.query_result('  destination A\n', 's', request_id='second', resume_task_id=blocked.task_id) == done
-    assert s.model.generate.await_count == 4
+    assert s.model.generate.await_count == 3
 
 
 async def test_cancel_and_setup_failure_keep_input(tmp_path, monkeypatch):
@@ -218,39 +214,6 @@ async def test_outcome_write_retry_never_reexecutes_model(tmp_path, monkeypatch)
     assert len(memory.archive.load_turns()) == 2
 
 
-async def test_standalone_runtime_records_input_before_execution_and_on_cancel():
-    from app.agent.runtime import AgentRuntime
-    from app.agent.planner import Planner
-    from app.models.working_memory import WorkingMemory
-    from app.models.taskstate import TaskState
-    from app.models.conversation_memory import TurnStatus
-    from app.tools.tool_registry import ToolRegistry
-    conversation = ConversationMemory('s')
-    model, planner = AsyncMock(), AsyncMock()
-    entered = asyncio.Event()
-    async def wait(*args):
-        turn = conversation.retrieve_turns()[0]
-        assert turn.messages[0].content == 'original goal'
-        assert turn.status is TurnStatus.RECEIVED
-        entered.set()
-        await asyncio.Event().wait()
-    planner.generate.side_effect = wait
-    runtime = AgentRuntime(Planner(planner), model, WorkingMemory(TaskState('u', 'original goal')),
-                           ToolRegistry(), conversation=conversation)
-    task = asyncio.create_task(runtime.run())
-    # Wait for either model entry or an early regression failure, without hanging.
-    waiter = asyncio.create_task(entered.wait())
-    done, _ = await asyncio.wait((task, waiter), timeout=3, return_when=asyncio.FIRST_COMPLETED)
-    if task in done:
-        task.result()
-        pytest.fail('runtime did not reach the planner')
-    assert waiter in done
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    assert conversation.retrieve_turns()[0].status is TurnStatus.CANCELLED
-
-
 async def test_concurrent_request_id_and_user_forwarding(tmp_path):
     s = service(tmp_path)
     first, second = await asyncio.gather(*(
@@ -271,7 +234,6 @@ async def test_received_only_after_restart_cannot_reexecute(tmp_path):
     with pytest.raises(RuntimeError, match='received'):
         await s.query_result('raw', 's', request_id='r')
     s.model.generate.assert_not_awaited()
-    s._planner_model.generate.assert_not_awaited()
     assert archive.read_turn('request:r').status is TurnStatus.RECEIVED
 
 
@@ -318,7 +280,6 @@ async def test_initial_write_failure_does_not_call_model(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         await s.query_result('raw', 's', request_id='r')
     s.model.generate.assert_not_awaited()
-    s._planner_model.generate.assert_not_awaited()
 
 
 async def test_memory_only_lifecycle_receipts_survive_recent_cache_eviction():
@@ -334,37 +295,6 @@ async def test_memory_only_lifecycle_receipts_survive_recent_cache_eviction():
     assert len(memory) == 1
 
 
-async def test_pending_standalone_outcome_does_not_hide_resolved_question(tmp_path, monkeypatch):
-    from app.agent.runtime import AgentRuntime
-    from app.agent.planner import Planner
-    from app.agent.step_models import ModelTurn
-    from app.models.working_memory import WorkingMemory
-    from app.models.taskstate import TaskState, TaskStatus
-    from app.tools.tool_registry import ToolRegistry
-    conversation = ConversationMemory('s', archive=ConversationArchive(tmp_path, 's'))
-    model, planner = AsyncMock(), AsyncMock()
-    planner.generate.return_value = '{"steps":["Answer"],"reason":null}'
-    model.generate.side_effect = [
-        ModelTurn('{"status":"blocked","content":"Which destination?","reason":"Need destination"}'),
-        ModelTurn('{"status":"succeeded","content":"done","reason":null}'),
-    ]
-    runtime = AgentRuntime(Planner(planner), model, WorkingMemory(TaskState('u', 'goal')),
-                           ToolRegistry(), conversation=conversation)
-    complete = conversation.complete_turn
-    monkeypatch.setattr(conversation, 'complete_turn', AsyncMock(side_effect=OSError('disk full')))
-    with pytest.raises(OSError):
-        await runtime.run()
-    runtime.memory.task_state.resolve_question(runtime.memory.task_state.scratchpad.open_questions[0].question_id, 'destination')
-    monkeypatch.setattr(conversation, 'complete_turn', complete)
-    assert (await runtime.run()).status is TaskStatus.BLOCKED  # Flush only; no replay.
-    async def finish(*args):
-        turns = conversation.archive.load_turns()
-        assert len(turns) == 2 and turns[-1].messages[0].content == 'destination'
-        return ModelTurn('{"status":"succeeded","content":"done","reason":null}')
-    model.generate.side_effect = finish
-    assert (await runtime.run()).status is TaskStatus.COMPLETED
-
-
 async def test_blocked_runtime_survives_tool_context_cleanup_failure(tmp_path, monkeypatch):
     from app.agent.step_models import ModelTurn
     from contextlib import asynccontextmanager
@@ -376,29 +306,35 @@ async def test_blocked_runtime_survives_tool_context_cleanup_failure(tmp_path, m
             yield registry
         raise OSError('cleanup failed')
     monkeypatch.setattr(module, 'open_tool_registry', broken)
+    from app.agent.step_models import ToolCall
     s = service(tmp_path)
-    s.model.generate.return_value = ModelTurn('{"status":"blocked","content":"Where?","reason":"Need destination"}')
+    s.model.generate.return_value = ModelTurn(tool_calls=(ToolCall('ask', 'ask_user', {'question': 'Where?'}),))
     with pytest.raises(OSError):
         await s.query_result('goal', 's', request_id='r')
     blocked = await s.query_result('goal', 's', request_id='r')
     monkeypatch.setattr(module, 'open_tool_registry', original)
-    s.model.generate.return_value = ModelTurn('{"status":"succeeded","content":"done","reason":null}')
+    s.model.generate.return_value = ModelTurn('done')
     assert (await s.query_result('destination', 's', resume_task_id=blocked.task_id)).content == 'done'
 
 
 async def test_resume_mapping_and_execution_limit_are_not_reset(tmp_path):
-    from app.agent.step_models import ModelTurn
-    from app.models.taskstate import TaskStatus
+    from dataclasses import replace
+    from datetime import UTC, datetime
+    from app.agent.step_models import ModelTurn, ToolCall
+    from app.models.taskstate import OpenQuestion, TaskStatus
     s = service(tmp_path, max_executions=1)
-    s.model.generate.return_value = ModelTurn('{"status":"blocked","content":"Where?","reason":"Need destination"}')
+    s.model.generate.return_value = ModelTurn(tool_calls=(ToolCall('ask', 'ask_user', {'question': 'Where?'}),))
     blocked = await s.query_result('goal', 's', request_id='r', user_id='alice')
     with pytest.raises(ValueError):
         await s.query_result('answer', 's', resume_task_id=blocked.task_id, user_id='bob')
     with pytest.raises(ValueError):
         await s.query_result('answer', 's', resume_task_id=blocked.task_id, question_id='unknown', user_id='alice')
     runtime = s._tasks[(s._session_key('alice', 's'), blocked.task_id)]
-    runtime.memory.task_state.add_open_question('Second question', blocking=True)
-    runtime.memory.task_state.pause_for_questions()
+    # A second open question (RunState has no public way to add one; plan mode's TaskState had).
+    state = runtime.memory.task_state
+    first = state.scratchpad.open_questions[0]
+    second = OpenQuestion('second', 'Second question', first.step_id, first.goal_revision, True, datetime.now(UTC))
+    state._scratchpad = replace(state.scratchpad, open_questions=(first, second))
     with pytest.raises(ValueError, match='question_id'):
         await s.query_result('answer', 's', resume_task_id=blocked.task_id, user_id='alice')
     q1, q2 = runtime.memory.task_state.scratchpad.open_questions
@@ -415,8 +351,9 @@ async def test_business_failure_and_post_ingress_setup_error_are_archived(tmp_pa
     from app.agent.step_models import ModelTurn
     from app.models.conversation_memory import TurnStatus
     import app.services.rag_agent_service as module
-    s = service(tmp_path, max_replans=0)
-    s.model.generate.return_value = ModelTurn('{"status":"failed","content":"cannot finish","reason":"No evidence"}')
+    from app.agent.tool_calling_model import ModelRequestError
+    s = service(tmp_path)
+    s.model.generate.side_effect = ModelRequestError('provider refused')      # the loop's task fails
     await s.query_result('raw', 's', request_id='failure')
     assert s._conversations['s'].archive.load_turns()[0].status is TurnStatus.FAILED
     monkeypatch.setattr(module, 'ContextManager', lambda **kw: (_ for _ in ()).throw(ValueError('invalid config')))

@@ -1,4 +1,4 @@
-﻿from dataclasses import asdict
+from dataclasses import asdict
 import json
 from unittest.mock import AsyncMock
 
@@ -7,8 +7,6 @@ import pytest
 from app.agent.step_models import SystemMessage, UserMessage, ToolDefinition, ModelTurn
 from app.agent.tool_calling_model import ModelRequestError
 from app.models.conversation_memory import ConversationMemory, ConversationMessage, ConversationTurn, MessageRole
-from app.models.taskstate import TaskState
-from app.models.working_memory import WorkingMemory
 from app.services.context_manager import ContextBudgetError, ContextManager, ContextManagedModel
 
 

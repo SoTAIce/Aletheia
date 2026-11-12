@@ -77,7 +77,7 @@ class ToolRegistry:
         """Dispatch one call and attach identity to validated business output.
 
         Tool exceptions and cancellation propagate unchanged. This layer checks
-        data shape, not JSON Schema semantics or WorkingMemory resource ownership.
+        data shape, not JSON Schema semantics or RunMemory resource ownership.
         Raw content and argument values retain their whitespace.
         """
         if not isinstance(call, ToolCall):

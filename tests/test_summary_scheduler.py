@@ -107,10 +107,9 @@ async def test_service_completion_does_not_wait_for_summary_and_closes_scheduler
     archive = ConversationArchive(tmp_path, 's')
     for i in range(26):
         archive.save_turn(ConversationTurn([ConversationMessage(MessageRole.USER, f'old source {i}' * 500)]))
-    model, planner = AsyncMock(), AsyncMock()
-    model.generate.return_value = ModelTurn('{"status":"succeeded","content":"done","reason":null}')
-    planner.generate.return_value = '{"steps":["Answer"],"reason":null}'
-    service = RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
+    model = AsyncMock()
+    model.generate.return_value = ModelTurn('done')
+    service = RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                               memory_directory=tmp_path, conversation_compressor=SimpleNamespace(compress=compress))
     try:
         result = await asyncio.wait_for(service.query_result('new goal', 's', request_id='r'), 3)
@@ -153,7 +152,7 @@ async def test_compressor_client_and_cli_use_explicit_lifetimes(monkeypatch, tmp
     monkeypatch.setattr(cli, 'RagAgentService', Service)
     monkeypatch.setattr(cli.config, 'conversation_storage_dir', str(tmp_path))
     args = SimpleNamespace(compress_history=True, filesystem_root=None, write_root=None,
-                           no_knowledge=True, max_executions=1, max_replans=0, goal='goal', session_id='s')
+                           no_knowledge=True, max_executions=1, goal='goal', session_id='s')
     assert await cli.main(args) == 0
     assert closed[-2:] == ['service', 'client']
 
@@ -206,10 +205,9 @@ async def test_queue_saturation_does_not_restart_small_backlog_wait_time():
 async def test_scheduler_notification_failure_cannot_change_business_result(tmp_path, monkeypatch):
     from app.agent.step_models import ModelTurn
     from app.services.rag_agent_service import RagAgentService
-    model, planner = AsyncMock(), AsyncMock()
-    model.generate.return_value = ModelTurn('{"status":"succeeded","content":"done","reason":null}')
-    planner.generate.return_value = '{"steps":["Answer"],"reason":null}'
-    async with RagAgentService(model=model, planner_model=planner, mcp_servers=(),
+    model = AsyncMock()
+    model.generate.return_value = ModelTurn('done')
+    async with RagAgentService(model=model, mcp_servers=(),
                                 include_knowledge=False, memory_directory=tmp_path) as service:
         def fail(*args):
             raise RuntimeError('scheduler unavailable')

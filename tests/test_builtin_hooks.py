@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from loop_fakes import loop_reply
+
 from app.agent.builtin_hooks import AuditHook, ConversationTokenCap
 from app.agent.hooks import PolicyDeniedError
 from app.agent.run_meter import RunMeter, metering, record_model_call
@@ -20,7 +22,8 @@ from app.services.rag_agent_service import RagAgentService
 
 
 def outcome(text, status='succeeded', reason=None):
-    return ModelTurn(json.dumps({'status': status, 'content': text, 'reason': reason}))
+    """Plan mode's step result as a loop reply (stage 4c)."""
+    return loop_reply(text, status, reason)
 
 
 class Model:
@@ -36,10 +39,8 @@ class Model:
 
 
 def service(tmp_path, turns, plans=(('Answer',),), **kw):
-    planner = AsyncMock()
-    planner.generate.side_effect = [json.dumps({'steps': list(s), 'reason': None}) for s in plans]
     model = turns if isinstance(turns, Model) else Model(turns)
-    return RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
+    return RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                            memory_directory=tmp_path, **kw), model
 
 

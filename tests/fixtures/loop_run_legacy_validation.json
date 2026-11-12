@@ -1,0 +1,110 @@
+{
+ "max_executions='2'": [
+  "ValueError",
+  "max_executions must be an integer >= 1"
+ ],
+ "max_executions=-1": [
+  "ValueError",
+  "max_executions must be an integer >= 1"
+ ],
+ "max_executions=0": [
+  "ValueError",
+  "max_executions must be an integer >= 1"
+ ],
+ "max_executions=1.5": [
+  "ValueError",
+  "max_executions must be an integer >= 1"
+ ],
+ "max_executions=False": [
+  "ValueError",
+  "max_executions must be an integer >= 1"
+ ],
+ "max_executions=None": [
+  "ValueError",
+  "max_executions must be an integer >= 1"
+ ],
+ "max_executions=True": [
+  "ValueError",
+  "max_executions must be an integer >= 1"
+ ],
+ "max_tool_rounds='2'": [
+  "TypeError",
+  "max_tool_rounds must be an integer"
+ ],
+ "max_tool_rounds=-1": [
+  "ValueError",
+  "max_tool_rounds must be non-negative"
+ ],
+ "max_tool_rounds=1.5": [
+  "TypeError",
+  "max_tool_rounds must be an integer"
+ ],
+ "max_tool_rounds=False": [
+  "TypeError",
+  "max_tool_rounds must be an integer"
+ ],
+ "max_tool_rounds=None": [
+  "TypeError",
+  "max_tool_rounds must be an integer"
+ ],
+ "max_tool_rounds=True": [
+  "TypeError",
+  "max_tool_rounds must be an integer"
+ ],
+ "max_total_tool_calls='2'": [
+  "TypeError",
+  "max_total_tool_calls must be an integer"
+ ],
+ "max_total_tool_calls=-1": [
+  "ValueError",
+  "max_total_tool_calls must be non-negative"
+ ],
+ "max_total_tool_calls=1.5": [
+  "TypeError",
+  "max_total_tool_calls must be an integer"
+ ],
+ "max_total_tool_calls=False": [
+  "TypeError",
+  "max_total_tool_calls must be an integer"
+ ],
+ "max_total_tool_calls=None": [
+  "TypeError",
+  "max_total_tool_calls must be an integer"
+ ],
+ "max_total_tool_calls=True": [
+  "TypeError",
+  "max_total_tool_calls must be an integer"
+ ],
+ "step_timeout_seconds='2'": [
+  "ValueError",
+  "step_timeout_seconds must be finite and positive"
+ ],
+ "step_timeout_seconds=-1": [
+  "ValueError",
+  "step_timeout_seconds must be finite and positive"
+ ],
+ "step_timeout_seconds=0": [
+  "ValueError",
+  "step_timeout_seconds must be finite and positive"
+ ],
+ "step_timeout_seconds=False": [
+  "ValueError",
+  "step_timeout_seconds must be finite and positive"
+ ],
+ "step_timeout_seconds=None": [
+  "ValueError",
+  "step_timeout_seconds must be finite and positive"
+ ],
+ "step_timeout_seconds=True": [
+  "ValueError",
+  "step_timeout_seconds must be finite and positive"
+ ],
+ "step_timeout_seconds=inf": [
+  "ValueError",
+  "step_timeout_seconds must be finite and positive"
+ ],
+ "step_timeout_seconds=nan": [
+  "ValueError",
+  "step_timeout_seconds must be finite and positive"
+ ]
+}

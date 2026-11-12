@@ -8,11 +8,11 @@ from typing import Any
 from app.agent.step_models import ToolDefinition, ToolOutput
 from app.models.conversation_memory import ConversationMemory, MessageRole
 from app.models.resources import ResourceType
-from app.models.working_memory import WorkingMemory
+from app.models.run_state import RunMemory
 
 
 class KnowledgeRegistryTool:
-    def __init__(self, memory: WorkingMemory, conversation: ConversationMemory | None = None,
+    def __init__(self, memory: RunMemory, conversation: ConversationMemory | None = None,
                  search=None, *, context_manager=None) -> None:
         self._memory = memory
         self._conversation = conversation

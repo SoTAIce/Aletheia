@@ -34,8 +34,8 @@ def test_shared_models_and_protocol_annotations():
 
 @pytest.mark.parametrize('modules', [
     ['app.tools.tool', 'app.tools.tool_registry', 'app.agent.step_runner',
-     'app.agent.tool_calling_model', 'app.agent.tool_calling_step_runner'],
-    ['app.agent.step_runner', 'app.agent.tool_calling_step_runner',
+     'app.agent.tool_calling_model', 'app.agent.agent_loop'],
+    ['app.agent.step_runner', 'app.agent.agent_loop',
      'app.agent.tool_calling_model', 'app.tools.tool_registry', 'app.tools.tool'],
 ])
 def test_boundaries_import_without_concrete_tools(modules):

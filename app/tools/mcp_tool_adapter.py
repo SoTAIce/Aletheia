@@ -53,7 +53,7 @@ class MCPToolAdapter:
         return ToolOutput(
             success=not result.isError,
             content=content,
-            # MCP resource URIs are not WorkingMemory resource IDs.
+            # MCP resource URIs are not RunMemory resource IDs.
             source_refs=(),
             error=(content.strip() or "MCP tool execution failed")
             if result.isError else None,

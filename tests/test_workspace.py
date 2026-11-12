@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from loop_fakes import loop_reply
+
 from app.agent import __main__ as cli
 from app.agent.step_models import ModelTurn
 from app.services.rag_agent_service import RagAgentService
@@ -188,7 +190,8 @@ def test_tool_servers_get_the_closed_folders(tmp_path):
 # ---- 3. the service ---------------------------------------------------------------------------
 
 def outcome(text, status='succeeded', reason=None):
-    return ModelTurn(json.dumps({'status': status, 'content': text, 'reason': reason}))
+    """Plan mode's step result as a loop reply (stage 4c)."""
+    return loop_reply(text, status, reason)
 
 
 class Factory:
@@ -201,13 +204,12 @@ class Factory:
 
 
 def service(tmp_path, turns, steps=(('Answer',),), factory=None, memory=True, **kw):
-    planner, model = AsyncMock(), AsyncMock()
-    planner.generate.side_effect = [json.dumps({'steps': list(s), 'reason': None}) for s in steps]
+    model = AsyncMock()
     model.generate.side_effect = list(turns)
-    svc = RagAgentService(model=model, planner_model=planner, mcp_servers=(), include_knowledge=False,
+    svc = RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
                           memory_directory=(tmp_path / 'archive') if memory else '',
                           workspace_servers=factory, workspace_policy=WorkspacePolicy() if factory else None, **kw)
-    return svc, planner, model
+    return svc, model
 
 
 def sent_text(*mocks):
@@ -229,7 +231,7 @@ async def test_a_chosen_directory_starts_its_own_tool_servers(off_system, tmp_pa
 
 
 async def test_refusals_happen_before_any_work(off_system, tmp_path, monkeypatch):
-    svc, planner, model = service(tmp_path, [outcome('a')], factory=Factory())
+    svc, model = service(tmp_path, [outcome('a')], factory=Factory())
     plain, *_ = service(tmp_path, [outcome('a')])
     async with svc, plain:
         with pytest.raises(WorkspaceError):
@@ -240,7 +242,7 @@ async def test_refusals_happen_before_any_work(off_system, tmp_path, monkeypatch
         if os.name == 'nt':
             with pytest.raises(WorkspaceConfirmationRequired):
                 await svc.query_result('q', 's', workspace=str(tmp_path))
-    assert planner.generate.await_count == 0 and model.generate.await_count == 0
+    assert model.generate.await_count == 0
     assert 'workspace_available' not in plain.run_options()
 
 
@@ -257,27 +259,27 @@ async def test_a_resumed_task_keeps_its_directory_and_a_change_is_noted(off_syst
     factory = Factory()
     first, second = tmp_path / 'one', tmp_path / 'two'
     first.mkdir(), second.mkdir()
-    svc, planner, model = service(tmp_path, [outcome('need', 'blocked', '哪个？'), outcome('done'), outcome('c')],
+    svc, model = service(tmp_path, [outcome('need', 'blocked', '哪个？'), outcome('done'), outcome('c')],
                                   steps=(('Ask',), ('Do',), ('C',)), factory=factory)
     async with svc:
         blocked = await svc.query_result('q', 's', workspace=str(first))
         await svc.query_result('this one', 's', resume_task_id=blocked.task_id, workspace=str(second))
         await svc.query_result('next', 's', workspace=str(second))
     assert [root for root, _ in factory.calls] == [str(first.resolve())] * 2 + [str(second.resolve())]
-    text = sent_text(planner, model)
+    text = sent_text(model)
     assert text.count('working directory of this conversation has changed') >= 1
     assert str(second) not in text and str(first) not in text          # the note names no path
 
 
 async def test_attachments_are_kept_in_the_archive_and_named_to_the_model(tmp_path):
-    svc, planner, model = service(tmp_path, [outcome('read it')])
+    svc, model = service(tmp_path, [outcome('read it')])
     other, *_ = service(tmp_path, [])
     async with svc, other:
         saved = await svc.save_attachment('s', 'C:\\Users\\me\\notes.txt', 'ATTACHED-BODY ' * 3)
         assert saved['name'] == 'notes.txt' and saved['chars'] == 42 and ':upload:' in saved['ref']
         result = await svc.query_result('summarize the file', 's', attachments=[saved['ref']])
         assert result.content == 'read it'
-        text = sent_text(planner, model)
+        text = sent_text(model)
         assert saved['ref'] in text and 'notes.txt' in text and 'ATTACHED-BODY' not in text
         foreign = await other.save_attachment('other-session', 'x.txt', 'x')
         with pytest.raises(ValueError):

@@ -1,4 +1,4 @@
-"""Real stdio MCP and runner; HTTP and model responses are deterministic."""
+"""Real stdio MCP and the agent loop; HTTP and model responses are deterministic."""
 
 import json
 from pathlib import Path
@@ -9,11 +9,11 @@ from unittest.mock import AsyncMock
 from mcp import StdioServerParameters
 import pytest
 
-from app.agent.step_executor import StepExecutor
+from app.agent.agent_loop import AgentLoopRunner, LOOP_STEP, LoopResumeStore
+from app.agent.loop_run import LoopRun
 from app.agent.step_models import ModelTurn, ToolCall, ToolMessage
-from app.agent.tool_calling_step_runner import ToolCallingStepRunner
-from app.models.taskstate import TaskState
-from app.models.working_memory import WorkingMemory
+from app.models.run_state import RunMemory, RunState
+from app.models.taskstate import TaskStatus
 from app.tools.mcp_client import MCPClient
 from app.tools.mcp_tool_loader import register_mcp_tools
 from app.tools.tool_registry import ToolRegistry
@@ -61,9 +61,9 @@ async def test_search_stdio_runner_and_cleanup(status, empty):
     call = ToolCall("search-1", "search_web", {"query": "Aletheia MCP", "max_results": 1})
 
     async def generate(messages, tools):
-        assert [tool.name for tool in tools] == ["search_web"]
-        assert tools[0].description
-        assert tools[0].input_schema["required"] == ["query"]
+        [search] = [tool for tool in tools if tool.name == "search_web"]   # next to the loop's own controls
+        assert search.description
+        assert search.input_schema["required"] == ["query"]
         if not isinstance(messages[-1], ToolMessage):
             return ModelTurn(tool_calls=(call,))
         # The second model turn must actually receive the MCP tool evidence.
@@ -84,18 +84,18 @@ async def test_search_stdio_runner_and_cleanup(status, empty):
         return ModelTurn("Search failed; evidence could not be verified.")
 
     model.generate.side_effect = generate
-    memory = WorkingMemory(TaskState("user", "Find Aletheia MCP documentation"))
-    memory.task_state.start_planning()
-    memory.install_plan(["Search and summarize the documentation"])
+    memory = RunMemory(RunState("user", "Find Aletheia MCP documentation"))
     async with MCPClient.connect(server_parameters(status, empty)) as client:
         await register_mcp_tools(client, registry)
-        executor = StepExecutor(memory, ToolCallingStepRunner(model, registry))
-        result = await executor.execute(memory.task_state.plan[0].step_id)
-        assert model.generate.await_count == 2
-        assert result.tool_calls == (call,)
-        assert result.tool_results[0].success is (status == 200)
+        run = LoopRun(memory, model, registry, step_description=LOOP_STEP, runner_factory=lambda deps:
+                      AgentLoopRunner(deps.model, deps.tool_registry, None, deps.context_manager, LoopResumeStore()))
+        result = await run.run()
+        assert result.status is TaskStatus.COMPLETED and model.generate.await_count == 2
+        [receipt] = result.steps
+        assert receipt.tool_calls == (call,)
+        assert receipt.tool_results[0].success is (status == 200)
         if status == 200 and not empty:
-            assert "https://example.com/aletheia" in result.result_summary
+            assert "https://example.com/aletheia" in result.content
         invalid = await registry.invoke(ToolCall("invalid", "search_web", {"query": " "}))
         assert not invalid.success and "query" in invalid.error
     with pytest.raises(RuntimeError, match="closed"):

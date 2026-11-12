@@ -4,7 +4,6 @@ import inspect
 
 import pytest
 
-from app.agent.planner import Planner
 from app.agent.step_models import ToolResult
 from app.config import Settings
 from app.services.context_manager import ContextManager
@@ -113,6 +112,3 @@ async def test_the_real_filesystem_server_returns_a_file_once(tmp_path):
     assert _same_as_text(structured, '\n'.join(b.text for b in blocks))
 
 
-def test_the_planner_keeps_reading_and_analysis_in_one_step():
-    source = inspect.getsource(Planner._build_prompt)
-    assert '读取文件或资料与基于它的分析放在同一步' in source

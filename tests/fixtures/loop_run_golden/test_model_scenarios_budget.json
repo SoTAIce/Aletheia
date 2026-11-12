@@ -1,0 +1,29 @@
+[
+ [
+  {
+   "log": [],
+   "receipts": [],
+   "result": [
+    "failed",
+    "Agent token budget reached (1 of 1 tokens)",
+    "budget",
+    0,
+    0
+   ]
+  }
+ ],
+ [
+  {
+   "type": "task_start"
+  },
+  {
+   "cached_prompt_tokens": 0,
+   "failure_kind": "budget",
+   "model_calls": 0,
+   "status": "failed",
+   "total_tokens": 1,
+   "type": "task_end"
+  }
+ ],
+ []
+]

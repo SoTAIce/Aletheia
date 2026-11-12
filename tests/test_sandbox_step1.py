@@ -12,9 +12,7 @@ import pytest
 from app.agent.__main__ import team_options_for
 from app.agent.team.models import WORKER_ONLY_TOOLS
 from app.agent.delegation import READ_TOOLS
-from app.models.taskstate import TaskState
-from app.models.working_memory import WorkingMemory
-from app.agent.step_executor import StepExecutor
+from loop_fakes import started_context
 from bench import run_bench
 from test_bench_graders import FIXED_INVENTORY
 
@@ -28,13 +26,7 @@ def test_team_write_toggle_only_with_write_root():
 
 
 def _context():
-    from unittest.mock import AsyncMock
-    wm = WorkingMemory(TaskState('u', 'goal'))
-    wm.task_state.start_planning()
-    wm.install_plan(['step'])
-    step_id = wm.task_state.plan[0].step_id
-    wm.begin_step(step_id)
-    return StepExecutor(wm, AsyncMock()).build_context(step_id)
+    return started_context(description='step')
 
 
 def _fake_agent(writes=None, stdout='已写入 inventory.py\n\nStatus: completed; executions: 2; replans: 0\n'):

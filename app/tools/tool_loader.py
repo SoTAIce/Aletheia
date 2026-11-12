@@ -8,7 +8,7 @@ import sys
 from mcp import StdioServerParameters
 
 from app.models.conversation_memory import ConversationMemory
-from app.models.working_memory import WorkingMemory
+from app.models.run_state import RunMemory
 from app.tools.current_time_tool import CurrentTimeTool
 from app.tools.knowledge_registry_tool import KnowledgeRegistryTool
 from app.tools.mcp_client import MCPClient
@@ -65,7 +65,7 @@ def workspace_servers(*, tavily_api_key: str = "", sandbox: bool = False, writes
 
 @asynccontextmanager
 async def open_tool_registry(
-    memory: WorkingMemory, *,
+    memory: RunMemory, *,
     mcp_servers: Sequence[StdioServerParameters] = (),
     local_tools: Sequence[Tool] = (),
     conversation: ConversationMemory | None = None,

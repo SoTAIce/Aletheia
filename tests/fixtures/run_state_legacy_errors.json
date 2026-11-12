@@ -1,0 +1,462 @@
+{
+ "test_active_step_planning_errors_match_taskstate[add_constraint-args1]#0": [
+  "InvalidStateTransitionError",
+  "Cannot change planning inputs while a step is active"
+ ],
+ "test_active_step_planning_errors_match_taskstate[pin_content-args0]#0": [
+  "InvalidStateTransitionError",
+  "Cannot change planning inputs while a step is active"
+ ],
+ "test_active_step_planning_errors_match_taskstate[resolve_question-args2]#0": [
+  "InvalidStateTransitionError",
+  "Cannot change planning inputs while a step is active"
+ ],
+ "test_add_failure_requires_running_like_taskstate[blocked]#0": [
+  "InvalidStateTransitionError",
+  "Task must be running to record a step failure"
+ ],
+ "test_add_failure_requires_running_like_taskstate[completed]#0": [
+  "InvalidStateTransitionError",
+  "Task must be running to record a step failure"
+ ],
+ "test_add_failure_requires_running_like_taskstate[created]#0": [
+  "InvalidStateTransitionError",
+  "Task must be running to record a step failure"
+ ],
+ "test_add_failure_requires_running_like_taskstate[failed]#0": [
+  "InvalidStateTransitionError",
+  "Task must be running to record a step failure"
+ ],
+ "test_add_failure_requires_running_like_taskstate[planning]#0": [
+  "InvalidStateTransitionError",
+  "Task must be running to record a step failure"
+ ],
+ "test_add_failure_requires_running_like_taskstate[ready]#0": [
+  "InvalidStateTransitionError",
+  "Task must be running to record a step failure"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-add_constraint-args10]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-add_constraint-args11]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-add_constraint-args8]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-add_constraint-args9]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-add_failure-args16]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-add_failure-args17]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-add_failure-args18]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-add_failure-args19]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-add_failure-args20]#0": [
+  "TypeError",
+  "source_refs must be a tuple of strings"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-add_failure-args21]#0": [
+  "TypeError",
+  "source_refs must be a tuple of strings"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-add_failure-args22]#0": [
+  "TypeError",
+  "source_refs must be a tuple of strings"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-add_failure-args23]#0": [
+  "TypeError",
+  "source_refs must be a tuple of strings"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-fail_task-args24]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-fail_task-args25]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-fail_task-args26]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-fail_task-args27]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-pin_content-args0]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-pin_content-args1]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-pin_content-args2]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-pin_content-args3]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-pin_content-args4]#0": [
+  "ValueError",
+  "source must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-pin_content-args5]#0": [
+  "ValueError",
+  "source must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-pin_content-args6]#0": [
+  "ValueError",
+  "source must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-pin_content-args7]#0": [
+  "ValueError",
+  "source must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-resolve_question-args12]#0": [
+  "ValueError",
+  "answer must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-resolve_question-args13]#0": [
+  "ValueError",
+  "answer must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-resolve_question-args14]#0": [
+  "ValueError",
+  "answer must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[completed-resolve_question-args15]#0": [
+  "ValueError",
+  "answer must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-add_constraint-args10]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-add_constraint-args11]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-add_constraint-args8]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-add_constraint-args9]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-add_failure-args16]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-add_failure-args17]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-add_failure-args18]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-add_failure-args19]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-add_failure-args20]#0": [
+  "TypeError",
+  "source_refs must be a tuple of strings"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-add_failure-args21]#0": [
+  "TypeError",
+  "source_refs must be a tuple of strings"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-add_failure-args22]#0": [
+  "TypeError",
+  "source_refs must be a tuple of strings"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-add_failure-args23]#0": [
+  "TypeError",
+  "source_refs must be a tuple of strings"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-fail_task-args24]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-fail_task-args25]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-fail_task-args26]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-fail_task-args27]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-pin_content-args0]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-pin_content-args1]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-pin_content-args2]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-pin_content-args3]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-pin_content-args4]#0": [
+  "ValueError",
+  "source must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-pin_content-args5]#0": [
+  "ValueError",
+  "source must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-pin_content-args6]#0": [
+  "ValueError",
+  "source must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-pin_content-args7]#0": [
+  "ValueError",
+  "source must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-resolve_question-args12]#0": [
+  "ValueError",
+  "answer must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-resolve_question-args13]#0": [
+  "ValueError",
+  "answer must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-resolve_question-args14]#0": [
+  "ValueError",
+  "answer must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[created-resolve_question-args15]#0": [
+  "ValueError",
+  "answer must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-add_constraint-args10]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-add_constraint-args11]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-add_constraint-args8]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-add_constraint-args9]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-add_failure-args16]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-add_failure-args17]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-add_failure-args18]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-add_failure-args19]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-add_failure-args20]#0": [
+  "TypeError",
+  "source_refs must be a tuple of strings"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-add_failure-args21]#0": [
+  "TypeError",
+  "source_refs must be a tuple of strings"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-add_failure-args22]#0": [
+  "TypeError",
+  "source_refs must be a tuple of strings"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-add_failure-args23]#0": [
+  "TypeError",
+  "source_refs must be a tuple of strings"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-fail_task-args24]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-fail_task-args25]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-fail_task-args26]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-fail_task-args27]#0": [
+  "ValueError",
+  "message must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-pin_content-args0]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-pin_content-args1]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-pin_content-args2]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-pin_content-args3]#0": [
+  "ValueError",
+  "content must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-pin_content-args4]#0": [
+  "ValueError",
+  "source must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-pin_content-args5]#0": [
+  "ValueError",
+  "source must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-pin_content-args6]#0": [
+  "ValueError",
+  "source must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-pin_content-args7]#0": [
+  "ValueError",
+  "source must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-resolve_question-args12]#0": [
+  "ValueError",
+  "answer must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-resolve_question-args13]#0": [
+  "ValueError",
+  "answer must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-resolve_question-args14]#0": [
+  "ValueError",
+  "answer must be a non-empty string"
+ ],
+ "test_argument_errors_match_taskstate_and_precede_status[running-resolve_question-args15]#0": [
+  "ValueError",
+  "answer must be a non-empty string"
+ ],
+ "test_constructor_validation_matches_taskstate[active_goal-  ]#0": [
+  "ValueError",
+  "active_goal must not be empty"
+ ],
+ "test_constructor_validation_matches_taskstate[active_goal-7]#0": [
+  "ValueError",
+  "active_goal must not be empty"
+ ],
+ "test_constructor_validation_matches_taskstate[active_goal-None]#0": [
+  "ValueError",
+  "active_goal must not be empty"
+ ],
+ "test_constructor_validation_matches_taskstate[active_goal-]#0": [
+  "ValueError",
+  "active_goal must not be empty"
+ ],
+ "test_constructor_validation_matches_taskstate[user_id-  ]#0": [
+  "ValueError",
+  "user_id must not be empty"
+ ],
+ "test_constructor_validation_matches_taskstate[user_id-7]#0": [
+  "ValueError",
+  "user_id must not be empty"
+ ],
+ "test_constructor_validation_matches_taskstate[user_id-None]#0": [
+  "ValueError",
+  "user_id must not be empty"
+ ],
+ "test_constructor_validation_matches_taskstate[user_id-]#0": [
+  "ValueError",
+  "user_id must not be empty"
+ ],
+ "test_resolve_already_resolved_matches_taskstate_before_active_guard#0": [
+  "InvalidStateTransitionError",
+  "Question q is already resolved"
+ ],
+ "test_resolve_already_resolved_matches_taskstate_before_active_guard#1": [
+  "KeyError",
+  "'Question missing does not exist'"
+ ],
+ "test_resolve_missing_matches_taskstate[3]#0": [
+  "KeyError",
+  "'Question 3 does not exist'"
+ ],
+ "test_resolve_missing_matches_taskstate[None]#0": [
+  "KeyError",
+  "'Question None does not exist'"
+ ],
+ "test_resolve_missing_matches_taskstate[]#0": [
+  "KeyError",
+  "'Question  does not exist'"
+ ],
+ "test_resolve_missing_matches_taskstate[missing]#0": [
+  "KeyError",
+  "'Question missing does not exist'"
+ ],
+ "test_terminal_errors_match_taskstate[add_constraint-args1-completed]#0": [
+  "InvalidStateTransitionError",
+  "Cannot add a constraint to a completed or failed task"
+ ],
+ "test_terminal_errors_match_taskstate[add_constraint-args1-failed]#0": [
+  "InvalidStateTransitionError",
+  "Cannot add a constraint to a completed or failed task"
+ ],
+ "test_terminal_errors_match_taskstate[fail_task-args3-completed]#0": [
+  "InvalidStateTransitionError",
+  "Cannot fail a completed or failed task"
+ ],
+ "test_terminal_errors_match_taskstate[fail_task-args3-failed]#0": [
+  "InvalidStateTransitionError",
+  "Cannot fail a completed or failed task"
+ ],
+ "test_terminal_errors_match_taskstate[pin_content-args0-completed]#0": [
+  "InvalidStateTransitionError",
+  "Cannot pin context for a completed or failed task"
+ ],
+ "test_terminal_errors_match_taskstate[pin_content-args0-failed]#0": [
+  "InvalidStateTransitionError",
+  "Cannot pin context for a completed or failed task"
+ ],
+ "test_terminal_errors_match_taskstate[resolve_question-args2-completed]#0": [
+  "InvalidStateTransitionError",
+  "Cannot resolve a question for a completed or failed task"
+ ],
+ "test_terminal_errors_match_taskstate[resolve_question-args2-failed]#0": [
+  "InvalidStateTransitionError",
+  "Cannot resolve a question for a completed or failed task"
+ ]
+}
