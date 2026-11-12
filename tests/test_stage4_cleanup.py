@@ -47,3 +47,11 @@ def test_the_service_and_loop_run_lost_their_plan_parameters():
         inspect.signature(RagAgentService).parameters)
     assert {'max_replans', 'planning_timeout_seconds'}.isdisjoint(inspect.signature(LoopRun).parameters)
     assert list(inspect.signature(LoopRun.rebind).parameters) == ['self', 'model', 'registry', 'context_manager']
+
+
+def test_plan_mode_timeout_setting_is_gone() -> None:
+    from app.config import Settings
+
+    assert 'agent_planning_timeout_seconds' not in Settings.model_fields
+    # A stale .env line must still load: extra settings are ignored, not rejected.
+    assert 'agent_planning_timeout_seconds' not in Settings(agent_planning_timeout_seconds=5).model_dump()
