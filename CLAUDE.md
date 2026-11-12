@@ -51,13 +51,13 @@ pytest 配置在 `pyproject.toml`（`asyncio_mode = "auto"`，测试只在内存
 - team：`delegation.py` 的 `DelegatingLoopRunner`，负责人也是一个循环，只有宿主工具 `delegate`/`review`，每次委派都起一个全新上下文的子循环成员；共享状态在工作区文件里，完成由宿主判定（D-075）。
 - `step_runner.py` 是执行器接口（`RunnerDependencies`、`RunnerFactory`、错误类型）；能力需求来自应用代码，不来自模型。
 
-**横切机制**：`hooks.py`（观察者 + 只能拒绝的门控，通过上下文变量挂到 `HookedTool`/`HookedModel` 上，事件不带工具输出或模型原文）；`run_meter.py`（预算计量）；`side_effects.py`（外部副作用不确定时不重试）；`trace.py` / `trace_view.py`（本地轨迹）。
+**横切机制**：`hooks.py`（观察者 + 只能拒绝的门控，通过上下文变量挂到 `HookedTool`/`HookedModel` 上，事件不带工具输出或模型原文）；`run_meter.py`（预算计量，每次模型调用前查预算，D-078）；`provider_state.py`（服务商报告的提示令牌与本机估算之比分档、模型名是否被替换，异常时提示，D-079）；`side_effects.py`（外部副作用不确定时不重试）；`trace.py` / `trace_view.py`（本地轨迹）。
 
 **服务层**：`app/services/rag_agent_service.py` 是面向会话的门面（CLI 和 Web 都经过它），持有工具注册表和每个任务的 `LoopRun`，选择和组装交给 `run_assembler.py`。记忆分三层：`app/models/conversation_memory.py`（会话视图）、`app/models/run_state.py`（任务真值）、`app/services/context_manager.py`（只做投影）；`conversation_archive.py` 归档原文，`summary_scheduler.py` 做后台摘要。长期记忆以 PostgreSQL（`postgres_memory_store.py`）为准，Milvus（`memory_vector_index.py`）是可重建的索引。RAG 检索链：`rag_search_service.py`（稠密 / BM25 / 混合）→ `reciprocal_rank_fusion.py` → `rag_reranker_service.py`。
 
 **工具（`app/tools/`）**：都注册进 `tool_registry.py`。文件系统、联网搜索（Tavily）和沙箱（Docker）都是 stdio MCP 子进程（各子目录下的 `server.py`），经 `mcp_client.py` + `mcp_tool_adapter.py` 接入；MCP 连接的进入和退出必须在同一个 asyncio task 里，并覆盖整个执行期。
 
-**配置**：`app/config.py`（pydantic-settings，读取 `.env`，参考 `.env.example`）。模型走 DashScope 兼容接口；Milvus 本地栈在 `deploy/milvus/compose.yaml`。
+**配置**：`app/config.py`（pydantic-settings，读取 `.env`，参考 `.env.example`）；对话模型的地址、窗口、能力和价格由 `Settings.agent_model_profile` 收成一个 `ModelProfile`（`app/models/model_profile.py`，D-078）。模型走 DashScope 兼容接口；Milvus 本地栈在 `deploy/milvus/compose.yaml`。
 
 ## 注意
 
