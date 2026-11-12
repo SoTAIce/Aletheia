@@ -100,6 +100,11 @@ def report(result, write=print) -> None:
     if getattr(result, 'user_message', None):
         # The first line stays the English diagnostic the bench parses; this explains it (D-033).
         write(f"\n说明：{result.user_message}")
+    from app.agent.provider_state import notice
+    warning = notice((getattr(result, 'usage', None) or {}).get('provider'))
+    if warning:
+        # Only when the provider counted less than was sent or named another model (provider-state-001).
+        write(f"\n{warning}")
     write(f"\nStatus: {result.status.value}; executions: {result.execution_count}; replans: {result.replan_count}")
 
 

@@ -144,6 +144,17 @@ def usage_fields(record):
                 fields['delegations'] = len(set(members))
                 fields['delegate_requests'] = requested
                 fields['delegate_calls'] = len(members)
+        provider = usage.get('provider')
+        if isinstance(provider, dict):
+            # What the provider did to the requests (provider-state-001): first call's band, all bands,
+            # reported/estimated ratio per call, and whether it named another model.
+            from app.agent.provider_state import STATES
+            state = provider.get('state')
+            fields['provider_state'] = state if state in STATES else 'unknown'
+            fields['provider_states'] = [x for x in provider.get('states') or () if x in STATES]
+            fields['provider_ratios'] = [x if isinstance(x, (int, float)) and not isinstance(x, bool) else None
+                                         for x in provider.get('ratios') or ()]
+            fields['model_mismatch'] = provider.get('model_mismatch') is True
     steps = record.get('steps')
     if isinstance(steps, list):
         tools = [c for s in steps if isinstance(s, dict) for c in s.get('tools') or () if isinstance(c, dict)]
@@ -335,6 +346,21 @@ def split_summary(rows):
     return table
 
 
+def state_summary(rows):
+    """Pass counts by the provider state of each run's first call (provider-state-001): the relay's
+    hidden additions changed results, so compare runs only within one state."""
+    table = {}
+    for row in rows:
+        cell = table.setdefault(f'{row.get("provider_state", "unknown")}/{row["mode"]}',
+                                {'passed': 0, 'runs': 0, 'tasks': []})
+        cell['runs'] += 1
+        cell['passed'] += bool(row.get('passed'))
+        cell['tasks'].append(row['task'])
+    for cell in table.values():
+        cell['ci95'] = wilson(cell['passed'], cell['runs'])
+    return table
+
+
 def summary(rows):
     table = {}
     for row in rows:
@@ -413,7 +439,9 @@ def main(argv=None):
         # The MCP stdio child does not inherit PYTHONDONTWRITEBYTECODE (DECISIONS D-011).
         for path in _pycache_dirs() - before:
             _rmtree(path)
-    report = {'plan': plan, 'rows': rows, 'summary': summary(rows), 'by_split': split_summary(rows)}
+    report = {'plan': plan, 'rows': rows, 'summary': summary(rows), 'by_split': split_summary(rows),
+              'by_provider_state': state_summary(rows),
+              'model_mismatch_runs': sum(1 for row in rows if row.get('model_mismatch'))}
     text = json.dumps(report, ensure_ascii=False, indent=2)
     print(text)
     if args.out:

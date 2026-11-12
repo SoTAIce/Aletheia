@@ -63,6 +63,10 @@ class RunMeter:
     # The model name each logged call's response reported (None = not reported), kept apart from
     # call_log so usage snapshots and reports stay as they were; read by the trace (D-073).
     response_models: list = field(default_factory=list)
+    # Per logged call, the host's own estimate of the request's prompt tokens and the model name it
+    # asked for; with the provider's report they give the provider state (provider-state-001).
+    host_estimates: list = field(default_factory=list)
+    requested_models: list = field(default_factory=list)
     started: float = field(default_factory=time.monotonic)
 
     def __post_init__(self):
@@ -77,9 +81,11 @@ class RunMeter:
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
 
-    def record(self, usage, shared_prefix: float | None = None, model: str | None = None) -> None:
+    def record(self, usage, shared_prefix: float | None = None, model: str | None = None,
+               host_estimate: int | None = None, requested_model: str | None = None) -> None:
         """Add one provider call; usage is the provider's usage object, or None; model is the
-        model name the response reported."""
+        model name the response reported; host_estimate and requested_model describe what the
+        host sent (provider-state-001)."""
         self.model_calls += 1
         prompt = _non_negative_int(getattr(usage, 'prompt_tokens', None))
         completion = _non_negative_int(getattr(usage, 'completion_tokens', None))
@@ -91,6 +97,8 @@ class RunMeter:
             self.call_log.append({'prompt': prompt, 'cached': cached, 'completion': completion,
                                   'shared_prefix': None if share is None else round(share, 3)})
             self.response_models.append(_model_name(model))
+            self.host_estimates.append(host_estimate if type(host_estimate) is int and host_estimate > 0 else None)
+            self.requested_models.append(_model_name(requested_model))
         if prompt is None and completion is None:
             self.calls_without_usage += 1
             return
@@ -135,7 +143,15 @@ class RunMeter:
                  'seconds': round(self.elapsed(), 3),
                  'calls': [dict(entry) for entry in self.call_log]}
         usage['estimated_cost'] = estimated_cost(self.prompt_tokens, self.completion_tokens)
+        usage['provider'] = self.provider_summary()
         return usage
+
+    def provider_summary(self) -> dict:
+        """The provider state of this run's logged calls (provider-state-001)."""
+        from app.agent.provider_state import ratio, summary
+        ratios = [ratio(entry.get('prompt'), estimate)
+                  for entry, estimate in zip(self.call_log, self.host_estimates)]
+        return summary(ratios, self.requested_models, self.response_models)
 
 
 def cache_text(usage: dict) -> str:
@@ -178,7 +194,8 @@ def metering(meter: RunMeter):
         _current.reset(token)
 
 
-def record_model_call(usage, shared_prefix: float | None = None, model: str | None = None) -> None:
+def record_model_call(usage, shared_prefix: float | None = None, model: str | None = None,
+                      host_estimate: int | None = None, requested_model: str | None = None) -> None:
     meter = _current.get()
     if meter is not None:
-        meter.record(usage, shared_prefix, model)
+        meter.record(usage, shared_prefix, model, host_estimate, requested_model)

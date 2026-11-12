@@ -103,6 +103,7 @@ class OpenAICompatibleToolCallingModel:
         # The last request sent, serialized, to measure how much of the next one starts the
         # same way (a provider prompt cache can only reuse a shared start; D-056).
         self._previous_request: str | None = None
+        self._host_estimate: int | None = None
 
     @staticmethod
     def _require_text(value: object, field: str) -> None:
@@ -183,6 +184,9 @@ class OpenAICompatibleToolCallingModel:
         that only appends to the previous one gives about 1, whatever it appends."""
         current = json.dumps([request_kwargs.get("tools"), request_kwargs["messages"]],
                              ensure_ascii=False, default=str)
+        # The host's own size of this request, for the provider state (provider-state-001).
+        from app.services.rag_context_builder import ContextBuilder
+        self._host_estimate = ContextBuilder.estimate_tokens(current)
         previous, self._previous_request = self._previous_request, current
         if not previous:
             return None
@@ -199,9 +203,10 @@ class OpenAICompatibleToolCallingModel:
                 )
             except BaseException:
                 # the request was sent; its usage is unknown (D-034)
-                record_model_call(None, shared)
+                record_model_call(None, shared, None, self._host_estimate, self._model)
                 raise
-            record_model_call(getattr(raw_response, 'usage', None), shared, getattr(raw_response, 'model', None))
+            record_model_call(getattr(raw_response, 'usage', None), shared, getattr(raw_response, 'model', None),
+                              self._host_estimate, self._model)
         except APIResponseValidationError as exc:
             raise _retryable(ModelResponseError("provider returned an invalid response")) from exc
         except APITimeoutError as exc:

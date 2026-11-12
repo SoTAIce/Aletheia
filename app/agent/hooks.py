@@ -409,7 +409,7 @@ def _usage_since(meter, logged) -> dict:
     """Provider usage of the calls this model call made (retries included), from the meter."""
     if meter is None or logged is None:
         return {'provider_calls': None, 'prompt_tokens': None, 'completion_tokens': None, 'cached_tokens': None,
-                'response_model': None}
+                'response_model': None, 'host_estimate': None, 'provider_ratio': None, 'provider_state': None}
     entries = meter.call_log[logged:]
     # The model name the provider reported for its last answer: a short label, never text (D-073).
     names = [name for name in getattr(meter, 'response_models', ())[logged:] if name]
@@ -417,6 +417,12 @@ def _usage_since(meter, logged) -> dict:
     def total(key):
         values = [entry.get(key) for entry in entries if entry.get(key) is not None]
         return sum(values) if values else None
+    # The host's size of the last request and how the provider's count compares (provider-state-001).
+    from app.agent.provider_state import band, ratio
+    estimates = list(getattr(meter, 'host_estimates', ()))[logged:]
+    estimate = estimates[-1] if estimates else None
+    value = ratio(entries[-1].get('prompt'), estimate) if entries else None
     return {'provider_calls': len(entries), 'prompt_tokens': total('prompt'),
             'completion_tokens': total('completion'), 'cached_tokens': total('cached'),
-            'response_model': names[-1] if names else None}
+            'response_model': names[-1] if names else None, 'host_estimate': estimate,
+            'provider_ratio': value, 'provider_state': band(value) if entries else None}

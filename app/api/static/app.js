@@ -753,6 +753,10 @@ function agentPart(turn, extra = {}) {
     }
     if (turn.status === 'completed') foot.append(copyButton(() => turn.reply || '', '复制回复'));
     part.append(foot);
+    // provider-state-001: host-authored text, only when the provider dropped content or named another model.
+    if (usage && usage.provider && typeof usage.provider.notice === 'string') {
+      part.append(el('p', 'note', usage.provider.notice));
+    }
   }
   if (turn.task_id && ['completed', 'blocked', 'failed', 'cancelled'].includes(turn.status)) {
     let foot = part.querySelector('.reply-foot');

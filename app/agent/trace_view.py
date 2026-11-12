@@ -12,7 +12,8 @@ from __future__ import annotations
 
 KINDS = ('task', 'route', 'plan', 'step', 'member', 'model', 'tool', 'todo')
 _MODEL_ATTRS = ('message_count', 'tool_count', 'callable_tools', 'provider_calls', 'prompt_tokens',
-                'completion_tokens', 'cached_tokens', 'tool_calls', 'response_model', 'denied_by', 'error')
+                'completion_tokens', 'cached_tokens', 'tool_calls', 'response_model', 'host_estimate',
+                'provider_ratio', 'provider_state', 'denied_by', 'error')
 _TOOL_ATTRS = ('call_id', 'side_effect', 'args_summary', 'success', 'chars', 'denied_by', 'error')
 _TASK_ATTRS = ('failure_kind', 'model_calls', 'total_tokens', 'cached_prompt_tokens', 'error')
 _STEP_ATTRS = ('outcome', 'runner', 'step_id')
@@ -187,6 +188,8 @@ def build_trace(records: list[dict]) -> dict:
 
 _KIND_TEXT = {'task': '任务', 'route': '路由', 'plan': '规划', 'step': '步骤', 'member': '成员',
               'model': '模型', 'tool': '工具', 'todo': '清单'}
+_PROVIDER_TEXT = {'dropped': '内容可能被丢弃', 'plain': '与发出的相当', 'padded': '服务商加了少量内容',
+                  'heavy': '服务商加了大量内容', 'unknown': '未知'}
 _STATUS_TEXT = {'failed': '失败', 'error': '出错', 'denied': '被拒绝', 'unfinished': '未结束', 'blocked': '等待回答'}
 
 
@@ -229,6 +232,10 @@ def _line(span: dict) -> str:
             parts.append(f"请求 {attrs['provider_calls']} 次")
         if attrs.get('response_model'):
             parts.append(f"服务商模型 {attrs['response_model']}")
+        if attrs.get('provider_ratio') is not None:
+            # Reported over the host's own estimate of the request (provider-state-001).
+            text = _PROVIDER_TEXT.get(attrs.get('provider_state'), attrs.get('provider_state'))
+            parts.append(f"本机估算 {attrs.get('host_estimate') or 0:,}，报告/估算 {attrs['provider_ratio']}（{text}）")
     if kind == 'tool' and span['status'] == 'ok':
         parts.append('成功')
     if span['status'] in _STATUS_TEXT:
