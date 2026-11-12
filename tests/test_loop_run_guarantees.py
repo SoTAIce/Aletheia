@@ -14,7 +14,7 @@ from app.agent.agent_loop import CONTEXT_FIELDS, AgentLoopRunner, LOOP_STEP, Loo
 from app.agent.loop_run import LoopRun
 from app.agent.run_meter import RunMeter, current_meter, metering, record_model_call
 from app.agent.step_models import ModelTurn, SystemMessage, ToolCall, ToolDefinition, ToolOutput
-from app.agent.step_runner import StepModelError
+from app.agent.step_runner import StepBudgetError, StepModelError
 from app.agent.tool_calling_model import ModelContextOverflowError, ModelRequestError, ModelToolArgumentsError
 from app.models.run_state import RunMemory, RunState
 from app.models.taskstate import TaskStatus
@@ -147,16 +147,30 @@ async def test_a_failed_tool_is_logged_with_its_type_only():
     assert 'host' not in json.dumps(result.step_log)
 
 
-async def test_the_token_budget_is_checked_before_and_after_the_loop_step_not_inside_it():
-    """The plan path stopped between steps (one model call each); a loop step makes all its calls,
-    then the run fails on the budget and keeps the step's receipt. Recorded as found in stage 4c."""
+async def test_the_token_budget_is_checked_before_every_model_call():
+    """Stage 4d-3: once the budget is spent, the next model call inside the same step is not sent;
+    the tools of the calls already made have run, the run fails on the budget and keeps no result.
+    (Until 4d-3 the check ran only before and after a step, so all three calls were sent.)"""
     runtime = loop_run(Metered([call('read_file'), call('read_file', 'c2'), ModelTurn('answer')]),
                        tool('read_file', ToolOutput(True, 'a'), ToolOutput(True, 'b')))
     with metering(RunMeter(max_total_tokens=200)):
         result = await runtime.run()
-    assert result.usage['model_calls'] == 3
+    assert result.usage['model_calls'] == 2
     assert result.status is TaskStatus.FAILED and result.failure_kind == 'budget'
-    assert 'token budget reached' in result.content and len(result.steps) == 1
+    assert 'token budget reached' in result.content and result.steps == ()
+    [entry] = result.step_log
+    assert entry['outcome'] == 'failed' and [t['tool'] for t in entry['tools']] == ['read_file', 'read_file']
+
+
+async def test_a_spent_budget_stops_a_member_loop_before_its_first_call():
+    """A team member or researcher is an AgentLoopRunner too: it refuses to call the model on a spent budget."""
+    model = Metered([ModelTurn('never sent')])
+    runner = AgentLoopRunner(model, ToolRegistry(), None, None, allow_ask_user=False)
+    meter = RunMeter(max_total_tokens=100)
+    meter.record(SimpleNamespace(prompt_tokens=90, completion_tokens=10))
+    with metering(meter), pytest.raises(StepBudgetError, match='token budget reached'):
+        await runner.run(started_context())
+    assert meter.model_calls == 1
 
 
 async def test_the_time_budget_bounds_a_slow_step():

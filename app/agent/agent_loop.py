@@ -22,7 +22,8 @@ from app.agent.step_models import (
     ModelTurn, StepExecutionContext, StepOutcome, StepRunOutput, SystemMessage, ToolCall, ToolDefinition,
     ToolMessage, ToolsShownOnly, UserMessage, TOOL_LIST_SOURCE,
 )
-from app.agent.step_runner import (StepFormatError, StepModelError, StepRunError, StepRunnerContractError,
+from app.agent.step_runner import (StepBudgetError, StepFormatError, StepModelError, StepRunError,
+                                   StepRunnerContractError,
                                    StepTimeoutError, StepToolError, ToolRoundLimitError)
 from app.agent.team.diagnostics import failure_details, failure_types
 from app.agent.tool_calling_model import (ModelTimeoutError, ModelToolArgumentsError, ToolCallingModelError,
@@ -219,6 +220,12 @@ class AgentLoopRunner:
         self.resumed = False
 
     async def _generate(self, messages, tools, refs):
+        # Every model call checks the run's budget first, inside a step too, so a long step or a
+        # team member cannot overrun it by many calls (stage 4d-3; before, only between steps).
+        meter = current_meter()
+        spent = meter.budget_problem() if meter is not None else None
+        if spent:
+            raise StepBudgetError(spent, tuple(refs))
         try:
             if self._manager is not None:
                 return await self._manager.generate(self._model, tuple(messages), tools)

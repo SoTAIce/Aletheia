@@ -1,6 +1,6 @@
 # 第 4 阶段 4d：模型档案（设计）
 
-日期：2026-11-12。状态：**用户已回答第 7 节；4d-1、4d-3 由 Claude 实现（第 9 节），4d-2、4d-4 等有第二个模型再做**（stage4d-001）。
+日期：2026-11-12。状态：**用户已回答第 7 节；4d-1、4d-3 已实现（第 9 节，D-078），4d-2、4d-4 等有第二个模型再做**（stage4d-001）。
 来源：用户 2026-11-12“接下来来设计4d方案吧”。依据是当前 `main`（`e6973f3`）和 [第 4 阶段方案](stage4_plan.md) 第 3 节“4d 模型档案”。
 
 ## 1. 现状（以代码为准）
@@ -187,4 +187,13 @@ explorer = "cheap"
 - 温度保留整数 `0`：改成 `0.0` 会让请求里的 `"temperature": 0` 变成 `0.0`，对照测试会抓到（试过，24 项失败）。
 - 测试 `tests/test_model_profile.py`（38 项）：新旧两种构造在 24 种设置组合下（DashScope / 独立地址 × 思考开关三种 × JSON 模式 × 缓存键开关）发出的请求逐字节相同，包括地址和认证头；默认档案逐项对应设置；档案的 `repr` 不含密钥；密钥变量回落到环境变量；非法档案被拒；缓存键只发给支持的档案。
 - 全部测试（Linux）：1760 通过、22 跳过、4 失败（只在 Windows 上成立的路径断言，改动前同样）。
+
+### 4d-3 每次模型调用前检查预算（2026-11-12，Claude）
+
+- `AgentLoopRunner._generate` 每次发请求前先查 `RunMeter.budget_problem()`（令牌和时间预算），超了就抛新的 `StepBudgetError`（`app/agent/step_runner.py`），不再发请求；`LoopRun` 收到后以 `budget` 结束运行，说明文字仍是计量器原来的 “Agent token budget reached (… of … tokens)”。
+- 单一循环、团队负责人、团队成员、按需委派的调研成员都是 `AgentLoopRunner`，所以都在每次调用前检查。成员超预算时，`delegate` 工具照原样把它当成员失败报给负责人；负责人下一次调用同样被拦下，整个运行以 `budget` 结束。路由选择不经过循环，不受影响（它在运行开始时调用，此时预算还没用）。
+- 行为变化：以前一步里的所有调用都会发出，一步结束后才以预算失败；现在超预算后的那次调用不发。已经执行的工具不撤销，这一步没有结果（`steps` 为空），步骤日志里照常记下已执行的工具。
+- 测试：`tests/test_loop_run_guarantees.py` 里固定旧行为的那一项改为 `test_the_token_budget_is_checked_before_every_model_call`（3 次调用变 2 次）；新增 `test_a_spent_budget_stops_a_member_loop_before_its_first_call`。67 个期望值对照全部通过（没有一项在一步内超预算）。
+- 全部测试（Linux）：1761 通过、22 跳过、4 失败（同上，只在 Windows 上成立）。
+- 没有真实模型评测：预算默认不设上限（命令行和网页都不传 `max_total_tokens`，评测也不设），默认运行不受影响。
 

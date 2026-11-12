@@ -702,3 +702,10 @@
 - 重复工作：另一个会话从过时的 `main` 交接出发，在 `claude/wizardly-ride-peavwg` 上重做了一遍 4b（`8c8938f`），与 `stage4c` 的 `70f7470` 重复，未合并，分支已删除。交接文件独立成分支后，新会话从 `handoff` 分支读到的就是最新状态，不再受 `main` 是否合并的影响。
 - 来源：用户 2026-11-12“重跑下留出集吧，然后等这个验证通过再搞”“你能帮我跑吗，那在云端跑吧”“可以”。
 
+## D-078 2026-11-12 4d：模型档案（只做结构）和每次模型调用前检查预算
+
+- 4d-1：对话模型的设置收成一个 `ModelProfile`（`app/models/model_profile.py`），`Settings.agent_model_profile` 从现有 `.env` 设置合成唯一的 `default` 档案。原来按“是不是 DashScope”推断的两条规则（`enable_thinking` 只发 DashScope，`prompt_cache_key` 只发独立地址，D-050、D-057）写在合成处一处。服务、`ContextManager` 窗口、费用估算、缓存探针都改读档案。请求逐字节不变（`tests/test_model_profile.py`）。档案只记密钥所在的变量名，不存密钥。
+- 不做的部分：档案文件 `models.toml` 和角色（`route`、`member`、`explorer`）分配（4d-2）、换模型评测（4d-4）。用户暂时没有第二个模型，以后可能加 DeepSeek、Qwen、Claude，到时按 [4d 方案](stage4d_plan.md) 第 4、7 节做；Claude 的接法到时另定。
+- 4d-3：每次模型调用前检查令牌和时间预算（`AgentLoopRunner._generate`，`StepBudgetError`），取代 D-076 记下的“一步内多次调用之间不查”。成员循环同样受限。预算默认不设上限，默认运行不受影响。
+- 来源：用户 2026-11-12“接下来来设计4d方案吧”；回答“暂时没有第二个模型……先不用”“2.3.4按照你建议来”“你来实现”。
+

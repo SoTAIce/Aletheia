@@ -43,6 +43,11 @@ class StepBlockedError(StepRunError):
     """The step needs missing information before dependent work can proceed."""
 
 
+class StepBudgetError(StepRunError):
+    """The run's token or time budget was spent before the next model call (stage 4d-3).
+    The message is the meter's host-authored reason; LoopRun ends the run with kind 'budget'."""
+
+
 class StepFormatError(StepRunError):
     """Output formatting/validation failed; replanning cannot repair serialization."""
 

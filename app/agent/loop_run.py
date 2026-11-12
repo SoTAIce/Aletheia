@@ -18,7 +18,7 @@ from loguru import logger
 from app.agent.runtime import AgentRunResult, FAILURE_MESSAGES, _policy_denial, _int_or_none
 from app.agent.run_meter import RunMeter, cache_text as _cache_text, call_text as _call_text, current_meter, metering
 from app.agent.side_effects import SideEffectWatch
-from app.agent.step_runner import (RunnerDependencies, RunnerLimits, StepBlockedError, StepRunError,
+from app.agent.step_runner import (RunnerDependencies, RunnerLimits, StepBlockedError, StepBudgetError, StepRunError,
     StepBusinessError, StepFormatError, StepModelError, StepToolError, StepRunner)
 from app.agent.step_models import (StepExecutionContext, StepExecutionReceipt, StepRunOutput,
     StepOutcome, ToolCall, ToolResult)
@@ -282,6 +282,9 @@ class LoopRun:
                 content = receipt.result_summary
             except StepBlockedError as exc:
                 return self._result(exc.message)
+            except StepBudgetError as exc:
+                # Checked before a model call inside the step (stage 4d-3).
+                return self._fail(exc.message, 'budget')
             except (StepFormatError, StepModelError) as exc:
                 # Local format repair is exhausted, or the provider failed.
                 # Replanning would repeat completed tools without fixing either.
