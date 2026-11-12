@@ -1629,6 +1629,21 @@
         "main contains 4b and 4c; handoff files absent from main; init.ps1 does not require them; agent_planning_timeout_seconds removed with a test; leftovers decided and recorded."
       ],
       "evidence": "main: 2a5ab26 (drop agent_planning_timeout_seconds, tests/test_stage4_cleanup.py +1), e6973f3 (handoff split, D-077, holdout rerun in docs/stage4_plan.md section 14). Orphan branch handoff holds session-handoff.md, progress.md, feature_list.json, docs/harness/baseline.md, docs/harness/history/; checked out at .handoff/ (ignored). pytest on Linux: 1722 passed, 22 skipped, 4 failed (Windows-only path asserts, same on stage4c before the change); init.ps1 itself not run (no PowerShell in the cloud session); its Python check run directly with and without .handoff/. Deferred: in-step token budget check (with 4d), SessionService split. Duplicate 4b branch claude/wizardly-ride-peavwg deleted locally; remote deletion was blocked by the cloud session permission check and is left to the user."
+    },
+    {
+      "id": "stage4d-001",
+      "name": "Stage 4d: model profiles (structure only) and a budget check before every model call",
+      "description": "docs/stage4d_plan.md. 4d-1 ModelProfile built from the existing settings, requests unchanged; 4d-3 AgentLoopRunner checks the run budget before each model call. 4d-2 (models.toml, roles route/member/explorer) and 4d-4 (live comparison) wait for a second model.",
+      "status": "partial",
+      "dependencies": [
+        "stage4-wrapup-001"
+      ],
+      "acceptance": [
+        "Requests byte-for-byte unchanged with the default profile.",
+        "A spent budget stops the next model call inside a step and inside member loops.",
+        "4d-2/4d-4 only when the user adds a second model (DeepSeek, Qwen or Claude later)."
+      ],
+      "evidence": "User 2026-11-12: no second model yet ('先不用'), questions 2-4 as suggested, Claude implements. Commits on local main: e54d849 (design), 948604f (4d-1, tests/test_model_profile.py 38, byte-identical requests over 24 setting combinations; mutation check: temperature 0.0 fails 24), fc13b4d (4d-3, StepBudgetError; test_loop_run_guarantees budget test rewritten 3->2 calls, member test added). D-078. Linux pytest 1761 passed, 22 skipped, 4 failed (Windows-only). No live run (budget unlimited by default). Pushed: see session-handoff."
     }
   ],
   "cleanup_2026_11_04": {
