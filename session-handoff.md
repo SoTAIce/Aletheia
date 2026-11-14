@@ -1,4 +1,12 @@
-# Current Session Handoff — 2026-11-12
+# Current Session Handoff — 2026-11-14
+
+## 小收尾（2026-11-14，用户“先做小收尾”）
+
+- `main` 工作区（未提交）：删除无人用的 `ContextManagedModel`，以及 `ContextManager.generate` 里只为它嵌套而设的 `context_overflow_managed` 分支（`app/services/context_manager.py`）。经它测溢出重试和请求检查的两项测试改为直接调用 `manager.generate`，只测嵌套的一项删除（`tests/test_context_artifacts.py`、`tests/test_context_manager.py`）。`init.ps1` 通过：1794 项通过、16 项跳过。
+- `scripts/validate_multi_runner_live.py`、`validate_summary_context.py`（按已删的规划模式写，跑不了）：用户本机本来就是删除状态，小收尾里一并提交删除；`benchmark_conversation_memory.py` 的删除仍是用户自己的差异，由用户决定。
+- 本分支 `feature_list.json`：`team-delivery-reliability`、`team-failure-diagnosis-001` 两条待办针对的是第 3 阶段已删的 `team_v2`，移到 `retired_backlog` 并写明原因；`team-poc-001` 改为 `deferred`；`hooks-fail-closed-001` 去掉过时的“等 3a 落地”前提。
+- 下一个方向用户还没选：钩子加固（`hooks-fail-closed-001`）、第 5 阶段上下文和限额整理、交付质量（`deliverable-format-001`）。Codex 额度 2026-11-15 恢复。
+
 
 ## 新会话从这里开始（2026-11-12，第 4 阶段 4c 已并入 main）
 

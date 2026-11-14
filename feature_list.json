@@ -124,8 +124,8 @@
       "dependencies": [
         "runner-001"
       ],
-      "status": "partial",
-      "resolution": "Historical single-cycle live delivery failures preserved; successor team-poc-002 implements host-owned contracts and validates multi-round review/rework without regrading old trials.",
+      "status": "deferred",
+      "resolution": "Historical single-cycle live delivery failures preserved; successor team-poc-002 implements host-owned contracts and validates multi-round review/rework without regrading old trials. 2026-11-14: superseded by the stage 3 team rewrite (D-075); no further work planned on this PoC.",
       "evidence": "PoC implementation complete:22 deterministic tests including real MCP normal/cancel; full1046pass2skip. Live continuity3/3 connected trials; post-fix dynamic Lead revise/helper/Worker resume observed twice, but strict helper JSON acceptance failed in both; no full dynamic live pass. docs/team_session_poc.md. No production Runner integration or protected-source modifications.",
       "evidence_kind": "historical_report",
       "disposition": "Historical partial live delivery; successor team-poc-002 resolved contract work. Not an active task.",
@@ -1670,7 +1670,7 @@
     "baseline": "1093 passed, 2 skipped before test removal"
   },
   "schema_version": 2,
-  "updated_at": "2026-11-12",
+  "updated_at": "2026-11-14",
   "active_feature": null,
   "verification_context": {
     "tests_present": true,
@@ -1681,13 +1681,6 @@
     "current_result": "通过：1629 passed、16 skipped；新增七项守卫，两个保留示例的测试单独通过；基线命令见 docs/harness/baseline.md。"
   },
   "backlog": [
-    {
-      "id": "team-delivery-reliability",
-      "authorized": false,
-      "priority": 1,
-      "next_action": "Define separately scoped repair for Reviewer feedback/JSON delivery on fixed real tasks; restore test protocol first.",
-      "source": "docs/agent_team_task_comparison_2026-11-03.md"
-    },
     {
       "id": "longterm-acceptance",
       "authorized": false,
@@ -1704,13 +1697,6 @@
       "source": "docs/harness/capability-phase1-2026-11-04.md"
     },
     {
-      "id": "team-failure-diagnosis-001",
-      "authorized": false,
-      "priority": 1,
-      "next_action": "Sandbox run (2026-11-04): team 0/2 before any sandbox run - parse_duration ModelToolArgumentsError after repairs exhausted; fix_inventory type lost (filter fixed). Next: re-run fix_inventory/team once to get its type; consider more argument repairs or chunked writes for members.",
-      "source": "docs/harness/capability-phase1-2026-11-04.md"
-    },
-    {
       "id": "sandbox-execution",
       "authorized": false,
       "priority": 2,
@@ -1721,8 +1707,22 @@
       "id": "hooks-fail-closed-001",
       "authorized": false,
       "priority": 2,
-      "next_action": "After stage3 3a lands (avoid editing hooks.py alongside Codex): (1) fail closed when no HookSet is set on paths that offer tools or call the run model (today an unset context is EMPTY = allow all; all entry points set it, background summaries use a separate compressor outside the token cap); (2) decide whether approvals should show what will be written (args_summary carries only lengths, so the user approves blind); (3) note that gate-then-invoke relies on sequential tool calls and must be rechecked if tool calls ever run in parallel. Race review 2026-11-10 found no live race: gates run sequentially per run, ApprovalGate locks and rechecks, one active run per session.",
+      "next_action": "(1) fail closed when no HookSet is set on paths that offer tools or call the run model (today an unset context is EMPTY = allow all; all entry points set it, background summaries use a separate compressor outside the token cap); (2) decide whether approvals should show what will be written (args_summary carries only lengths, so the user approves blind); (3) note that gate-then-invoke relies on sequential tool calls and must be rechecked if tool calls ever run in parallel. Race review 2026-11-10 found no live race: gates run sequentially per run, ApprovalGate locks and rechecks, one active run per session.",
       "source": "Claude review 2026-11-10 (user asked about permission checks and racing hooks)"
+    }
+  ],
+  "retired_backlog": [
+    {
+      "id": "team-delivery-reliability",
+      "retired": "2026-11-14",
+      "reason": "The Reviewer role and its JSON delivery were removed with team_v2 in stage 3 (D-075); the team lead now uses the host tools delegate/review and the host decides completion. Tune team 10/11 in 4c.",
+      "last_next_action": "Define separately scoped repair for Reviewer feedback/JSON delivery on fixed real tasks; restore test protocol first."
+    },
+    {
+      "id": "team-failure-diagnosis-001",
+      "retired": "2026-11-14",
+      "reason": "Diagnosed the 2026-11-04 team (team_v2), deleted in stage 3 (D-075). The rewritten team passes fix_inventory and parse_duration in 3b, 4b and 4c.",
+      "last_next_action": "Sandbox run (2026-11-04): team 0/2 before any sandbox run - parse_duration ModelToolArgumentsError after repairs exhausted; fix_inventory type lost (filter fixed). Next: re-run fix_inventory/team once to get its type; consider more argument repairs or chunked writes for members."
     }
   ]
 }
