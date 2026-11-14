@@ -354,14 +354,6 @@ class ContextManager:
     async def generate(self, model, messages, tools):
         self.overflow_recovery_interrupted = False
         projected = self.prepare(messages, tools)
-        if getattr(model, 'context_overflow_managed', False) is True:
-            try:
-                return await model.generate(projected, tools)
-            except asyncio.CancelledError:
-                manager = getattr(model, 'manager', None)
-                self.overflow_recovery_interrupted = bool(
-                    getattr(manager, 'overflow_recovery_interrupted', False))
-                raise
         try:
             return await model.generate(projected, tools)
         except ModelContextOverflowError:
@@ -369,19 +361,7 @@ class ContextManager:
                 return await model.generate(self.prepare(projected, tools, aggressive=True), tools)
             except asyncio.CancelledError:
                 # asyncio.timeout translates this cancellation outside the runner.
-                # Retain its cause so Runtime cannot replan and replay side effects.
+                # Retain its cause so LoopRun does not retry and replay side effects.
                 self.overflow_recovery_interrupted = True
                 raise
-
-
-class ContextManagedModel:
-    """Keep the existing generate protocol, checking every model/repair request."""
-
-    def __init__(self, model, manager):
-        self._model = model
-        self.manager = manager
-
-    async def generate(self, messages, tools):
-        return await self.manager.generate(self._model, messages, tools)
-    context_overflow_managed = True
 

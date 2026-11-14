@@ -7,7 +7,7 @@ import pytest
 from app.agent.step_models import SystemMessage, UserMessage, ToolDefinition, ModelTurn
 from app.agent.tool_calling_model import ModelRequestError
 from app.models.conversation_memory import ConversationMemory, ConversationMessage, ConversationTurn, MessageRole
-from app.services.context_manager import ContextBudgetError, ContextManager, ContextManagedModel
+from app.services.context_manager import ContextBudgetError, ContextManager
 
 
 def test_budget_counts_system_tools_output_and_safety():
@@ -55,13 +55,13 @@ def test_mandatory_context_is_not_silently_truncated():
         manager.prepare((UserMessage(json.dumps({'active_goal':'x'*300,'constraints':['important']})),), ())
 
 
-async def test_managed_model_checks_each_request_before_calling_backend():
+async def test_manager_checks_each_request_before_calling_backend():
     backend = AsyncMock()
     backend.generate.return_value = ModelTurn('done')
-    model = ContextManagedModel(backend, ContextManager(window_tokens=300, output_tokens=20, safety_tokens=10, token_counter=len))
-    assert (await model.generate((UserMessage('goal'),), ())).content == 'done'
+    manager = ContextManager(window_tokens=300, output_tokens=20, safety_tokens=10, token_counter=len)
+    assert (await manager.generate(backend, (UserMessage('goal'),), ())).content == 'done'
     with pytest.raises(ContextBudgetError):
-        await model.generate((UserMessage('x'*500),), ())
+        await manager.generate(backend, (UserMessage('x'*500),), ())
     assert backend.generate.await_count == 1
 
 

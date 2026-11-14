@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 import pytest
 from app.agent.step_models import ToolResult, ToolMessage, UserMessage, ModelTurn
 from app.agent.tool_calling_model import ModelContextOverflowError
-from app.services.context_manager import ContextManager, ContextManagedModel, ContextBudgetError
+from app.services.context_manager import ContextManager, ContextBudgetError
 from app.services.conversation_archive import ConversationArchive
 from app.tools.context_archive_tool import ContextArchiveTool
 
@@ -51,14 +51,13 @@ async def test_compaction_preserves_tool_message_identity_and_required_status(tm
 async def test_overflow_retry_only_regenerates_and_stops_after_one_retry():
     backend=AsyncMock()
     manager=ContextManager()
-    model=ContextManagedModel(backend,manager)
     backend.generate.side_effect=[ModelContextOverflowError('too large'), ModelTurn('done')]
-    assert (await model.generate((UserMessage('goal'),),())).content == 'done'
+    assert (await manager.generate(backend,(UserMessage('goal'),),())).content == 'done'
     assert backend.generate.await_count == 2
     backend.generate.reset_mock()
     backend.generate.side_effect=ModelContextOverflowError('still too large')
     with pytest.raises(ModelContextOverflowError):
-        await model.generate((UserMessage('goal'),),())
+        await manager.generate(backend,(UserMessage('goal'),),())
     assert backend.generate.await_count == 2
 
 async def test_optional_history_is_not_dropped_before_archived_tool_preview(tmp_path):
@@ -78,12 +77,3 @@ async def test_observation_views_keep_identity_even_for_small_results():
     view=await ContextManager().project_tool_result(result)
     assert view['call_id']=='identity' and view['tool_name']=='lookup'
 
-
-async def test_nested_managed_models_do_not_multiply_overflow_retries():
-    backend=AsyncMock()
-    backend.generate.side_effect=ModelContextOverflowError('overflow')
-    manager=ContextManager()
-    outer=ContextManagedModel(ContextManagedModel(backend,manager),manager)
-    with pytest.raises(ModelContextOverflowError):
-        await outer.generate((UserMessage('goal'),),())
-    assert backend.generate.await_count==2
