@@ -178,12 +178,18 @@ async def test_a_tool_copied_into_another_registry_still_passes_the_hooks():
     assert not isinstance(again.get('write_file')._tool, HookedTool)
 
 
-async def test_without_hooks_the_wrappers_only_pass_calls_through():
+async def test_an_explicit_empty_hookset_passes_calls_straight_through():
+    from app.agent.hooks import EMPTY, current_hooks, installed_hooks
     echo = Echo()
-    assert (await HookedTool(echo).invoke({})).content == 'written' and echo.calls == 1
     inner = AsyncMock()
     inner.generate.return_value = ModelTurn('ok')
-    assert (await HookedModel(inner).generate((UserMessage('hi'),), ())).content == 'ok'
+    with using_hooks(EMPTY):
+        assert installed_hooks() is EMPTY and current_hooks() is EMPTY
+        assert (await HookedTool(echo).invoke({})).content == 'written' and echo.calls == 1
+        messages, tools = (UserMessage('hi'),), ()
+        assert (await HookedModel(inner).generate(messages, tools)).content == 'ok'
+    inner.generate.assert_awaited_once_with(messages, tools)
+    assert installed_hooks() is None and current_hooks() is EMPTY
 
 
 async def test_model_calls_are_labelled_step_and_wrap_up():
@@ -245,3 +251,78 @@ async def test_passing_run_gate_uses_only_this_runs_host_evidence(required, revi
     decision = await gate.check({'writes': writes, 'passing_run_after_last_write': passed,
                                  'review_after_last_write': approved})
     assert decision.allow is allowed
+
+
+@pytest.mark.parametrize('shown_only', [False, True])
+async def test_uninstalled_hooks_refuse_model_without_logging_messages(caplog, shown_only):
+    from app.agent.hooks import EMPTY, current_hooks, installed_hooks, model_purpose
+    inner = AsyncMock()
+    assert installed_hooks() is None and current_hooks() is EMPTY
+    tools = ToolsShownOnly(()) if shown_only else ()
+    purpose = 'wrap_up' if shown_only else 'route'
+    with caplog.at_level('WARNING', logger='app.agent.hooks'), model_purpose('route'):
+        with pytest.raises(PolicyDeniedError) as caught:
+            await HookedModel(inner).generate((UserMessage('PRIVATE-MESSAGE'),), tools)
+    inner.generate.assert_not_awaited()
+    assert caught.value.hook == 'hooks_not_installed'
+    reason = caught.value.reason
+    for fragment in (purpose, 'no hooks are installed for this run', 'approval gates',
+                     'conversation token cap', 'audit log', 'RagAgentService', 'using_hooks(...)', 'EMPTY'):
+        assert fragment in reason
+    assert len(caplog.records) == 1 and reason in caplog.text
+    assert 'PRIVATE-MESSAGE' not in caplog.text
+
+
+async def test_uninstalled_hooks_refuse_tool_without_logging_arguments(caplog):
+    from types import SimpleNamespace
+    inner = SimpleNamespace(definition=ToolDefinition('write_file', 'write', {}), invoke=AsyncMock())
+    with caplog.at_level('WARNING', logger='app.agent.hooks'):
+        output = await HookedTool(inner).invoke({'path': 'PRIVATE-PATH', 'content': 'PRIVATE-CONTENT'})
+    inner.invoke.assert_not_awaited()
+    assert output.success is False and output.content == ''
+    assert output.error.startswith('not executed: ')
+    for fragment in ('write_file', 'no hooks are installed for this run', 'approval gates',
+                     'conversation token cap', 'audit log', 'RagAgentService', 'using_hooks(...)', 'EMPTY'):
+        assert fragment in output.error
+    assert len(caplog.records) == 1 and output.error.removeprefix('not executed: ') in caplog.text
+    assert 'PRIVATE-PATH' not in caplog.text and 'PRIVATE-CONTENT' not in caplog.text
+
+
+@pytest.mark.parametrize('with_callback', [False, True])
+async def test_loop_run_without_hooks_fails_with_detailed_hooks_reason(with_callback):
+    from app.agent.agent_loop import AgentLoopRunner, LOOP_STEP
+    from app.agent.loop_run import LoopRun
+    from app.agent.runtime import FAILURE_MESSAGES
+    from app.models.run_state import RunMemory, RunState
+    inner = AsyncMock()
+    runtime = LoopRun(RunMemory(RunState('user', 'answer')), HookedModel(inner), ToolRegistry(),
+                      runner_factory=lambda deps: AgentLoopRunner(deps.model, deps.tool_registry),
+                      step_description=LOOP_STEP)
+    events = []
+    result = await runtime.run(on_event=events.append if with_callback else None)
+    assert [e['type'] for e in events] == (['plan', 'step'] if with_callback else [])
+    assert result.status is TaskStatus.FAILED and result.failure_kind == 'hooks'
+    for fragment in ('step', 'no hooks are installed for this run', 'RagAgentService', 'using_hooks(...)', 'EMPTY'):
+        assert fragment in result.content
+    assert result.user_message == FAILURE_MESSAGES['hooks']
+    inner.generate.assert_not_awaited()
+
+
+async def test_service_without_hook_configuration_installs_hooks(tmp_path, monkeypatch):
+    from app.config import config
+    from app.agent.hooks import EMPTY, installed_hooks
+    monkeypatch.setattr(config, 'hooks_audit', False)
+    monkeypatch.setattr(config, 'conversation_max_tokens', None)
+    seen = []
+    async def generate(messages, tools):
+        seen.append(installed_hooks())
+        return TIME_CALL if len(seen) == 1 else outcome('done')
+    model = AsyncMock()
+    model.generate.side_effect = generate
+    async with RagAgentService(model=model, mcp_servers=(), include_knowledge=False,
+                               memory_directory=tmp_path) as svc:
+        result = await svc.query_result('What time is it?', 's')
+    assert result.status is TaskStatus.COMPLETED and result.content == 'done'
+    assert seen == [EMPTY, EMPTY]
+    assert result.step_log[0]['tools'][0]['success'] is True
+    assert installed_hooks() is None

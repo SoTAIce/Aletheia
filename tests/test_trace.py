@@ -165,10 +165,11 @@ async def test_a_scope_passes_exceptions_and_cancellation_through_unchanged():
     assert [e['error'] for e in recorder.of('scope_end')] == ['KeyError', 'CancelledError']
 
 
-async def test_without_hooks_nothing_is_emitted_and_calls_pass_straight_through():
+async def test_an_explicit_empty_hookset_emits_nothing_and_passes_calls_straight_through():
+    from app.agent.hooks import EMPTY
     inner = AsyncMock()
     inner.generate.return_value = ModelTurn('x')
-    with trace_scope('step', index=1) as span, root_span() as task:
+    with using_hooks(EMPTY), trace_scope('step', index=1) as span, root_span() as task:
         assert span is None and task is None
         assert (await HookedModel(inner).generate(MESSAGES, ())).content == 'x'
     inner.generate.assert_awaited_once_with(MESSAGES, ())

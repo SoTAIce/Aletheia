@@ -367,6 +367,11 @@ kbd { font: 11.5px/1 var(--mono); padding: 3px 6px; border: 1px solid var(--rule
 .approval-title { font-size: 13px; color: var(--warn); margin-bottom: 4px; }
 .approval.answered .approval-title { color: var(--muted); }
 .approval-what { font-size: 14.5px; overflow-wrap: anywhere; }
+.approval-details { min-width: 0; margin-top: 8px; }
+.approval-label { font-size: 12.5px; color: var(--ink-2); margin-top: 8px; }
+.approval-preview { margin: 4px 0; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 6px; background: var(--code); color: var(--ink); font: 12.5px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.approval-preview.expanded { max-height: 320px; overflow: auto; }
+.approval-toggle { font-size: 12.5px; }
 .approval-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
 .approval-actions button:disabled { opacity: .5; cursor: default; }
 .approval-result { font-size: 13.5px; color: var(--muted); }

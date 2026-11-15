@@ -60,6 +60,7 @@ async def test_an_allowed_call_runs_after_the_user_answers(tmp_path):
     kinds = [e['type'] for e in events]
     assert kinds.index('approval_required') < kinds.index('approval_resolved') < kinds.index('step')
     asked = next(e for e in events if e['type'] == 'approval_required')
+    assert asked['args_preview'] == {}
     assert asked['tool'] == CLOCK and asked['args_summary'] == {} and asked['timeout_seconds'] == 300
     assert next(e for e in events if e['type'] == 'approval_resolved')['decision'] == 'allow'
     assert tools(events) == [(CLOCK, True)] and events[-1]['content'] == 'it is noon'
@@ -154,3 +155,19 @@ async def test_deadlines_and_the_time_budget_move_together():
                 assert deadline.when() == pytest.approx(before + 5)
         extend_deadlines(100)                       # nothing registered any more: only the meter moves
     assert meter.started == pytest.approx(started + 105)
+
+
+async def test_approval_event_serves_nonempty_preview_to_authenticated_page(tmp_path):
+    turn = ModelTurn(tool_calls=(ToolCall('c1', CLOCK, {'timezone': 'UTC'}),))
+    svc = service(tmp_path, [turn, outcome('done')])
+    async with api(svc, **approvals_on()) as web:
+        await web.send('s', 'check the time', 'r')
+        approval_id = await pending(web, 'r')
+        # In-process ASGI requests use the same authenticated endpoint as the page.
+        refused = await web.client.get('/api/runs/r/events', headers={'Authorization': 'Bearer wrong'})
+        assert refused.status_code == 401
+        await answer(web, 'r', approval_id, 'allow')
+        events = await web.events('r')
+    asked = next(e for e in events if e['type'] == 'approval_required')
+    assert asked['args_summary'] == {'timezone': {'chars': 3}}
+    assert asked['args_preview'] == {'timezone': {'text': 'UTC', 'chars': 3, 'omitted_chars': 0}}

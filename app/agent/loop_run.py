@@ -6,7 +6,7 @@ plan/step events and trace spans. Runners only return output; LoopRun commits it
 """
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from datetime import datetime, UTC
 import math
@@ -139,14 +139,16 @@ class LoopRun:
     async def run(self, *, on_event=None) -> AgentRunResult:
         """on_event, if given, is called synchronously with host-authored progress
         records ('plan', 'step'); it must not block, and its errors never affect the task."""
-        from app.agent.hooks import CallbackHook, TASK_END, TASK_START, current_hooks, root_span, using_hooks
+        from app.agent.hooks import EMPTY, CallbackHook, TASK_END, TASK_START, installed_hooks, root_span, using_hooks
         async with self._lock:
             # The callback becomes one observer among the run's hooks (D-059).
-            hooks = current_hooks()
-            if on_event is not None:
+            installed = installed_hooks()
+            hooks = installed or EMPTY
+            if on_event is not None and installed is not None:
                 hooks = hooks.with_observers(CallbackHook(on_event))
             # The run is the root span of its trace (D-073).
-            with using_hooks(hooks), root_span() as span_id:
+            # A progress callback must not turn missing run hooks into an authorized installation.
+            with using_hooks(hooks) if installed is not None else nullcontext(), root_span() as span_id:
                 span = {'span_id': span_id, 'parent_id': None}
                 self._on_event = on_event
                 hooks.emit({'type': TASK_START, 'task_id': self.memory.task_state.task_id, **span})
@@ -167,7 +169,9 @@ class LoopRun:
                 return result
 
     def _emit(self, event: dict) -> None:
-        from app.agent.hooks import current_hooks
+        from app.agent.hooks import CallbackHook, HookSet, current_hooks, installed_hooks
+        if installed_hooks() is None and self._on_event is not None:
+            HookSet((CallbackHook(self._on_event),)).emit(event)
         current_hooks().emit(event)          # observer errors are logged by type only (D-045, D-059)
 
     async def _run_locked(self):
@@ -250,7 +254,8 @@ class LoopRun:
                         return self._fail(spent, 'budget')
                     denied = _policy_denial(exc)
                     if denied is not None:
-                        return self._fail(f'Model call denied by {denied.hook}: {denied.reason}', 'policy')
+                        return self._fail(f'Model call denied by {denied.hook}: {denied.reason}',
+                                          'hooks' if denied.hook == 'hooks_not_installed' else 'policy')
                     # Planner validation messages are host-authored (see bench _SAFE_FAILURE).
                     return self._fail(f"Planning failed: {type(exc).__name__}: {exc}", 'planning')
             if content is not None and self._steps and not needs_plan:
@@ -290,7 +295,8 @@ class LoopRun:
                 # Replanning would repeat completed tools without fixing either.
                 denied = _policy_denial(exc)
                 if denied is not None:
-                    return self._fail(f'Model call denied by {denied.hook}: {denied.reason}', 'policy')
+                    return self._fail(f'Model call denied by {denied.hook}: {denied.reason}',
+                                          'hooks' if denied.hook == 'hooks_not_installed' else 'policy')
                 kind = 'format' if isinstance(exc, StepFormatError) else 'model'
                 return self._fail(f"{type(exc).__name__}: {exc.message}", kind)
             except StepToolError as exc:

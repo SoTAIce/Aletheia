@@ -10,7 +10,8 @@ The hooks of a run travel in a context variable (as the run meter does), so the 
 around tool objects (``HookedTool``) and the base model (``HookedModel``) reach them without
 passing them through every function; single mode, team members, planning and wrap-up calls
 all pass through the same wrappers. Safety checks stay inside the tools: hooks can only add
-restrictions. Events never carry tool output, model text, file contents or exception text.
+restrictions. Observer events never carry tool output, model text, file contents or exception
+text. Tool gates additionally receive a bounded argument preview for approval.
 """
 
 from __future__ import annotations
@@ -140,12 +141,19 @@ def _name(hook) -> str:
 
 
 EMPTY = HookSet()
-_current: ContextVar[HookSet] = ContextVar('aletheia_hooks', default=EMPTY)
+_NOT_INSTALLED = object()
+_current: ContextVar[HookSet | object] = ContextVar('aletheia_hooks', default=_NOT_INSTALLED)
 _purpose: ContextVar[str] = ContextVar('aletheia_model_purpose', default='step')
 
 
 def current_hooks() -> HookSet:
-    return _current.get()
+    return installed_hooks() or EMPTY
+
+
+def installed_hooks() -> HookSet | None:
+    """Return the installed hooks, distinguishing an explicit EMPTY from no installation."""
+    hooks = _current.get()
+    return hooks if isinstance(hooks, HookSet) else None
 
 
 @contextmanager
@@ -316,6 +324,68 @@ def summarize_arguments(arguments: dict) -> dict:
     return summary
 
 
+def preview_arguments(tool_name, arguments) -> dict:
+    """Bounded, host-made text for approval gates only; never send this to observers.
+
+    Python args report characters dropped both within shown items and in omitted items.
+    Unexpected values use the same metadata summaries as observer arguments.
+    """
+    if not isinstance(arguments, dict):
+        return {}
+    # Read built-in containers directly: odd subclasses must not run custom accessors.
+    arguments = {key: value for key, value in dict.items(arguments) if type(key) is str}
+    tool_name = tool_name if type(tool_name) is str else ''
+
+    def text(value, limit):
+        size = str.__len__(value)
+        shown = str.__getitem__(value, slice(None, limit))
+        return {'text': shown, 'chars': size, 'omitted_chars': size - len(shown)}
+
+    def summary(key, value):
+        try:
+            return summarize_arguments({key: value})[key]
+        except Exception:
+            return {'type': type(value).__name__}
+
+    def location(key, value):
+        if isinstance(value, str):
+            bounded = text(value, 2000)
+            return bounded['text'] if not bounded['omitted_chars'] else bounded
+        return summary(key, value)
+
+    keys = {'write_file': ('path', 'overwrite', 'content'),
+            'run_python': ('path', 'args'), 'run_tests': ('path',)}
+    preview = {}
+    for key in keys.get(tool_name, arguments):
+        if key not in arguments:
+            continue
+        value = arguments[key]
+        if key == 'path' and tool_name in keys:
+            preview[key] = location(key, value)
+        elif tool_name == 'write_file' and key == 'content' and isinstance(value, str):
+            preview[key] = text(value, 20000)
+        elif tool_name == 'run_python' and key == 'args' and type(value) in (list, tuple):
+            items = [text(item, 200)['text'] if isinstance(item, str) else summary('', item)
+                     for item in value[:16]]
+            total_chars = sum(str.__len__(item) for item in value if isinstance(item, str))
+            shown_chars = sum(len(item) for item in items if isinstance(item, str))
+            preview[key] = {'items': items, 'total_items': len(value),
+                            'omitted_items': max(0, len(value) - 16),
+                            'omitted_chars': total_chars - shown_chars}
+        elif isinstance(value, str):
+            preview[key] = text(value, 2000)
+        else:
+            preview[key] = summary(key, value)
+    return preview
+
+
+def _not_installed_reason(call: str) -> str:
+    return (f'Refused {call}: no hooks are installed for this run, so approval gates, '
+            'the conversation token cap and the audit log cannot check this call. '
+            'Run tasks through RagAgentService, or wrap direct calls in using_hooks(...); '
+            'install EMPTY to run without hooks on purpose.')
+
+
 class HookedTool:
     """A tool object whose calls pass the run's hooks. Wrapping the object, not a registry,
     keeps team members (who copy tool objects into their own registries) covered."""
@@ -328,7 +398,11 @@ class HookedTool:
         return getattr(self._tool, name)
 
     async def invoke(self, arguments: dict) -> ToolOutput:
-        hooks = current_hooks()
+        hooks = installed_hooks()
+        if hooks is None:
+            reason = _not_installed_reason(f'tool {self.definition.name!r}')
+            logger.warning('%s', reason)
+            return ToolOutput(False, '', error=f'not executed: {reason}')
         if not hooks.observers and not hooks.gates:
             return await self._tool.invoke(arguments)
         from app.agent.side_effects import SIDE_EFFECT_TOOLS
@@ -336,8 +410,10 @@ class HookedTool:
         base = {'tool': name, 'call_id': current_call_id(), 'side_effect': name in SIDE_EFFECT_TOOLS,
                 'span_id': new_span_id(), 'parent_id': _span.get()}
         hooks.emit({'type': BEFORE_TOOL, **base, 'args_summary': summarize_arguments(arguments)})
+        # Gate-then-invoke relies on sequential tool calls; recheck gates if calls ever run in parallel.
         decision, denied_by = await hooks.gate({'type': BEFORE_TOOL, **base,
-                                                'args_summary': summarize_arguments(arguments)})
+                                                'args_summary': summarize_arguments(arguments),
+                                                'args_preview': preview_arguments(name, arguments)})
         if not decision.allow:
             hooks.emit({'type': AFTER_TOOL, **base, 'success': False, 'chars': 0, 'seconds': 0.0,
                         'denied_by': denied_by})
@@ -375,7 +451,12 @@ class HookedModel:
         return getattr(self._model, name)
 
     async def generate(self, messages, tools):
-        hooks = current_hooks()
+        hooks = installed_hooks()
+        if hooks is None:
+            purpose = 'wrap_up' if isinstance(tools, ToolsShownOnly) else _purpose.get()
+            reason = _not_installed_reason(f'model call for purpose {purpose!r}')
+            logger.warning('%s', reason)
+            raise PolicyDeniedError('hooks_not_installed', reason)
         if not hooks.observers and not hooks.gates:
             return await self._model.generate(messages, tools)
         purpose = 'wrap_up' if isinstance(tools, ToolsShownOnly) else _purpose.get()

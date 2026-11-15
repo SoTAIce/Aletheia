@@ -280,8 +280,8 @@ class RagAgentService:
         web page's approval gate, D-061), plus the audit log and the conversation token cap when
         configured (D-060). Returns (hooks, audit or None)."""
         from app.agent.builtin_hooks import AuditHook, ConversationTokenCap
-        from app.agent.hooks import HookSet, current_hooks
-        hooks = self._hooks if self._hooks is not None else current_hooks()
+        from app.agent.hooks import EMPTY, HookSet, installed_hooks
+        hooks = self._hooks if self._hooks is not None else installed_hooks() or EMPTY
         if extra is not None:
             hooks = HookSet((*hooks.observers, *extra.observers), (*hooks.gates, *extra.gates),
                             gate_timeout=hooks.gate_timeout)

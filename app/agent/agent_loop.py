@@ -200,7 +200,7 @@ class AgentLoopRunner:
     def __init__(self, model, tool_registry: ToolRegistry, options: LoopOptions | None = None,
                  context_manager=None, resume_store: LoopResumeStore | None = None, *,
                  host_tools=(), allow_ask_user=True, instructions=None, finish_state=None,
-                 finish_hooks=True):
+                 finish_hooks=True, finish_gates=()):
         if not callable(getattr(model, 'generate', None)):
             raise TypeError('model must provide generate()')
         if not isinstance(tool_registry, ToolRegistry):
@@ -215,6 +215,9 @@ class AgentLoopRunner:
             raise ValueError('host tools must have unique non-control names')
         self._allow_ask_user, self._instructions = allow_ask_user, instructions
         self._finish_state, self._finish_hooks = finish_state, finish_hooks
+        # Gates the caller owns, checked at finish even when no run hooks are installed (the team's
+        # completion gate must not depend on installation; hooks-hardening H-1).
+        self._finish_gates = tuple(finish_gates)
         self.format_repair_count = 0
         self.todo: list[dict] = []
         self.resumed = False
@@ -418,8 +421,10 @@ class AgentLoopRunner:
                 messages.append(ToolMessage(result.call_id, json.dumps(view, ensure_ascii=False)))
 
     async def _before_finish(self, context):
-        from app.agent.hooks import ALLOW, BEFORE_FINISH, current_hooks, current_span
+        from app.agent.hooks import ALLOW, BEFORE_FINISH, HookSet, current_hooks, current_span
         hooks = current_hooks()
+        if self._finish_gates:
+            hooks = HookSet(hooks.observers, (*hooks.gates, *self._finish_gates), gate_timeout=hooks.gate_timeout)
         if not self._finish_hooks or (self._finish_state is None and
                 not any(BEFORE_FINISH in g.events for g in hooks.gates)):
             return ALLOW

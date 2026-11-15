@@ -24,9 +24,68 @@ function approvalText(event) {
   const action = APPROVAL_ACTIONS[event.tool] || `调用 ${event.tool}`;
   const details = [];
   if (typeof args.path === 'string') details.push(args.path);
-  const size = args.content?.chars ?? args.code?.chars;
+  const size = args.content?.chars;
   if (typeof size === 'number') details.push(`${size.toLocaleString('zh-CN')} 字符`);
   return details.length ? `${action}：${details.join('，')}` : action;
+}
+
+// Preview text stays in text nodes, including code, paths and command-line arguments.
+function approvalPreviewText(parent, text, chars, omittedChars = 0) {
+  const points = Array.from(text);
+  const shortened = points.slice(0, 800).join('');
+  let lines = 0, cut = shortened.length;
+  for (const match of shortened.matchAll(/\r\n|\r|\n/g)) {
+    if (++lines === 12) { cut = match.index; break; }
+  }
+  const collapsed = shortened.slice(0, cut);
+  const box = el('pre', 'approval-preview', collapsed);
+  parent.append(box);
+  if (collapsed === text && !omittedChars) return;
+  const count = (n) => (typeof n === 'number' ? n : 0).toLocaleString('zh-CN');
+  const label = '展开全部（共 ' + count(chars) + ' 字符）';
+  const toggle = el('button', 'link-btn approval-toggle', label);
+  toggle.type = 'button';
+  toggle.setAttribute('aria-expanded', 'false');
+  let expanded = false;
+  toggle.addEventListener('click', () => {
+    expanded = !expanded;
+    box.textContent = expanded ? text + (omittedChars ? '\n还有 ' + count(omittedChars) + ' 字符未显示' : '') : collapsed;
+    box.classList.toggle('expanded', expanded);
+    toggle.textContent = expanded ? '收起' : label;
+    toggle.setAttribute('aria-expanded', String(expanded));
+  });
+  parent.append(toggle);
+}
+
+function appendApprovalPreview(card, event) {
+  const preview = event.args_preview;
+  if (!preview || typeof preview !== 'object') return;
+  const section = el('div', 'approval-details');
+  const show = (label, value) => {
+    section.append(el('div', 'approval-label', label));
+    if (value && typeof value.text === 'string') {
+      approvalPreviewText(section, value.text, value.chars, value.omitted_chars);
+    } else {
+      const text = typeof value === 'string' ? value : JSON.stringify(value);
+      approvalPreviewText(section, text ?? '', Array.from(text ?? '').length);
+    }
+  };
+  if (Object.hasOwn(preview, 'path')) show('路径', preview.path);
+  if (event.tool === 'write_file') {
+    if (Object.hasOwn(preview, 'overwrite')) show('覆盖已有文件', preview.overwrite === true ? '是' : '否');
+    if (Object.hasOwn(preview, 'content')) show('写入内容', preview.content);
+  } else if (event.tool === 'run_python') {
+    if (Object.hasOwn(preview, 'args')) {
+      const args = preview.args;
+      show('参数', Array.isArray(args?.items) ? args.items : args);
+      if (args?.omitted_items || args?.omitted_chars) {
+        section.append(el('div', 'muted', '参数预览省略 ' + (args.omitted_items || 0) + ' 项、' + (args.omitted_chars || 0) + ' 字符'));
+      }
+    }
+  } else if (event.tool !== 'run_tests') {
+    for (const [key, value] of Object.entries(preview)) if (key !== 'path') show(key, value);
+  }
+  if (section.childNodes.length) card.append(section);
 }
 
 const EXAMPLES = [
@@ -1039,6 +1098,7 @@ class LiveView {
     const card = el('div', 'approval');
     card.append(el('div', 'approval-title', '这一步要执行有副作用的操作，需要你确认'),
                 el('div', 'approval-what', approvalText(event)));
+    appendApprovalPreview(card, event);
     const actions = el('div', 'approval-actions');
     const choices = [['allow', '允许', 'pill pill-sm'], ['deny', '拒绝', 'ghost-btn'],
                      ['allow_all', '本次运行都允许', 'link-btn']];

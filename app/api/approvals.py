@@ -20,6 +20,7 @@ class ApprovalGate:
     No answer within timeout_seconds is a denial; cancelling the run cancels the wait.
     """
 
+    # Gate-then-invoke relies on sequential tool calls; recheck gates if calls ever run in parallel.
     name = 'approval'
     events = frozenset({BEFORE_TOOL})
 
@@ -41,7 +42,8 @@ class ApprovalGate:
             future = asyncio.get_running_loop().create_future()
             self._run.approvals[approval_id] = future
             self._run.add({'type': 'approval_required', 'approval_id': approval_id, 'tool': event['tool'],
-                           'args_summary': event.get('args_summary', {}), 'timeout_seconds': self._wait})
+                           'args_summary': event.get('args_summary', {}),
+                           'args_preview': event.get('args_preview', {}), 'timeout_seconds': self._wait})
             # Move the deadlines out by the longest wait first, so a step deadline cannot fire
             # while the person decides; afterwards take back the part of it that was not used.
             started = time.monotonic()

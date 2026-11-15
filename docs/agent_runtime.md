@@ -60,6 +60,7 @@ Goal -> RunMemory(RunState + Resources)
 | repeated empty replies | `FAILED`, `format` |
 | provider error or request timeout | `FAILED`, `model` |
 | a gate refused a model or tool call | `FAILED`, `policy` |
+| no hooks installed for a model or tool call | `FAILED`, `hooks` |
 | the team's own time budget, or overflow recovery interrupted | `FAILED`, `timeout` |
 | token or time budget spent | `FAILED`, `budget` |
 | runner contract errors and other unexpected exceptions | `FAILED`, `internal` |

@@ -8,6 +8,7 @@ import pytest
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 
+from app.agent.hooks import EMPTY
 from app.agent.openai_compatible_tool_calling_model import OpenAICompatibleToolCallingModel
 from app.agent.step_models import ToolDefinition, ToolsShownOnly, UserMessage
 from app.config import config
@@ -90,7 +91,7 @@ async def test_the_service_passes_the_key_to_the_separate_endpoint(monkeypatch):
         monkeypatch.setattr(config, name, value)
     monkeypatch.setattr(module, 'AsyncOpenAI', lambda **kw: AsyncOpenAI(
         **kw, http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond))))
-    async with RagAgentService(mcp_servers=(), include_knowledge=False)._models('aletheia-k') as model:
+    async with RagAgentService(mcp_servers=(), include_knowledge=False)._models('aletheia-k', hooks=EMPTY) as model:
         await model.generate((UserMessage('hi'),), ())
     assert seen == ['aletheia-k']
 

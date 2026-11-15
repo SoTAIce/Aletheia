@@ -8,6 +8,7 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 from pydantic import ValidationError
 
+from app.agent.hooks import EMPTY
 from app.agent.step_models import UserMessage
 from app.config import Settings, config
 from app.services.rag_agent_service import RagAgentService
@@ -63,6 +64,6 @@ async def test_the_service_sends_agent_requests_to_the_separate_endpoint(monkeyp
         monkeypatch.setattr(config, name, value)
     monkeypatch.setattr(module, 'AsyncOpenAI', lambda **kw: AsyncOpenAI(
         **kw, http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond))))
-    async with RagAgentService(mcp_servers=(), include_knowledge=False)._models() as model:
+    async with RagAgentService(mcp_servers=(), include_knowledge=False)._models(hooks=EMPTY) as model:
         assert (await model.generate((UserMessage('hi'),), ())).content == 'ok'
     assert seen == [('https://relay.test/v1/chat/completions', 'Bearer relay-key', 'gpt-4o')]

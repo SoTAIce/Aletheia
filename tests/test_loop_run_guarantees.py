@@ -220,5 +220,6 @@ async def test_cancellation_with_a_real_mcp_session_closes_the_tools(tmp_path):
         with pytest.raises(asyncio.CancelledError):
             await runtime.run()
     assert memory.task_state.status is TaskStatus.FAILED
-    with pytest.raises(RuntimeError, match='closed'):
+    from app.agent.hooks import EMPTY, using_hooks
+    with using_hooks(EMPTY), pytest.raises(RuntimeError, match='closed'):
         await registry.invoke(ToolCall('late', 'read_file', {'path': 'report.txt'}))

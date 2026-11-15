@@ -359,3 +359,42 @@ async def test_host_finish_cannot_bypass_another_finish_gate():
         with pytest.raises(TeamError, match='team acceptance gate not met'):
             await runner.run(context)
     assert model.generate.await_count == 2
+
+
+async def test_tool_batch_is_sequential_and_gates_each_call_just_before_invocation():
+    import asyncio
+    from app.agent.hooks import ALLOW, HookedToolRegistry
+    events = []
+    first_started, finish_first = asyncio.Event(), asyncio.Event()
+
+    async def invoke(arguments):
+        part = arguments['part']
+        events.append('invoke' + part)
+        if part == '1':
+            first_started.set()
+            await finish_first.wait()
+            events.append('finished1')
+        return ToolOutput(True, 'read')
+
+    async def check(event):
+        events.append('gate' + event['call_id'])
+        return ALLOW
+
+    turns = [ModelTurn(tool_calls=(ToolCall('1', 'read', {'part': '1'}),
+                                  ToolCall('2', 'read', {'part': '2'}))), text('done')]
+    runner, model, read, context = setup(turns, invoke=invoke)
+    registry = HookedToolRegistry()
+    registry.register(read)
+    runner = AgentLoopRunner(model, registry)
+    gate = SimpleNamespace(name='sequence', events={'before_tool'}, check=check)
+    with using_hooks(HookSet(gates=(gate,))):
+        task = asyncio.create_task(runner.run(context))
+        try:
+            await asyncio.wait_for(first_started.wait(), 1)
+            await asyncio.sleep(0)
+            assert events == ['gate1', 'invoke1']
+        finally:
+            finish_first.set()
+            output = await asyncio.wait_for(task, 1)
+    assert output.content == 'done'
+    assert events == ['gate1', 'invoke1', 'finished1', 'gate2', 'invoke2']

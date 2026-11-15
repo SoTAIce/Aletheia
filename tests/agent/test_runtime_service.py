@@ -7,6 +7,7 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletion
 import pytest
 
+from app.agent.hooks import EMPTY
 from app.agent.openai_compatible_tool_calling_model import OpenAICompatibleToolCallingModel
 from app.agent.step_models import ModelTurn, UserMessage
 from app.config import config
@@ -31,7 +32,7 @@ async def test_configured_timeout_reaches_provider_and_runtime(monkeypatch):
     service = RagAgentService(mcp_servers=(), include_knowledge=False)
     assert service._limits["step_timeout_seconds"] == 240.0
     assert "planning_timeout_seconds" not in service._limits    # plan mode went in stage 4c
-    async with service._models() as model:
+    async with service._models(hooks=EMPTY) as model:
         turn = await model.generate((UserMessage("Verify timeout configuration"),), ())
         assert turn.content == "Verified"
     override = RagAgentService(step_timeout_seconds=5)

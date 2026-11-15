@@ -3,12 +3,13 @@ import asyncio
 import json
 import math
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 
 from app.agent.agent_loop import AgentLoopRunner, HostTool, HostToolResult, LoopOptions
 from app.agent.agent_loop import RUNNER_ID as LOOP_RUNNER_ID
 from app.agent.builtin_hooks import PassingRunGate
-from app.agent.hooks import HookSet, current_hooks, pausable_deadline, trace_scope, using_hooks
+from app.agent.hooks import HookSet, current_hooks, installed_hooks, pausable_deadline, trace_scope, using_hooks
 from app.agent.run_meter import current_meter
 from app.agent.step_models import ToolDefinition
 from app.agent.step_runner import StepRunError
@@ -341,8 +342,12 @@ class DelegatingLoopRunner:
         run = _Run()
         self.format_repair_count = 0
         gate = PassingRunGate(require_passing_run=self.options.require_passing_run, review=self.options.review)
-        parent = current_hooks()
-        hooks = HookSet(parent.observers, (*parent.gates, gate), gate_timeout=parent.gate_timeout)
+        # Adding the team's gate must not turn a run without hooks into an installed one, or the lead's
+        # model and tool calls would pass unchecked instead of being refused (hooks_not_installed).
+        # Without run hooks the lead checks the team's gate itself (finish_gates).
+        parent = installed_hooks()
+        hooks = (HookSet(parent.observers, (*parent.gates, gate), gate_timeout=parent.gate_timeout)
+                 if parent is not None else None)
         tools = []
         for definition in self._lead_tools():
             async def invoke(arguments, name=definition.name):
@@ -357,9 +362,9 @@ class DelegatingLoopRunner:
                           ' Automatic completion requires a successful write in this run; without writes, '
                           'use the reports to answer the active goal yourself in its requested format. '
                           'Reply with the final answer as plain text, without a status envelope.'),
-            finish_state=lambda: self._state(run))
+            finish_state=lambda: self._state(run), finish_gates=(gate,) if hooks is None else ())
         try:
-            with using_hooks(hooks):
+            with using_hooks(hooks) if hooks is not None else nullcontext():
                 async with asyncio.timeout(self.options.timeout_seconds) as deadline:
                     with pausable_deadline(deadline):
                         output = await lead.run(context)

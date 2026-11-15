@@ -788,3 +788,17 @@ async def test_a_binding_invalidated_while_running_discards_its_late_result(late
     with pytest.raises(StaleExecutionError):
         await task
     assert bound.runner_id == 'agent_loop'
+
+
+async def test_team_without_run_hooks_does_not_install_its_gate_as_run_hooks():
+    """Adding the team's completion gate must not turn a run without hooks into an installed one
+    (hooks-hardening H-1): the lead's first model call is refused before reaching the provider."""
+    from app.agent.hooks import HookedModel, installed_hooks
+    from app.agent.runtime import _policy_denial
+    from app.agent.step_runner import StepModelError
+    model = Scripted(delegate('d'), text('done'))
+    assert installed_hooks() is None
+    with pytest.raises(StepModelError) as caught:
+        await DelegatingLoopRunner(HookedModel(model), _registry(*_sandbox_tools()), SANDBOX).run(_context())
+    assert _policy_denial(caught.value).hook == 'hooks_not_installed'   # LoopRun reports it as 'hooks'
+    assert model.requests == []
