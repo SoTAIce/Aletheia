@@ -7,6 +7,11 @@
 - 本分支 `feature_list.json`：`team-delivery-reliability`、`team-failure-diagnosis-001` 两条待办针对的是第 3 阶段已删的 `team_v2`，移到 `retired_backlog` 并写明原因；`team-poc-001` 改为 `deferred`；`hooks-fail-closed-001` 去掉过时的“等 3a 落地”前提。
 - 下一个方向用户还没选：钩子加固（`hooks-fail-closed-001`）、第 5 阶段上下文和限额整理、交付质量（`deliverable-format-001`）。Codex 额度 2026-11-15 恢复。
 
+## 钩子加固方案（2026-11-14，用户“先写钩子加固方案吧”）
+
+- 方案 `docs/hooks_hardening_plan.md`，用户已回答第 7 节；H-1～H-4 已实现（Codex 实现，Claude 审查并补了团队入口一处漏洞），D-080，记录见方案第 8 节。`init.ps1` 1855 项通过、16 项跳过。**未提交**（`main` 工作区改动 + 本分支两个文件）。确认卡片还没在网页上实际看过（要启动网页并真实跑一次写文件任务，需授权）。
+- 实测依据：用临时 pytest 插件统计，真正“没装钩子就放行”的只有 `HookedModel.generate`（5 项测试）和 `HookedTool.invoke`（2 项）；生产路径只有 `RagAgentService._execute` 一处装钩子。
+
 
 ## 新会话从这里开始（2026-11-12，第 4 阶段 4c 已并入 main）
 

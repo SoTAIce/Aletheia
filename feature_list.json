@@ -1660,6 +1660,19 @@
         "Warning only on anomalies, before the Status line."
       ],
       "evidence": "Commits 01e2294 (plan), af3efba (implementation), e39de77 (index) on local main. tests/test_provider_state.py 24; Linux pytest 1785 passed, 22 skipped, 4 failed (Windows-only). Local end-to-end with a fake model server (no live call): warning printed before Status, usage.provider dropped + mismatch, trace viewer shows estimate and ratio. User answers: mark and group only (no reruns), warn only on anomalies, no direct DashScope comparison now, Claude implements. Pushed to origin/main 2026-11-12 (user approved)."
+    },
+    {
+      "id": "hooks-fail-closed-001",
+      "name": "Hooks hardening: refuse without installed hooks, approval preview",
+      "description": "docs/hooks_hardening_plan.md, D-080: HookedModel/HookedTool refuse when no HookSet is installed (failure kind hooks, detailed reason); LoopRun and the team entry never turn a missing installation into an installed one; approval gates get a bounded args_preview (observers never); the approval card shows 12 lines / 800 chars and expands; sequential tool calls pinned by a test.",
+      "status": "done",
+      "dependencies": [],
+      "acceptance": [
+        "init.ps1 PASS",
+        "tests/test_loop_run_equivalence.py unchanged",
+        "preview absent from observer events, audit and trace"
+      ],
+      "evidence": "2026-11-14: init.ps1 1855 passed, 16 skipped. Not committed. Approval card not yet checked in a live web run (needs authorization)."
     }
   ],
   "cleanup_2026_11_04": {
@@ -1702,13 +1715,6 @@
       "priority": 2,
       "next_action": "Steps 1-4 done (single 2/2 with sandbox). Remaining sandbox work only if needed: frontend testing in the image.",
       "source": "docs/sandbox_execution_design.md"
-    },
-    {
-      "id": "hooks-fail-closed-001",
-      "authorized": false,
-      "priority": 2,
-      "next_action": "(1) fail closed when no HookSet is set on paths that offer tools or call the run model (today an unset context is EMPTY = allow all; all entry points set it, background summaries use a separate compressor outside the token cap); (2) decide whether approvals should show what will be written (args_summary carries only lengths, so the user approves blind); (3) note that gate-then-invoke relies on sequential tool calls and must be rechecked if tool calls ever run in parallel. Race review 2026-11-10 found no live race: gates run sequentially per run, ApprovalGate locks and rechecks, one active run per session.",
-      "source": "Claude review 2026-11-10 (user asked about permission checks and racing hooks)"
     }
   ],
   "retired_backlog": [
