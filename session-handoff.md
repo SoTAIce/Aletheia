@@ -7,6 +7,7 @@
 - 5b：任务时限 = 执行器自己的时限，只由 `LoopRun` 执行一次（单一循环 480 秒，新设置 `AGENT_TASK_TIMEOUT_SECONDS`；团队 180 秒）。`AGENT_STEP_TIMEOUT_SECONDS` 不再读取，用户本机 `.env` 的 240 可以删。团队成员新加 120 秒时限。带沙箱时任务时限不够一次调用就启动报错。`python -m app.agent --show-limits` 打印全部限额。
 - 5c：`ContextManager` 成为门面，下分 `ConversationContext`、`ToolResultProjector`、`RequestFitter`（`CompactingManager` 并入），请求逐字节不变（`tests/fixtures/context_split_golden.json`）。
 - 状态：`main` 5 个提交（`8f78aef`～`afc80d0`），用户 2026-11-16 同意后已推送到 `origin/main`。用户选择先不跑调参集。Linux 测试 1862 通过、22 跳过、4 项 Windows 专用失败。`init.ps1` 未在 Windows 上跑。没有真实模型调用；调参集复跑等用户授权。
+- 本机 Windows 验证（2026-11-15）：`afc80d0` 上 `init.ps1` 1869 通过、16 跳过、3 失败（`tests/test_run_limits.py` 三项）；云端 4 项 Windows 专用失败在本机都通过。原因：`pymilvus/settings.py` 导入时 `load_dotenv()` 把仓库 `.env` 写进 `os.environ`，收集阶段有模块导入 pymilvus，之后测试里的 `Settings(_env_file=None)` 仍读到 `AGENT_MODEL_API_KEY`。Codex 修复（Claude 审查，未提交）：`tests/conftest.py` 在收集后和每项测试前删掉启动后才出现、且名字在 `.env` 里的变量（只读名字）；`_settings()` 补 `agent_model_api_key=''`；新增 `tests/test_env_isolation.py`。修复后 `init.ps1` 1873 通过、16 跳过。`--show-limits` 正常（单一循环 480 秒、模型请求 90 秒）；用户 `.env` 里仍有不再读取的 `AGENT_STEP_TIMEOUT_SECONDS`、`AGENT_PLANNING_TIMEOUT_SECONDS`。
 - 云端跑测试要像 `init.ps1` 那样加 `-B` 和 `PYTHONDONTWRITEBYTECODE=1`，否则 `bench/tasks/billing_qa/__pycache__` 会让 `test_task_shape[billing_qa]` 失败。
 
 ## 小收尾（2026-11-14，用户“先做小收尾”）
