@@ -197,3 +197,75 @@ explorer = "cheap"
 - 全部测试（Linux）：1761 通过、22 跳过、4 失败（同上，只在 Windows 上成立）。
 - 没有真实模型评测：预算默认不设上限（命令行和网页都不传 `max_total_tokens`，评测也不设），默认运行不受影响。
 
+
+## 10. 4d-2 实施方案（2026-11-16）
+
+来源：用户 2026-11-16 在“之前定下的其余阶段”里选“现在做 4d-2”。第 7 节第 2～4 问的回答照旧：档案放 `models.toml`；`route`、`member`、`explorer` 三个角色可以单独换模型；预算按令牌。4d-4 真实评测仍然等真有第二个模型。依据是当前 `main`（`66a9adf`，第 5 阶段之后）。由 Claude 实现：这个云端会话里没有 Codex 子代理。
+
+### 10.1 档案文件（`app/models/model_profile.py`、`app/config.py`）
+
+- 新设置 `MODEL_PROFILES_FILE`，默认 `models.toml`。
+  - 留空表示不用档案文件。
+  - 用默认名字而文件不存在：照旧只有 `default` 档案。
+  - 明确设了路径而文件不存在：启动报错，避免把写错的路径悄悄当成“没有文件”。
+- `ModelProfiles`：档案表加角色分配（`main`、`route`、`member`、`explorer`）。`role(name)` 返回档案，`used()` 返回角色实际用到的档案。
+- `load_profiles(path, default)` 用 `tomllib` 读，只认 `[profiles.<名字>]` 和 `[roles]` 两段。
+  - 每个档案必须写 `base_url`、`api_key_env`、`model`（D-050：独立地址不能悄悄用别的密钥）。
+  - 可以不写、取默认档案同名值的：`context_tokens`、`max_output_tokens`、`timeout_seconds`、`temperature`、`json_mode`。
+  - 不继承的：`enable_thinking`（不写就不发）、`prompt_cache_key`（不写就是 `false`）、两个价格（不写就是不估）。这三类属于具体的模型和服务商，从默认档案抄过来会出错，例如给不认识 `enable_thinking` 的服务发这个参数，或者按主模型的价格给便宜模型计价。
+  - `[roles]` 必须有 `main`；其余三个角色不写就用 `main` 的档案。
+- 启动时报错的情况，说明用中文，不带密钥：
+  - 未知的段或字段；
+  - 角色指向不存在的档案；
+  - 缺 `main`；
+  - 字段类型或取值不对；
+  - 角色用到的档案读不到密钥（设置和环境变量都为空）。
+- `Settings.model_profiles()`：有文件就读文件，没有就是只有 `default` 的档案集，四个角色都指向它。每次调用都重新读，和 `agent_model_profile` 一样跟随当前设置。
+- 仓库加 `models.example.toml`；`models.toml` 加进 `.gitignore`。
+- `tests/conftest.py` 在每项测试里把 `MODEL_PROFILES_FILE` 设为空，这样你本机建了 `models.toml` 也不会影响 `init.ps1`。
+
+### 10.2 按角色建模型和接线
+
+- `RagAgentService._base_models` 产出 `RoleModels(main, route, member, explorer)`。
+  - 每个用到的档案建一个模型。地址、密钥和时限都相同的档案共用一个 `AsyncOpenAI` 客户端，都用 `AsyncExitStack` 关闭。
+  - 只有 `default` 时只有一个客户端、一个模型，四个角色是同一个对象，和现在一样。
+  - 测试注入的模型（`self.model`）四个角色都用它。
+- `_models` 给每个不同的模型各套一层 `HookedModel`，同一个模型只套一次。
+- 缓存键：只要用到的档案里有一个支持就算；每个模型是否真的发送，仍由 `profile_model` 按自己的档案决定。
+- `_prepare_task` 的 `ContextManager` 窗口和输出上限改读 `main` 角色的档案；没有文件时就是 `default`，数值不变。
+- 成员的上下文：`member` 或 `explorer` 的档案和 `main` 不同时，按那个档案的窗口和输出上限另建 `ContextManager`，归档和安全余量与主循环相同。和 `main` 相同时传 `None`，也就是照旧共用主循环那个。
+- `step_runner.py` 新增 `RoleModel(model, context_manager=None)`；`RunnerDependencies` 加 `member`、`explorer` 两个可选字段，默认 `None`。
+- `LoopRun.__init__` 和 `rebind` 多收这两个字段，放进每次组装的依赖里。阻塞后续跑会重新组装执行器，所以成员用的是这次运行新开的模型，不会拿到上一次运行已经关闭的客户端。
+- `RunAssembler.run` 多收 `route_model`、`member`、`explorer`：
+  - `_choose_route` 用 `route_model`；
+  - 团队工厂把 `deps.member` 交给 `DelegatingLoopRunner`；
+  - 委派工厂把 `deps.explorer` 交给 `ExploreLoopRunner`。
+- `DelegatingLoopRunner` 和 `ExploreDelegation` 收可选的 `member`；`MemberSpawner` 用它的模型和上下文，没有就用负责人或主循环的。团队负责人和单一循环始终用 `main`。
+
+### 10.3 计量、追踪、评测
+
+- `profile_model` 把档案交给模型；每次请求记账时带上档案（`record_model_call(..., profile=)`）。
+- `RunMeter` 按档案名累计，`snapshot()` 现有字段都不变，新增：
+  - 每条 `calls` 多一个 `profile`（档案名），只有记账时带了档案才有，所以用假模型的测试看到的用量不变；
+  - `by_profile`：`{档案名: {model_calls, prompt_tokens, completion_tokens, cached_prompt_tokens, estimated_cost}}`，有带档案的调用时才出现；
+  - `estimated_cost` 改为各档案按自己的价格计价再相加，任何一个档案没写价格就是 `None`。没带档案的调用（测试里的假模型）照旧按主档案的价格算。只有 `default` 时，结果和现在完全相同。
+- 追踪：模型调用的事件多一个 `profile` 字段（档案名，不是模型原文），`app.agent.trace` 查看器显示“档案 xxx”。
+- 评测：每行的 `calls` 保留 `profile`；用到两个以上档案时，行里加 `by_profile`。
+- 启动检查：命令行和网页后端在建服务之前调用 `config.model_profiles()`，有错就打印 `ModelProfileError: …`，退出码 2。`--show-limits` 多列出每个角色用的档案、模型名和窗口（只有名字和数字，不出现密钥）。
+
+### 10.4 不变的东西
+
+- 没有档案文件时：发给模型的请求逐字节不变；67 个黄金对照文件、`tests/fixtures/context_split_golden.json`、`tests/test_model_profile.py` 里 24 种设置组合的请求对照都不变。
+- 嵌入、知识库查询改写、长期记忆、联网搜索演示不进档案。
+- 网页和命令行不加选模型的入口。
+- 预算仍按令牌计算，4d-3 的每次调用前检查不变。
+
+### 10.5 测试（`tests/test_model_profiles.py`，新建）
+
+- **解析**：最小文件；字段继承和不继承的部分；四类错误各自报错，说明里没有密钥；密钥变量为空时报错；明确设了路径但文件不存在时报错；默认名字不存在时回落到 `default`。
+- **建模型**：两个档案、三个角色的分配下，路由、团队成员、调研成员确实用了各自的模型；地址、密钥和时限相同的档案共用客户端；只有 `default` 时只建一个客户端。
+- **成员上下文**：成员档案窗口小时，成员的 `ContextManager` 按小窗口建；同一档案时共用主循环那个。
+- **续跑**：阻塞后续跑，成员用的是新一次运行的模型。
+- **计量**：两个档案的 `by_profile` 和费用相加；有一个档案缺价格时费用是 `None`；只有 `default` 时快照的费用和现在相同。
+- **评测行和轨迹**：`calls` 带 `profile`；查看器显示档案名。
+- 全部测试照 `init.ps1` 的方式跑。
