@@ -1685,7 +1685,7 @@
         "tests/fixtures/context_split_golden.json recorded before the split, unchanged",
         "init.ps1 PASS on Windows"
       ],
-      "evidence": "2026-11-16 cloud Linux: 1862 passed, 22 skipped, 4 Windows-only failures. init.ps1 not run (no PowerShell). Commits 8f78aef, a477484, 4c8d6f0, 9e55f87, afc80d0 on local main, not pushed. No real model calls; tuning-set rerun waits for authorization."
+      "evidence": "2026-11-16 cloud Linux: 1862 passed, 22 skipped, 4 Windows-only failures. init.ps1 not run (no PowerShell). Commits 8f78aef, a477484, 4c8d6f0, 9e55f87, afc80d0 pushed to origin/main with the user's consent. No real model calls; user chose not to rerun the tuning set now."
     }
   ],
   "cleanup_2026_11_04": {

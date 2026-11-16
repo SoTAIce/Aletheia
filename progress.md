@@ -23,8 +23,8 @@
 - **Goal**：用户“接下来是不是第五阶段了啊”，选“先写第 5 阶段方案”；回答“分层，一个任务时限”“新设置，旧名不再读”“保留，恒为 0”“Claude 直接实现”。
 - **Completed**：方案 `docs/stage5_plan.md`；5a 删 `RunnerLimits` 和规划外壳；5b 每个任务一个时限、团队成员 120 秒时限、沙箱启动检查、`RunLimits` 和 `--show-limits`；5c 拆分 `ContextManager`；D-081、D-082。
 - **Verification**：67 个黄金对照文件不变；拆分前录的 `tests/fixtures/context_split_golden.json` 逐字节相同（改两个阈值各自都会让它失败）；Linux 全部测试 1862 通过、22 跳过、4 失败（Windows 专用）。无真实模型调用。
-- **Commits**：`8f78aef`、`a477484`、`4c8d6f0`、`9e55f87`、`afc80d0`（本地 `main`，未推送）。
-- **Next**：用户决定是否推送；本机拉取后跑 `init.ps1`，可删 `.env` 里已不用的 `AGENT_STEP_TIMEOUT_SECONDS`；要不要跑一次调参集（5b 改了时限）等用户授权。
+- **Commits**：`8f78aef`、`a477484`、`4c8d6f0`、`9e55f87`、`afc80d0`（用户同意后已推送到 `origin/main`）。
+- **Next**：本机拉取后跑 `init.ps1`，可删 `.env` 里已不用的 `AGENT_STEP_TIMEOUT_SECONDS`；调参集复跑用户选择先不跑，下次评测时一起跑。
 
 ### 2026-11-12 — stage4d-001：模型档案（结构）和每次调用前查预算
 

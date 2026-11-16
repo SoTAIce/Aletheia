@@ -6,7 +6,7 @@
 - 5a：删 `RunnerLimits`（没有执行器读取）和 `LoopRun` 的规划外壳，行为按 67 个黄金对照文件不变。
 - 5b：任务时限 = 执行器自己的时限，只由 `LoopRun` 执行一次（单一循环 480 秒，新设置 `AGENT_TASK_TIMEOUT_SECONDS`；团队 180 秒）。`AGENT_STEP_TIMEOUT_SECONDS` 不再读取，用户本机 `.env` 的 240 可以删。团队成员新加 120 秒时限。带沙箱时任务时限不够一次调用就启动报错。`python -m app.agent --show-limits` 打印全部限额。
 - 5c：`ContextManager` 成为门面，下分 `ConversationContext`、`ToolResultProjector`、`RequestFitter`（`CompactingManager` 并入），请求逐字节不变（`tests/fixtures/context_split_golden.json`）。
-- 状态：本地 `main` 5 个提交（`8f78aef`～`afc80d0`），**未推送**。Linux 测试 1862 通过、22 跳过、4 项 Windows 专用失败。`init.ps1` 未在 Windows 上跑。没有真实模型调用；调参集复跑等用户授权。
+- 状态：`main` 5 个提交（`8f78aef`～`afc80d0`），用户 2026-11-16 同意后已推送到 `origin/main`。用户选择先不跑调参集。Linux 测试 1862 通过、22 跳过、4 项 Windows 专用失败。`init.ps1` 未在 Windows 上跑。没有真实模型调用；调参集复跑等用户授权。
 - 云端跑测试要像 `init.ps1` 那样加 `-B` 和 `PYTHONDONTWRITEBYTECODE=1`，否则 `bench/tasks/billing_qa/__pycache__` 会让 `test_task_shape[billing_qa]` 失败。
 
 ## 小收尾（2026-11-14，用户“先做小收尾”）
