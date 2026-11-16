@@ -1,5 +1,15 @@
 # Current Session Handoff — 2026-11-16
 
+## 第 5 阶段本机评测（2026-11-15，用户“只跑单一循环 11 次”）
+
+- 代码 `1050991`（第 5 阶段 + 交付质量）。本机不调模型的检查：`init.ps1` 1876 通过、25 跳过；`--show-limits` 单一循环 480 秒、团队 180 秒、成员 120 秒；沙箱时限检查（团队或任务时限 20 秒时启动报错）正常。Docker Desktop 没开，13 项容器测试没跑；本机没有 Playwright，`todo_html` 用文本检查评分（`html_checks: static`）。
+- 调参集单一循环 11 次（`output/bench-tune-loop-5.json`，答案 `output/answers-tune-loop-5`，轨迹 `output/traces-tune-loop-5`）：**9/11**，429,367 令牌、28 次调用；4c 是 9/11（586,984 / 28），4b 是 9/11（502,898 / 25）。没有超时，最长一题 158 秒。
+- 两道失败都在服务商一侧：
+  - `fix_lru_cache`：前两次调用正常，第三次调用服务商连续返回 `InternalServerError`（重试后仍失败），任务按 `model` 失败；4b、4c 都通过。
+  - `todo_html`：处在 `plain` 档（第一次请求 1,894 提示令牌，平时约 2 万），模型只回了 91 个令牌，交上来的答案是 `{"error":"..."}`，11 项检查过 2 项；4b、4c 也都没过。
+- 按档分组：`heavy` 7/8（唯一失败是上面的 5xx），`plain` 1/2，`unknown` 1/1（`billing_qa` 第一次调用失败后重试通过，用了 120 秒）。11 次全部 `model_mismatch`。
+- 结论：调参集单一循环看不出第 5 阶段的回退；团队（要 Docker）没跑。
+
 ## 交付质量（2026-11-16，用户选“交付质量”）
 
 - 方案和实现记录 `docs/deliverable_quality_plan.md`（第 6 节），D-083。
