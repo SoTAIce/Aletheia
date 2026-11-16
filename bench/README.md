@@ -19,9 +19,9 @@
 
 - 只读问答：答案是一个 JSON 对象，每个键一项检查，并检查根目录没有被改动。
 - 实现和修复：隐藏用例在子进程中执行；修复类的原始文件本身不能通过。
-- `todo_html`：11 项静态检查，交互行为另在浏览器中人工检查。
+- `todo_html`：11 项静态检查；本机有 Node 和它的 Playwright 时，另在无界面浏览器里做 10 项行为检查（`bench/todo_behaviour.cjs`：回车和按钮新增、去空白、删除线、数量、筛选、刷新保留、删除、375px 不横向滚动、无脚本错误），并代替静态的 `enter_key_and_trim`。没有浏览器时只做静态检查；每行的 `html_checks` 写明用的是 `browser` 还是 `static`，两种结果不要混着比（deliverable-quality-001）。
 
-每个任务目录里：`task.json`（目标、公开文件、评分器）、公开文件（复制进 agent 的只读根目录），以及隐藏的评分文件（`checker.py`、`expected.json`、`reference.py`，不会暴露给智能体）。
+每个任务目录里：`task.json`（目标、公开文件、评分器；问答题可以有 `also_accept`，即题意允许两种理解时也算对的答案，并在 `also_accept_reason` 写明原因，目前只有 `side_effects_qa`）、公开文件（复制进 agent 的只读根目录），以及隐藏的评分文件（`checker.py`、`expected.json`、`reference.py`，不会暴露给智能体）。
 默认交付方式是最终答案；`--write` 和 `--sandbox` 改为写文件交付，见下文。
 
 ## 运行

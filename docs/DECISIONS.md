@@ -745,3 +745,20 @@
 - 决策：拆成共用一个 `ContextBudget` 的 `ConversationContext`、`ToolResultProjector`、`RequestFitter`；`CompactingManager` 并入 `RequestFitter.compact`，循环用 `generate(..., compact=True)`。`ContextManager` 保留为门面，调用方不改。
 - 约束：发出的请求逐字节不变，由拆分前录下的 `tests/fixtures/context_split_golden.json` 固定；以后改这几部分时，对照文件的差别是要解释的行为变化，不是重新录制的理由。门面是否删除，等调用方都迁到三个部分后再定。
 - 来源：同 D-081。
+
+## D-083 2026-11-16 交付质量：关闭交付格式待办，修正两处评分问题
+
+- 起因：用户选“交付质量”。查下来，`deliverable-format-001` 的原始问题（规划模式时期答案里混了说明文字、HTML 重复）在单一循环里已经不出现，4c 留出集复跑 13 个答案都只含交付物。剩下的失败来自评分本身：
+  - `todo_html` 的 `enter_key_and_trim` 是纯文本匹配，用 `<form>` 提交实现回车新增的正确页面会被判失败；
+  - `side_effects_qa` 的 `mutates_arguments` 题意有两种理解：`remember(item, history=[])` 在调用者传入 `history` 时确实会修改调用者的对象；
+  - 诊断字段 `answer_is_code_only` 会把以模块常量开头的纯代码误判成“夹了文字”。
+- 决策：
+  - 关闭 `deliverable-format-001`。
+  - `todo_html` 有 Node 版 Playwright 时在无界面浏览器里做 10 项行为检查，代替那项文本匹配；没有时退回文本检查，并在报告里标明。
+  - `side_effects_qa` 题面不改，期望答案在 `task.json` 里也接受带 `remember` 的答案，原因写在任务里。
+  - `extract_code` 先试整段解析。
+- 约束：
+  - 修评分不是调参（D-035）。这里只看了题面、期望和那一次的答案，没有据此改智能体的提示或规则。
+  - 浏览器模式下 `todo_html` 更严格，和以前的调参集结果不能直接比。
+  - 用 Node 而不是 Python 版 Playwright，是因为不自动加依赖；用户本机要用浏览器检查，需要自己装。
+- 来源：用户 2026-11-16 选“交付质量”；回答“关闭待办并修误判”“按行为判定”“两种答案都算对”“Claude 直接实现”。

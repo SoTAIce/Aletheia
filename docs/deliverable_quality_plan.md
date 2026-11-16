@@ -1,6 +1,6 @@
 # 交付质量（方案）
 
-日期：2026-11-16。状态：**用户已回答第 5 节，由 Claude 实现**（deliverable-quality-001，取代待办 `deliverable-format-001`）。
+日期：2026-11-16。状态：**已实现（第 6 节，D-083）**（deliverable-quality-001，取代待办 `deliverable-format-001`）。
 来源：用户 2026-11-16 在第 5 阶段之后选“交付质量”。依据是当前代码 `edb4baf`、4c 留出集复跑的报告和答案（`output/bench-holdout-loop-4c-rerun.json`、`output/answers-holdout-4c-rerun/`，只在云端会话里）、交接分支的评测记录，以及评分器源码。本方案没有调用模型。
 
 ## 1. 查到了什么
@@ -106,3 +106,23 @@ def remember(item, history=[]):
 5. **改完后要不要跑一次调参集**（单一循环，保留答案，真实模型调用）：(a) 跑（到时再单独授权）；(b) 不跑。
 
 **用户回答（2026-11-16）**：第 1 问 (a) 关闭待办并修误判；第 2 问 (a) 按行为判定；第 3 问 (a) 两种答案都算对，题面不改；第 4 问由 Claude 直接实现；第 5 问没有单独回答，改完后再单独请求授权。
+
+## 6. 实现记录（2026-11-16，Claude）
+
+提交 `ae44392`、`f4f9208`（本地 `main`）。全部测试（云端 Linux）：1874 通过、23 跳过、4 失败（Windows 专用的路径断言，同前）。没有调用模型。
+
+- **关闭 `deliverable-format-001`**：证据见 1.1，交接分支的功能表里已移到已退役待办。
+- **`answer_is_code_only` 误判**：没有代码块时，`extract_code` 先试着解析整段，能解析就整段算代码。用 4c 复跑保留的答案重算，13 个答案都判为“只有代码”（原来 `business_days` 是误判）。
+- **`side_effects_qa`**：`task.json` 新增 `also_accept`（`mutates_arguments` 也接受带 `remember` 的答案）和 `also_accept_reason`；`grade_answer_json` 支持备选答案，备选只能对应期望里已有的键。`task.json` 不会复制给智能体，题面没有改。用保留的答案重算，4c 留出集复跑从 12/13 变成 13/13（只是重新评分的记录，不是新的评测）。
+- **`todo_html` 按行为判定**：
+  - `bench/todo_behaviour.cjs` 用 Node 版 Playwright 打开页面，10 项行为检查：回车新增且去掉首尾空格、按钮新增、空白不新增、勾选后有删除线、剩余数量、筛选、刷新后保留、删除、375px 宽没有横向滚动、没有脚本错误。页面从全新临时目录里的文件打开，其他请求一律中止。
+  - 用 Node 而不是 Python 版 Playwright：Python 环境里没有，而本项目不自动加依赖。
+  - 有浏览器时，这 10 项代替原来的文本检查 `enter_key_and_trim`；其余 10 项静态检查（编号、外部资源、`localStorage` 键名等）照旧。没有 Node 或 Playwright 时，退回原来的文本检查；评测每行的 `html_checks` 写明是 `browser` 还是 `static`。
+  - 新增隐藏的参考页面 `bench/tasks/todo_html/reference.html`：它用 `<form>` 提交实现回车新增，完全符合规格，但原来的文本检查判它失败。浏览器模式下 20 项全部通过。
+  - 7 种故意做错的页面（不去空白、回车没反应、不保存、没有删除线、筛选失效、太宽、脚本报错）各自在对应的检查上失败。
+- **注意**：
+  - 有浏览器时，`todo_html` 比以前严格：原来要人工看的几项现在都会自动判定，所以分数和以前的调参集结果不能直接比。
+  - `enter_adds_trimmed` 通过 `localStorage` 里存的文字来判断有没有去空白，所以不保存的页面会同时在这一项和 `persists_after_reload` 上失败。
+  - 你本机 Windows 如果没装 Node 版 Playwright，评测会退回文本检查。要用浏览器检查，需要你自己装（`npm install playwright` 和 `npx playwright install chromium`），我没有动依赖。
+
+**没做的**：第 5 问的调参集评测（真实模型调用），等你单独决定。
