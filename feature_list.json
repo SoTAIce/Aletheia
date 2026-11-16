@@ -1698,7 +1698,7 @@
         "broken variants fail their check",
         "tests/test_bench_tasks.py PASS"
       ],
-      "evidence": "2026-11-16 cloud Linux: 1874 passed, 23 skipped, 4 Windows-only failures. Rescored 4c holdout rerun answers: 13/13 (record only). Commits ae44392, f4f9208, 1050991 on local main. No model calls; a tune-set run waits for authorization."
+      "evidence": "2026-11-16 cloud Linux: 1874 passed, 23 skipped, 4 Windows-only failures. Rescored 4c holdout rerun answers: 13/13 (record only). Commits ae44392, f4f9208, 1050991 pushed. Tune-set run 2026-11-16 (authorized, single loop, 1 run each): 10/11; todo_html 20/20 with html_checks=browser; the only failure config_merge_qa top_keys answered hooks instead of hooks+ (agent reasoning, expected is right). Recorded in commit 66a9adf."
     }
   ],
   "cleanup_2026_11_04": {

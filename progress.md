@@ -23,8 +23,9 @@
 - **Goal**：用户在第 5 阶段后选“交付质量”；回答“关闭待办并修误判”“按行为判定”“两种答案都算对”“Claude 直接实现”。
 - **Completed**：方案 `docs/deliverable_quality_plan.md`；关闭 `deliverable-format-001`（单一循环里已不出现）；修 `answer_is_code_only` 误判；`side_effects_qa` 接受两种答案；`todo_html` 在无界面浏览器里做 10 项行为检查；D-083。
 - **Verification**：参考页面浏览器模式 20 项全过、旧文本检查判它失败；7 种做错的页面各自失败；用保留答案重算 4c 留出集 13/13（只是记录）；Linux 全部测试 1874 通过、23 跳过、4 失败（Windows 专用）。无真实模型调用。
-- **Commits**：`ae44392`、`f4f9208`、`1050991`（本地 `main`）。
-- **Next**：用户决定是否推送、是否跑一次调参集（保留答案，看 `todo_html` 新检查的结果）。用户本机要用浏览器检查需自己装 Node 版 Playwright。
+- **Commits**：`ae44392`、`f4f9208`、`1050991`（已推送）；评测记录 `66a9adf`。
+- **Live bench**（用户授权）：调参集单一循环各 1 次 10/11；`todo_html` 在浏览器检查下 20 项全过；唯一失败 `config_merge_qa` 的 `top_keys`（答成 `hooks`，应为 `hooks+`，是智能体推理错，不改评分器）。中转站 10 次 `heavy`、1 次 `padded`（就是失败的那次）。没有触发任何时限。
+- **Next**：用户本机要用浏览器检查需自己装 Node 版 Playwright。
 
 ### 2026-11-16 — stage5-limits-context-001：第 5 阶段（限额、时限、上下文整理）
 
