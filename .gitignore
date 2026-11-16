@@ -13,6 +13,8 @@ env/
 .env
 .env.*
 !.env.example
+# Personal model profiles (stage 4d-2); models.example.toml is the template.
+models.toml
 
 # Test and tooling caches
 .pytest_cache/

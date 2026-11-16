@@ -73,10 +73,21 @@ class StepRunnerContractError(TypeError):
 
 
 @dataclass(frozen=True, slots=True)
+class RoleModel:
+    """A member role's own model (stage 4d-2) and, when its window differs, its own context
+    manager; None means the main loop's."""
+    model: ToolCallingModel
+    context_manager: ContextManager | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RunnerDependencies:
     model: ToolCallingModel
     tool_registry: ToolRegistry
     context_manager: ContextManager
+    # Team members and explore members; None: they use the main model and context (stage 4d-2).
+    member: RoleModel | None = None
+    explorer: RoleModel | None = None
 
 
 RunnerFactory = Callable[[RunnerDependencies], StepRunner]

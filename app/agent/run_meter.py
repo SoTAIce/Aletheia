@@ -67,6 +67,10 @@ class RunMeter:
     # asked for; with the provider's report they give the provider state (provider-state-001).
     host_estimates: list = field(default_factory=list)
     requested_models: list = field(default_factory=list)
+    # Usage per model profile (stage 4d-2): name -> counts, and name -> the ModelProfile for its
+    # prices. Calls of a model built without a profile are not booked here.
+    profile_usage: dict = field(default_factory=dict)
+    profile_objects: dict = field(default_factory=dict)
     started: float = field(default_factory=time.monotonic)
 
     def __post_init__(self):
@@ -82,11 +86,15 @@ class RunMeter:
         return self.prompt_tokens + self.completion_tokens
 
     def record(self, usage, shared_prefix: float | None = None, model: str | None = None,
-               host_estimate: int | None = None, requested_model: str | None = None) -> None:
+               host_estimate: int | None = None, requested_model: str | None = None,
+               profile=None) -> None:
         """Add one provider call; usage is the provider's usage object, or None; model is the
         model name the response reported; host_estimate and requested_model describe what the
-        host sent (provider-state-001)."""
+        host sent (provider-state-001); profile is the ModelProfile of the model (stage 4d-2)."""
         self.model_calls += 1
+        name = getattr(profile, 'name', None)
+        if not isinstance(name, str):
+            name = None
         prompt = _non_negative_int(getattr(usage, 'prompt_tokens', None))
         completion = _non_negative_int(getattr(usage, 'completion_tokens', None))
         cached = None if prompt is None and completion is None else _cached_tokens(usage)
@@ -96,9 +104,17 @@ class RunMeter:
             share = shared_prefix if isinstance(shared_prefix, float) and 0 <= shared_prefix <= 1 else None
             self.call_log.append({'prompt': prompt, 'cached': cached, 'completion': completion,
                                   'shared_prefix': None if share is None else round(share, 3)})
+            if name is not None:
+                self.call_log[-1]['profile'] = name
             self.response_models.append(_model_name(model))
             self.host_estimates.append(host_estimate if type(host_estimate) is int and host_estimate > 0 else None)
             self.requested_models.append(_model_name(requested_model))
+        booked = None
+        if name is not None:
+            self.profile_objects.setdefault(name, profile)
+            booked = self.profile_usage.setdefault(name, {'model_calls': 0, 'prompt_tokens': 0,
+                                                          'completion_tokens': 0, 'cached_prompt_tokens': 0})
+            booked['model_calls'] += 1
         if prompt is None and completion is None:
             self.calls_without_usage += 1
             return
@@ -107,6 +123,10 @@ class RunMeter:
         if cached is not None:
             self.calls_with_cache_report += 1
             self.cached_prompt_tokens += cached
+        if booked is not None:
+            booked['prompt_tokens'] += prompt or 0
+            booked['completion_tokens'] += completion or 0
+            booked['cached_prompt_tokens'] += cached or 0
 
     def tag_calls_since(self, index: int, requested: list[str]) -> None:
         """Mark the calls logged from index on with the tool names the model asked for in
@@ -142,9 +162,35 @@ class RunMeter:
                  'calls_with_cache_report': self.calls_with_cache_report,
                  'seconds': round(self.elapsed(), 3),
                  'calls': [dict(entry) for entry in self.call_log]}
-        usage['estimated_cost'] = estimated_cost(self.prompt_tokens, self.completion_tokens)
+        usage['estimated_cost'] = self.estimated_cost()
+        if self.profile_usage:
+            usage['by_profile'] = {
+                name: {**counts, 'estimated_cost': self.profile_objects[name].estimated_cost(
+                    counts['prompt_tokens'], counts['completion_tokens'])}
+                for name, counts in self.profile_usage.items()}
         usage['provider'] = self.provider_summary()
         return usage
+
+    def estimated_cost(self) -> float | None:
+        """Each profile's tokens at its own prices, summed; None when any used profile has no price.
+        Tokens of calls without a profile are priced as before, with the agent model's profile.
+        With only the default profile this is the old figure (stage 4d-2)."""
+        prompt, completion, total = self.prompt_tokens, self.completion_tokens, 0.0
+        for name, counts in self.profile_usage.items():
+            cost = self.profile_objects[name].estimated_cost(counts['prompt_tokens'], counts['completion_tokens'])
+            if cost is None:
+                return None
+            total += cost
+            prompt -= counts['prompt_tokens']
+            completion -= counts['completion_tokens']
+        if not self.profile_usage:
+            return estimated_cost(prompt, completion)
+        if prompt or completion:
+            rest = estimated_cost(prompt, completion)
+            if rest is None:
+                return None
+            total += rest
+        return round(total, 6)
 
     def provider_summary(self) -> dict:
         """The provider state of this run's logged calls (provider-state-001)."""
@@ -195,7 +241,8 @@ def metering(meter: RunMeter):
 
 
 def record_model_call(usage, shared_prefix: float | None = None, model: str | None = None,
-                      host_estimate: int | None = None, requested_model: str | None = None) -> None:
+                      host_estimate: int | None = None, requested_model: str | None = None,
+                      profile=None) -> None:
     meter = _current.get()
     if meter is not None:
-        meter.record(usage, shared_prefix, model, host_estimate, requested_model)
+        meter.record(usage, shared_prefix, model, host_estimate, requested_model, profile)

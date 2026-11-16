@@ -72,15 +72,35 @@ def deadline_problem(sandbox, team_options):
     return RunLimits.current(team=team_options).sandbox_problem(host_call_timeout_seconds())
 
 
+def profile_problem():
+    """A model profile file the host refuses, as text without any key; None when it is fine (4d-2)."""
+    from app.models.model_profile import ModelProfileError
+    try:
+        config.model_profiles()
+    except ModelProfileError as exc:
+        return str(exc)
+    return None
+
+
+def profile_lines() -> str:
+    """Which profile, model and window each role runs on (stage 4d-2): names and numbers only."""
+    lines = ['模型档案（角色 / 档案 / 模型 / 窗口）：']
+    for role, name, model, window in config.model_profiles().describe():
+        lines.append(f'  {role:<9} {name:<12} {model} {window:,}')
+    return chr(10).join(lines)
+
+
 def show_limits(args) -> str:
     """The --show-limits table: every limit this command line would run under; no model call."""
     from app.agent.run_limits import RunLimits
     write_root = args.write_root or config.mcp_filesystem_write_root or None
     team = team_options_for(getattr(args, 'execution_mode', 'single'), write_root,
                             getattr(args, 'sandbox', False), getattr(args, 'team_timeout', None))
-    return RunLimits.current(team=team, max_executions=args.max_executions,
-                             max_total_tokens=getattr(args, 'max_tokens', None),
-                             max_seconds=getattr(args, 'max_seconds', None)).table()
+    table = RunLimits.current(team=team, max_executions=args.max_executions,
+                              max_total_tokens=getattr(args, 'max_tokens', None),
+                              max_seconds=getattr(args, 'max_seconds', None)).table()
+    problem = profile_problem()
+    return table + chr(10) + (f'ModelProfileError: {problem}' if problem else profile_lines())
 
 
 def result_record(result) -> dict:
@@ -306,6 +326,10 @@ async def main(args) -> int:
         problem = deadline_problem(sandbox, team_options)
         if problem:
             print(f'DeadlineError: {problem}')
+            return 2
+        problem = profile_problem()
+        if problem:
+            print(f'ModelProfileError: {problem}')
             return 2
         from app.tools.tool_loader import workspace_servers
         service = await stack.enter_async_context(RagAgentService(

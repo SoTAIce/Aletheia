@@ -117,7 +117,11 @@ class MemberSpawner:
     A member has its own messages and budget, no ask_user and no delegation tools; every result
     of a granted tool is recorded in seen as it happens (D-023)."""
 
-    def __init__(self, model, registry, context_manager=None):
+    def __init__(self, model, registry, context_manager=None, role=None):
+        # role: the member role's own model and context (stage 4d-2); None uses the caller's.
+        if role is not None:
+            model = role.model
+            context_manager = role.context_manager if role.context_manager is not None else context_manager
         self.model, self.registry, self.context_manager = model, registry, context_manager
 
     def build(self, tools, limits, instructions, host_tools=()):
@@ -158,12 +162,13 @@ class DelegatingLoopRunner:
 
     runner_id = RUNNER_ID
 
-    def __init__(self, model, tool_registry, options: DelegationOptions, context_manager=None):
+    def __init__(self, model, tool_registry, options: DelegationOptions, context_manager=None, member=None):
         if not isinstance(tool_registry, ToolRegistry):
             raise TypeError('tool_registry must be a ToolRegistry')
         if not isinstance(options, DelegationOptions):
             raise TypeError('options must be DelegationOptions')
         self.model, self.registry, self.options, self.context_manager = model, tool_registry, options, context_manager
+        self.member = member            # RoleModel of the members (stage 4d-2); the lead keeps model
         available = frozenset(d.name for d in tool_registry.list_definitions())
         self.worker_tools = options.allowed_tools & available
         self.review_tools = self.worker_tools - WORKER_ONLY_TOOLS
@@ -274,7 +279,7 @@ class DelegatingLoopRunner:
                  'problems': {'type': 'array', 'items': {'type': 'string'}}},
                  'required': ['decision', 'problems']})
             host_tools = (HostTool(definition, decide),)
-        spawner = MemberSpawner(self.model, self.registry, self.context_manager)
+        spawner = MemberSpawner(self.model, self.registry, self.context_manager, self.member)
         runner, seen = spawner.build(tools, LoopOptions(o.worker_tool_rounds, o.worker_tool_calls,
                                                         o.member_timeout_seconds),
                                      self._worker_brief(task, role), host_tools)
@@ -458,7 +463,7 @@ class ExploreDelegation:
     One instance serves one task run; its count is the task's delegation count."""
 
     def __init__(self, model, tool_registry, options: ExploreOptions | None = None, context_manager=None,
-                 tally=None):
+                 tally=None, member=None):
         if not isinstance(tool_registry, ToolRegistry):
             raise TypeError('tool_registry must be a ToolRegistry')
         options = options or ExploreOptions()
@@ -467,7 +472,7 @@ class ExploreDelegation:
         self.options = options
         available = frozenset(d.name for d in tool_registry.list_definitions())
         self.member_tools = READ_TOOLS & available
-        self.spawner = MemberSpawner(model, tool_registry, context_manager)
+        self.spawner = MemberSpawner(model, tool_registry, context_manager, member)
         # Shared by every binding of one task, so a resumed task keeps its count.
         self.tally = tally if tally is not None else {'delegations': 0}
         self.format_repair_count = 0
@@ -547,8 +552,8 @@ class ExploreLoopRunner:
     runner_id = LOOP_RUNNER_ID
 
     def __init__(self, model, tool_registry, loop_options=None, context_manager=None, resume_store=None,
-                 options: ExploreOptions | None = None, tally=None):
-        self.explore = ExploreDelegation(model, tool_registry, options, context_manager, tally)
+                 options: ExploreOptions | None = None, tally=None, member=None):
+        self.explore = ExploreDelegation(model, tool_registry, options, context_manager, tally, member)
         self._context = None
 
         async def invoke(arguments):

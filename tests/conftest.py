@@ -13,6 +13,8 @@ from app.config import config
 def _no_default_conversation_archive(monkeypatch):
     # Archiving is on by default (data/conversations). Tests that need an archive pass tmp_path explicitly.
     monkeypatch.setattr(config, 'conversation_storage_dir', '')
+    # A personal models.toml in the repository must not change any test (stage 4d-2).
+    monkeypatch.setattr(config, 'model_profiles_file', '')
 
 
 _ENVIRONMENT_AT_START = pytest.StashKey[frozenset[str]]()

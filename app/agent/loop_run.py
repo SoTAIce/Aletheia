@@ -93,7 +93,8 @@ class LoopRun:
     """One task's loop binding. Counters and receipts survive blocked/resumed runs."""
 
     def __init__(self, memory: RunMemory, model, registry, *, runner_factory,
-                 step_description: str, max_executions=16, step_timeout_seconds=60.0, context_manager=None):
+                 step_description: str, max_executions=16, step_timeout_seconds=60.0, context_manager=None,
+                 member=None, explorer=None):
         if type(max_executions) is not int or max_executions < 1:
             raise ValueError("max_executions must be an integer >= 1")
         if (isinstance(step_timeout_seconds, bool) or not isinstance(step_timeout_seconds, (int, float))
@@ -103,7 +104,7 @@ class LoopRun:
         self._registry = registry
         self._context_manager = context_manager or ContextManager()
         self._runner_factory = runner_factory
-        self._runner = self._assemble_runner(model, registry, self._context_manager)
+        self._runner = self._assemble_runner(model, registry, self._context_manager, member, explorer)
         self._step_description = step_description
         self._max_executions = max_executions
         self._step_timeout = step_timeout_seconds
@@ -118,18 +119,19 @@ class LoopRun:
         self._lock = asyncio.Lock()
         self._on_event = None
 
-    def _assemble_runner(self, model, registry, context_manager):
+    def _assemble_runner(self, model, registry, context_manager, member=None, explorer=None):
         self._watch = SideEffectWatch(registry)
-        dependencies = RunnerDependencies(model, self._watch, context_manager)
+        # Member roles come with each binding: a resumed run's members use that run's models (4d-2).
+        dependencies = RunnerDependencies(model, self._watch, context_manager, member, explorer)
         runner = _BoundRunner(self._runner_factory(dependencies))
         if not callable(getattr(runner.runner, 'run', None)):
             raise TypeError("runner must provide an async run(context) method")
         return runner
 
-    def rebind(self, model, registry, *, context_manager):
+    def rebind(self, model, registry, *, context_manager, member=None, explorer=None):
         if self._lock.locked() or self.memory.task_state.status is TaskStatus.RUNNING:
             raise RuntimeError('cannot rebind a running task')
-        runner = self._assemble_runner(model, registry, context_manager)
+        runner = self._assemble_runner(model, registry, context_manager, member, explorer)
         self._runner.invalidate()
         self._registry, self._context_manager, self._runner = registry, context_manager, runner
 

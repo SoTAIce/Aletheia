@@ -10,7 +10,8 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from uuid import uuid4
 from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager, nullcontext
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
@@ -33,6 +34,8 @@ from app.agent.loop_run import LoopRun
 from app.tools.tool_loader import local_mcp_servers, open_tool_registry
 from app.services.conversation_archive import ConversationArchive
 from app.services.context_manager import ContextManager
+from app.agent.step_runner import RoleModel
+from app.models.model_profile import ROLES
 from app.services.run_assembler import RunAssembler
 from app.services.summary_scheduler import SummaryScheduler
 from app.tools.context_archive_tool import ContextArchiveTool
@@ -121,6 +124,17 @@ def _check_runner(value):
     if value != 'loop':
         raise ValueError('single_runner must be loop')
 
+
+
+@dataclass(frozen=True, slots=True)
+class RoleModels:
+    """The model of each role for one run (stage 4d-2); one object for every role without a
+    profile file. profiles is None for an injected model."""
+    main: Any
+    route: Any
+    member: Any
+    explorer: Any
+    profiles: Any = None
 
 class RagAgentService:
     """Each accepted request is a turn; explicit resumes retain the same task.
@@ -248,31 +262,66 @@ class RagAgentService:
     @staticmethod
     def _prompt_cache_key(label: str) -> str | None:
         """Per-conversation cache routing key for the separate endpoint (D-057): a hash, so
-        the session and user names never leave the machine; DashScope gets none."""
-        if not config.agent_model_profile.prompt_cache_key:
+        the session and user names never leave the machine; DashScope gets none. Each model
+        sends it only when its own profile supports it (stage 4d-2)."""
+        if not any(profile.prompt_cache_key for profile in config.model_profiles().used()):
             return None
         return 'aletheia-' + hashlib.sha256(label.encode('utf-8')).hexdigest()[:24]
 
     @asynccontextmanager
     async def _models(self, cache_key: str | None = None, hooks=None):
-        """The run's models, each wrapped once in HookedModel, inside the run's hooks (D-059)."""
+        """The run's main model, wrapped in HookedModel, inside the run's hooks (D-059)."""
+        async with self._role_models(cache_key, hooks) as models:
+            yield models.main
+
+    @asynccontextmanager
+    async def _role_models(self, cache_key: str | None = None, hooks=None, profiles=None):
+        """The run's model per role, each distinct model wrapped once in HookedModel (D-059, 4d-2)."""
         from app.agent.hooks import HookedModel, using_hooks
         hooks = hooks if hooks is not None else self._hooks
         with using_hooks(hooks) if hooks is not None else nullcontext():
-            async with self._base_models(cache_key) as model:
-                yield HookedModel(model)
+            async with self._base_models(cache_key, profiles) as models:
+                wrapped = {}
+                def wrap(model):
+                    return wrapped.setdefault(id(model), HookedModel(model))
+                yield RoleModels(wrap(models.main), wrap(models.route), wrap(models.member),
+                                 wrap(models.explorer), models.profiles)
 
     @asynccontextmanager
-    async def _base_models(self, cache_key: str | None = None):
+    async def _base_models(self, cache_key: str | None = None, profiles=None):
         if self.model is not None:
-            yield self.model
+            yield RoleModels(self.model, self.model, self.model, self.model, None)
             return
-        profile = config.agent_model_profile                              # stage 4d-1, D-050
-        async with AsyncOpenAI(
-            api_key=profile.api_key(config), base_url=profile.base_url,
-            timeout=profile.timeout_seconds, max_retries=0,
-        ) as client:
-            yield profile_model(client, profile, cache_key)
+        # One model per profile a role uses; profiles on the same endpoint, key setting and
+        # timeout share one client. Without a profile file: one client, one model (4d-1, D-050).
+        profiles = profiles if profiles is not None else config.model_profiles()
+        async with AsyncExitStack() as stack:
+            clients, built = {}, {}
+            for profile in profiles.used():
+                key = (profile.base_url, profile.api_key_env, profile.timeout_seconds)
+                if key not in clients:
+                    clients[key] = await stack.enter_async_context(AsyncOpenAI(
+                        api_key=profile.api_key(config), base_url=profile.base_url,
+                        timeout=profile.timeout_seconds, max_retries=0))
+                built[profile.name] = profile_model(clients[key], profile, cache_key)
+            yield RoleModels(*(built[profiles.roles[role]] for role in ROLES), profiles)
+
+    @staticmethod
+    def _member_role(models, role, conversation):
+        """The RoleModel of a member role, or None when it runs on the main model (stage 4d-2).
+        A role on another profile gets a context manager sized to that profile's window."""
+        model = getattr(models, role)
+        if model is models.main:
+            return None
+        manager = None
+        if models.profiles is not None:
+            profile = models.profiles.role(role)
+            if profile is not models.profiles.role('main'):
+                manager = ContextManager(window_tokens=profile.context_tokens,
+                                         output_tokens=profile.max_output_tokens,
+                                         safety_tokens=config.context_safety_tokens,
+                                         archive=conversation.archive)
+        return RoleModel(model, manager)
 
     async def _run_hooks(self, key, conversation, extra=None):
         """This run's hooks: the service's (or the caller's), the request's own (extra, e.g. the
@@ -541,9 +590,10 @@ class RagAgentService:
     async def _prepare_task(self, conversation, key, user_id, question, task, runtime, question_id,
                             attachments, options):
         """The task's context manager, with the answer, attachments, workspace note, history and recall pinned."""
+        main = config.model_profiles().role('main')      # the default profile without a file (4d-2)
         context_manager = ContextManager(
-            window_tokens=config.agent_model_profile.context_tokens,
-            output_tokens=config.agent_model_profile.max_output_tokens,
+            window_tokens=main.context_tokens,
+            output_tokens=main.max_output_tokens,
             safety_tokens=config.context_safety_tokens, archive=conversation.archive,
         )
         if runtime is not None:
@@ -577,7 +627,8 @@ class RagAgentService:
         """Open the models and tools, run the task through the assembler and record its outcome."""
         cache_key = self._prompt_cache_key(self._archive_label(user_id, session_id))
         run_hooks, audit = await self._run_hooks(key, conversation, hooks)
-        async with self._models(cache_key, run_hooks) as model:
+        async with self._role_models(cache_key, run_hooks) as models:
+            model = models.main
             async with open_tool_registry(
                 memory, mcp_servers=self._servers_for(options), conversation=conversation,
                 knowledge_search=self._knowledge_search, include_knowledge=self._include_knowledge,
@@ -589,7 +640,9 @@ class RagAgentService:
                     key=key, task=task, question=question, options=options, runtime=runtime,
                     model=model, memory=memory, registry=registry,
                     context_manager=context_manager, audit=audit, on_event=on_event,
-                    loop_run_factory=LoopRun,
+                    loop_run_factory=LoopRun, route_model=models.route,
+                    member=self._member_role(models, 'member', conversation),
+                    explorer=self._member_role(models, 'explorer', conversation),
                 )
                 if key in self._spent_tokens:
                     self._spent_tokens[key] += _total_tokens(result.usage)

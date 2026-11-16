@@ -131,7 +131,8 @@ def usage_fields(record):
         calls = [c for c in usage.get('calls') or () if isinstance(c, dict)]
         if calls:
             # Per provider call: tokens, and the tools the loop's model asked for in reply (loop-trial-001).
-            fields['calls'] = [{k: c[k] for k in ('prompt', 'completion', 'requested', 'member') if k in c} for c in calls]
+            fields['calls'] = [{k: c[k] for k in ('prompt', 'completion', 'requested', 'member', 'profile') if k in c}
+                               for c in calls]
             tagged = [c['requested'] for c in calls if isinstance(c.get('requested'), list)]
             if tagged:
                 fields['todo_calls'] = sum(1 for names in tagged if 'todo' in names)
@@ -144,6 +145,11 @@ def usage_fields(record):
                 fields['delegations'] = len(set(members))
                 fields['delegate_requests'] = requested
                 fields['delegate_calls'] = len(members)
+        by_profile = usage.get('by_profile')
+        if isinstance(by_profile, dict) and len(by_profile) > 1:
+            # Usage per model profile when roles ran on different models (stage 4d-2).
+            fields['by_profile'] = {name: dict(counts) for name, counts in by_profile.items()
+                                    if isinstance(name, str) and isinstance(counts, dict)}
         provider = usage.get('provider')
         if isinstance(provider, dict):
             # What the provider did to the requests (provider-state-001): first call's band, all bands,

@@ -9,7 +9,7 @@ import asyncio
 import ipaddress
 from contextlib import AsyncExitStack
 
-from app.agent.__main__ import deadline_problem, sandbox_problem, team_options_for
+from app.agent.__main__ import deadline_problem, profile_problem, sandbox_problem, team_options_for
 from app.config import config
 from app.services.rag_agent_service import RagAgentService
 from app.tools.tool_loader import local_mcp_servers
@@ -76,6 +76,10 @@ async def serve(args) -> int:
         problem = deadline_problem(args.sandbox, team_options)
         if problem:
             print(f'DeadlineError: {problem}')
+            return 2
+        problem = profile_problem()
+        if problem:
+            print(f'ModelProfileError: {problem}')
             return 2
         service = await stack.enter_async_context(RagAgentService(
             mcp_servers=local_mcp_servers(

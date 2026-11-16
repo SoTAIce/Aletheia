@@ -503,7 +503,12 @@ def _usage_since(meter, logged) -> dict:
     estimates = list(getattr(meter, 'host_estimates', ()))[logged:]
     estimate = estimates[-1] if estimates else None
     value = ratio(entries[-1].get('prompt'), estimate) if entries else None
-    return {'provider_calls': len(entries), 'prompt_tokens': total('prompt'),
-            'completion_tokens': total('completion'), 'cached_tokens': total('cached'),
-            'response_model': names[-1] if names else None, 'host_estimate': estimate,
-            'provider_ratio': value, 'provider_state': band(value) if entries else None}
+    fields = {'provider_calls': len(entries), 'prompt_tokens': total('prompt'),
+              'completion_tokens': total('completion'), 'cached_tokens': total('cached'),
+              'response_model': names[-1] if names else None, 'host_estimate': estimate,
+              'provider_ratio': value, 'provider_state': band(value) if entries else None}
+    # The model profile's name (stage 4d-2), only for a model built from a profile.
+    profile = entries[-1].get('profile') if entries else None
+    if isinstance(profile, str):
+        fields['profile'] = profile
+    return fields

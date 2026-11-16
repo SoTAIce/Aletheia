@@ -13,7 +13,7 @@ from __future__ import annotations
 KINDS = ('task', 'route', 'plan', 'step', 'member', 'model', 'tool', 'todo')
 _MODEL_ATTRS = ('message_count', 'tool_count', 'callable_tools', 'provider_calls', 'prompt_tokens',
                 'completion_tokens', 'cached_tokens', 'tool_calls', 'response_model', 'host_estimate',
-                'provider_ratio', 'provider_state', 'denied_by', 'error')
+                'provider_ratio', 'provider_state', 'profile', 'denied_by', 'error')
 _TOOL_ATTRS = ('call_id', 'side_effect', 'args_summary', 'success', 'chars', 'denied_by', 'error')
 _TASK_ATTRS = ('failure_kind', 'model_calls', 'total_tokens', 'cached_prompt_tokens', 'error')
 _STEP_ATTRS = ('outcome', 'runner', 'step_id')
@@ -230,6 +230,8 @@ def _line(span: dict) -> str:
             parts.append(f"请求工具 {attrs['tool_calls']}")
         if attrs.get('provider_calls') and attrs['provider_calls'] > 1:
             parts.append(f"请求 {attrs['provider_calls']} 次")
+        if attrs.get('profile'):
+            parts.append(f"档案 {attrs['profile']}")
         if attrs.get('response_model'):
             parts.append(f"服务商模型 {attrs['response_model']}")
         if attrs.get('provider_ratio') is not None:

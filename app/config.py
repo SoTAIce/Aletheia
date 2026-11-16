@@ -89,6 +89,9 @@ class Settings(BaseSettings):
     # Send prompt_cache_key (one per conversation) to the separate endpoint so its requests
     # are routed together and hit the prompt cache more often (D-057); turn off if refused.
     agent_model_prompt_cache_key: bool = True
+    # Optional TOML file of model profiles and roles (stage 4d-2, docs/stage4d_plan.md section 10).
+    # Empty: no file. The default name may be absent; a path set explicitly must exist.
+    model_profiles_file: str = "models.toml"
 
     # Hooks (D-060): one audit file per run in the conversation's archive directory, and an
     # optional token allowance per conversation (empty means no limit).
@@ -184,6 +187,23 @@ class Settings(BaseSettings):
             input_price_per_million=self.model_input_price_per_million_tokens,
             output_price_per_million=self.model_output_price_per_million_tokens,
         )
+
+    def model_profiles(self) -> "ModelProfiles":
+        """The profiles and roles of this run (stage 4d-2): from MODEL_PROFILES_FILE when it exists,
+        else every role on the default profile. Read on each call, like agent_model_profile; a bad
+        file raises ModelProfileError."""
+        from pathlib import Path
+        from app.models.model_profile import ModelProfileError, ModelProfiles, load_profiles
+        default = self.agent_model_profile
+        name = (self.model_profiles_file or '').strip()
+        if not name:
+            return ModelProfiles.single(default)
+        path = Path(name)
+        if not path.is_file():
+            if 'model_profiles_file' not in self.model_fields_set and not path.exists():
+                return ModelProfiles.single(default)
+            raise ModelProfileError(f'找不到模型档案文件 {path}（MODEL_PROFILES_FILE）')
+        return load_profiles(path, default, self)
 
     @property
     def agent_model_window_tokens(self) -> int:

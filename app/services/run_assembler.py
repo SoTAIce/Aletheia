@@ -26,14 +26,17 @@ class RunAssembler:
         self._emit = emit
 
     async def run(self, *, key, task, question, options, runtime, model, memory, registry,
-                  context_manager, audit, on_event, loop_run_factory=None):
+                  context_manager, audit, on_event, loop_run_factory=None,
+                  route_model=None, member=None, explorer=None):
+        """route_model picks the mode; member and explorer are the member roles' RoleModels
+        (stage 4d-2). None: the main model and context, as before."""
         # The mode is chosen once per task and kept when a blocked task resumes (D-026).
         choice = self._routes.get((key, task.task_id)) if runtime is not None else None
         team_options = self._team_options
         if team_options is not None and not options['write']:
             team_options = _without_writes(team_options)
         if choice is None:
-            choice = await self._choose_route(question, model, options['mode'], team_options)
+            choice = await self._choose_route(question, route_model or model, options['mode'], team_options)
             if not options['write'] and not choice.read_only:
                 # Writes off for this request: the D-027 read-only path, decided by the host.
                 from dataclasses import replace
@@ -46,6 +49,9 @@ class RunAssembler:
                        workspace=options.get('workspace') or self._default_workspace)
         self._emit(on_event, {'type': 'route', 'mode': route, 'read_only': choice.read_only,
                          'options': dict(options)})
+        # Member roles on their own models (stage 4d-2); passed only when set, so a run on the main
+        # model is assembled exactly as before.
+        roles = {name: value for name, value in (('member', member), ('explorer', explorer)) if value is not None}
         # Read-only tasks lose write tools and get read-only runs (D-027/D-028).
         from app.agent.route_selection import task_registry
         registry = task_registry(registry, choice.read_only)
@@ -56,7 +62,7 @@ class RunAssembler:
                 from app.agent.delegation import DelegatingLoopRunner
                 def factory(deps):
                     return DelegatingLoopRunner(deps.model, deps.tool_registry,
-                                                team_options, deps.context_manager)
+                                                team_options, deps.context_manager, deps.member)
                 runner_timeout = team_options.timeout_seconds
             else:
                 from app.agent.agent_loop import AgentLoopRunner, LoopResumeStore
@@ -66,7 +72,8 @@ class RunAssembler:
                     tally = {'delegations': 0}   # per task, kept across rebinds
                     def factory(deps):
                         return ExploreLoopRunner(deps.model, deps.tool_registry, self._loop_options,
-                                                 deps.context_manager, store, tally=tally)
+                                                 deps.context_manager, store, tally=tally,
+                                                 member=deps.explorer)
                 else:
                     def factory(deps):
                         return AgentLoopRunner(deps.model, deps.tool_registry, self._loop_options,
@@ -78,9 +85,9 @@ class RunAssembler:
             from app.agent.loop_run import LoopRun
             build = loop_run_factory or LoopRun
             runtime = build(memory, model, registry, step_description=TEAM_STEP if route == 'team' else LOOP_STEP,
-                            runner_factory=factory, **limits, context_manager=context_manager)
+                            runner_factory=factory, **limits, context_manager=context_manager, **roles)
         else:
-            runtime.rebind(model, registry, context_manager=context_manager)
+            runtime.rebind(model, registry, context_manager=context_manager, **roles)
         result = await runtime.run(on_event=on_event)
         return runtime, result
 

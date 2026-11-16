@@ -1,0 +1,33 @@
+# Model profiles (stage 4d-2, docs/stage4d_plan.md section 10). Copy to models.toml and edit.
+# Without models.toml every role uses the AGENT_MODEL_* / DashScope settings from .env.
+# A profile never holds a key: api_key_env names the setting or environment variable that does.
+#
+# Required in every profile: base_url, api_key_env, model.
+# Taken from the .env settings when left out: context_tokens, max_output_tokens, timeout_seconds,
+#   temperature, json_mode.
+# Never taken from .env (they belong to one model and provider): enable_thinking (left out = not
+#   sent), prompt_cache_key (left out = false), input_price_per_million, output_price_per_million
+#   (left out = no cost estimate).
+
+[profiles.main]
+base_url = "https://relay.example.com/v1"
+api_key_env = "AGENT_MODEL_API_KEY"
+model = "main-model-name"
+context_tokens = 128000
+prompt_cache_key = true
+
+[profiles.cheap]
+base_url = "https://cheap.example.com/v1"
+api_key_env = "CHEAP_MODEL_API_KEY"
+model = "cheap-model-name"
+context_tokens = 64000
+input_price_per_million = 1.0
+output_price_per_million = 4.0
+
+# main runs the single loop and the team lead. route picks the mode (--execution-mode auto),
+# member runs team members, explorer runs --delegate members. A role left out uses main.
+[roles]
+main = "main"
+route = "cheap"
+member = "cheap"
+explorer = "cheap"

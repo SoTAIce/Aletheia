@@ -6,14 +6,17 @@ and prices. A profile names the setting that holds its API key (``api_key_env``)
 the key itself, so a profile can be logged or shown safely.
 
 4d-1 builds a single ``default`` profile from the existing settings (``Settings.agent_model_profile``);
-requests stay byte-for-byte the same. Profile files and roles (4d-2) come later.
+requests stay byte-for-byte the same. 4d-2 adds an optional TOML profile file and roles
+(``ModelProfiles``, ``load_profiles``; plan section 10): main, route, member and explorer, each
+falling back to main. Without a file every role uses the ``default`` profile.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 import math
 import os
+from pathlib import Path
 import re
 from typing import Any
 
@@ -79,3 +82,101 @@ class ModelProfile:
 
 def _finite(value: Any) -> bool:
     return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
+
+
+ROLES = ('main', 'route', 'member', 'explorer')
+# Taken from the default profile when a profile in the file leaves them out. Capabilities and prices
+# belong to one model and provider, so they are never inherited (plan section 10.1).
+INHERITED = ('context_tokens', 'max_output_tokens', 'timeout_seconds', 'temperature', 'json_mode')
+REQUIRED = ('base_url', 'api_key_env', 'model')
+
+
+class ModelProfileError(ValueError):
+    """A profile file the host refuses at start-up; the message never holds a key."""
+
+
+@dataclass(frozen=True, slots=True)
+class ModelProfiles:
+    """Profiles by name and the profile of each role (stage 4d-2)."""
+    profiles: dict
+    roles: dict
+
+    def __post_init__(self) -> None:
+        if set(self.roles) != set(ROLES):
+            raise ValueError(f'roles must be exactly {ROLES}')
+        for role, name in self.roles.items():
+            if name not in self.profiles:
+                raise ValueError(f'role {role} names an unknown profile')
+
+    @classmethod
+    def single(cls, profile: ModelProfile) -> 'ModelProfiles':
+        """Every role on one profile: the settings without a profile file."""
+        return cls({profile.name: profile}, dict.fromkeys(ROLES, profile.name))
+
+    def role(self, role: str) -> ModelProfile:
+        return self.profiles[self.roles[role]]
+
+    def used(self) -> tuple[ModelProfile, ...]:
+        """The profiles some role uses, main first, each once."""
+        return tuple(self.profiles[name] for name in dict.fromkeys(self.roles[r] for r in ROLES))
+
+    def describe(self) -> list[tuple[str, str, str, int]]:
+        """(role, profile, model, context tokens) per role: names and numbers only, never a key."""
+        return [(role, p.name, p.model, p.context_tokens) for role in ROLES for p in (self.role(role),)]
+
+
+_FIELDS = {f.name for f in fields(ModelProfile)} - {'name'}
+
+
+def load_profiles(path, default: ModelProfile, settings: Any = None) -> ModelProfiles:
+    """Read a profile file (plan section 10.1). Every error is a ModelProfileError in Chinese."""
+    import tomllib
+    source = Path(path)
+    try:
+        data = tomllib.loads(source.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        raise ModelProfileError(f'找不到模型档案文件 {source}') from None
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ModelProfileError(f'读不了模型档案文件 {source}（{type(exc).__name__}）') from None
+    except tomllib.TOMLDecodeError as exc:
+        raise ModelProfileError(f'模型档案文件 {source} 不是合法的 TOML：{exc}') from None
+    unknown = set(data) - {'profiles', 'roles'}
+    if unknown:
+        raise ModelProfileError(f'模型档案文件里有不认识的段：{", ".join(sorted(unknown))}（只认 profiles 和 roles）')
+    raw_profiles, raw_roles = data.get('profiles'), data.get('roles')
+    if not isinstance(raw_profiles, dict) or not raw_profiles:
+        raise ModelProfileError('模型档案文件至少要有一个 [profiles.<名字>]')
+    if not isinstance(raw_roles, dict):
+        raise ModelProfileError('模型档案文件缺少 [roles] 段')
+    profiles = {}
+    for name, body in raw_profiles.items():
+        if not isinstance(body, dict):
+            raise ModelProfileError(f'档案 {name!r} 必须是一个表（[profiles.{name}]）')
+        extra = set(body) - _FIELDS
+        if extra:
+            raise ModelProfileError(f'档案 {name!r} 有不认识的字段：{", ".join(sorted(extra))}')
+        missing = [field for field in REQUIRED if field not in body]
+        if missing:
+            raise ModelProfileError(f'档案 {name!r} 必须写明：{", ".join(missing)}')
+        values = {field: getattr(default, field) for field in INHERITED}
+        values.update(body)
+        try:
+            profiles[name] = ModelProfile(name=name, **values)
+        except (TypeError, ValueError) as exc:
+            raise ModelProfileError(f'档案 {name!r} 的取值不对：{exc}') from None
+    extra = set(raw_roles) - set(ROLES)
+    if extra:
+        raise ModelProfileError(f'[roles] 里有不认识的角色：{", ".join(sorted(extra))}（只认 {", ".join(ROLES)}）')
+    if 'main' not in raw_roles:
+        raise ModelProfileError('[roles] 必须写 main')
+    roles = {}
+    for role in ROLES:
+        name = raw_roles.get(role, raw_roles['main'])
+        if not isinstance(name, str) or name not in profiles:
+            raise ModelProfileError(f'角色 {role} 指向不存在的档案 {name!r}')
+        roles[role] = name
+    result = ModelProfiles(profiles, roles)
+    for profile in result.used():
+        if not profile.api_key(settings):
+            raise ModelProfileError(f'档案 {profile.name!r} 的密钥变量 {profile.api_key_env} 是空的')
+    return result

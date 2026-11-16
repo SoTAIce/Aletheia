@@ -104,6 +104,9 @@ class OpenAICompatibleToolCallingModel:
         # same way (a provider prompt cache can only reuse a shared start; D-056).
         self._previous_request: str | None = None
         self._host_estimate: int | None = None
+        # The ModelProfile this model was built from (stage 4d-2): usage is booked to it. None for
+        # a model built directly; such calls are booked as before.
+        self.profile = None
 
     @staticmethod
     def _require_text(value: object, field: str) -> None:
@@ -203,10 +206,10 @@ class OpenAICompatibleToolCallingModel:
                 )
             except BaseException:
                 # the request was sent; its usage is unknown (D-034)
-                record_model_call(None, shared, None, self._host_estimate, self._model)
+                record_model_call(None, shared, None, self._host_estimate, self._model, profile=self.profile)
                 raise
             record_model_call(getattr(raw_response, 'usage', None), shared, getattr(raw_response, 'model', None),
-                              self._host_estimate, self._model)
+                              self._host_estimate, self._model, profile=self.profile)
         except APIResponseValidationError as exc:
             raise _retryable(ModelResponseError("provider returned an invalid response")) from exc
         except APITimeoutError as exc:
@@ -448,11 +451,13 @@ class OpenAICompatibleToolCallingModel:
 
 def profile_model(client, profile, prompt_cache_key: str | None = None) -> OpenAICompatibleToolCallingModel:
     """The model a profile describes, on an already open client (stage 4d-1). The cache key is
-    sent only when the profile supports it (D-057)."""
-    return OpenAICompatibleToolCallingModel(
+    sent only when the profile supports it (D-057); usage is booked to the profile (4d-2)."""
+    model = OpenAICompatibleToolCallingModel(
         client, profile.model, temperature=profile.temperature,
         json_mode=profile.json_mode,
         enable_thinking=profile.enable_thinking,
         max_output_tokens=profile.max_output_tokens,
         prompt_cache_key=prompt_cache_key if profile.prompt_cache_key else None,
     )
+    model.profile = profile
+    return model
