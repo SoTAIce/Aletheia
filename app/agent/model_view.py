@@ -1,9 +1,10 @@
 """Compact the MODEL VIEW of a long tool-calling history (team-recovery-001, team-v2-001).
 
-ContextManager.prepare shrinks tool results and old turns, but never tool-call
-arguments, so repeated write_file calls carrying whole files overflow the window
-(ContextBudgetError). These helpers only change the messages sent to the model;
-the caller's records and tool receipts are never modified.
+RequestFitter.prepare shrinks tool results and old turns, but never tool-call arguments, so
+repeated write_file calls carrying whole files overflowed the window (ContextBudgetError in 3 of 4
+live parse_duration runs). RequestFitter.compact applies these helpers in two tiers before it
+fits a loop's request (stage 5c; formerly CompactingManager). They only change the messages sent
+to the model; the caller's records and tool receipts are never modified.
 """
 
 import json
@@ -95,30 +96,3 @@ def compact_model_view(messages, tools, manager, *, share=VIEW_COMPACT_SHARE, al
             message = shorten_output(message)
         view.append(message)
     return tuple(view)
-
-
-class CompactingManager:
-    """Worker context manager whose model view drops old file bodies (D-019 follow-up).
-
-    prepare() never shrinks tool-call arguments, so workers that rewrite whole files
-    overflowed the window (ContextBudgetError in 3 of 4 live parse_duration runs).
-    Tier 1 (above 60%): superseded write_file bodies and older outputs. Tier 2 (above
-    85% after tier 1): every write_file body but the most recent. Records stay intact.
-    """
-    STRONG_SHARE = 0.85
-
-    def __init__(self, manager):
-        self._manager, self.compacted, self.strong = manager, 0, 0
-
-    def __getattr__(self, name):
-        return getattr(self._manager, name)
-
-    async def generate(self, model, messages, tools):
-        manager = self._manager
-        view = compact_model_view(messages, tools, manager)
-        if view != tuple(messages):
-            self.compacted += 1
-        if manager.count_request(view, tools) > manager.window_tokens * self.STRONG_SHARE:
-            view = compact_model_view(view, tools, manager, share=0, all_but_last_write=True)
-            self.strong += 1
-        return await manager.generate(model, view, tools)

@@ -16,7 +16,6 @@ from dataclasses import asdict, dataclass
 from datetime import datetime
 from textwrap import dedent
 
-from app.agent.model_view import CompactingManager
 from app.agent.run_meter import current_meter
 from app.agent.step_models import (
     ModelTurn, StepExecutionContext, StepOutcome, StepRunOutput, SystemMessage, ToolCall, ToolDefinition,
@@ -209,7 +208,7 @@ class AgentLoopRunner:
             raise TypeError('tool_registry must be a ToolRegistry')
         self._model, self._registry = model, tool_registry
         self._options = options or LoopOptions()
-        self._manager = CompactingManager(context_manager) if context_manager is not None else None
+        self._manager = context_manager
         self._store = resume_store
         host_tools = tuple(host_tools)
         self._host_tools = {t.definition.name: t for t in host_tools}
@@ -233,7 +232,8 @@ class AgentLoopRunner:
             raise StepBudgetError(spent, tuple(refs))
         try:
             if self._manager is not None:
-                return await self._manager.generate(self._model, tuple(messages), tools)
+                # The loop's history is compacted before the request is fitted (stage 5c).
+                return await self._manager.generate(self._model, tuple(messages), tools, compact=True)
             return await self._model.generate(tuple(messages), tools)
         except ModelTimeoutError as exc:
             raise StepTimeoutError('Model request timed out', tuple(refs)) from exc
