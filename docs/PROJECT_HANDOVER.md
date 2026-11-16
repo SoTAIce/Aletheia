@@ -64,7 +64,7 @@ CLI / 调用方
        auto 模式：每个新任务先选模式（宿主规则，再一次模型判断，D-026）
   -> RunMemory(RunState + Resources)
   -> RunAssembler：选模式、只读收回、按模式选执行器工厂（没有注册表和路由，D-075）
-  -> LoopRun：锁、预算、单步时限、副作用监视、重新绑定作废、取消不提交、事件和追踪（D-076）
+  -> LoopRun：锁、预算、任务时限（唯一的外层时限，D-081）、副作用监视、重新绑定作废、取消不提交、事件和追踪（D-076）
        -> AgentLoopRunner：单一循环，纯文本即答案（D-072）；`--delegate` 时为 ExploreLoopRunner
        -> DelegatingLoopRunner：团队，负责人是单一循环，`delegate` 是宿主工具，成员是子循环，宿主判定完成
   -> StepRunOutput -> LoopRun 校验并提交 -> Task Completion / Turn outcome
@@ -74,7 +74,7 @@ CLI / 调用方
 | --- | --- | --- |
 | 服务装配 | `app/services/rag_agent_service.py`、`run_assembler.py` | 创建/恢复会话，按 user/session 隔离，管理请求锁、模型、工具注册、任务的 `LoopRun` 与结果记录；`RunAssembler` 选模式并组装运行 |
 | 任务状态 | `app/models/run_state.py`、`taskstate.py`、`resources.py` | `RunState`/`RunMemory` 是任务真值（目标、状态、约束、固定上下文、问题、失败）；`taskstate.py` 只剩值类型；证据/上下文资源 |
-| 任务运行 | `app/agent/loop_run.py`、`runtime.py` | `LoopRun` 负责锁、重新绑定作废（`_BoundRunner`）、取消不提交、版本校验、预算、单步时限、副作用监视、执行次数上限、失败分类和事件；`runtime.py` 只剩 `AgentRunResult` 和 `FAILURE_MESSAGES`（D-076） |
+| 任务运行 | `app/agent/loop_run.py`、`runtime.py` | `LoopRun` 负责锁、重新绑定作废（`_BoundRunner`）、取消不提交、版本校验、预算、任务时限（D-081）、副作用监视、执行次数上限、失败分类和事件；`runtime.py` 只剩 `AgentRunResult` 和 `FAILURE_MESSAGES`（D-076） |
 | 执行器接口 | `app/agent/step_models.py`、`step_runner.py` | 统一输出、上下文和异常类别；`RunnerDependencies`、`RunnerFactory` |
 | 单一循环 | `app/agent/agent_loop.py` | 普通模式唯一的执行方式（D-062～D-064、D-072、D-076）：整任务一个循环，纯文本即最终答案，`todo`/`ask_user` 控制工具，不重新规划，阻塞恢复只在内存里 |
 | 工作目录 | `app/services/workspace.py`、`app/tools/tool_loader.workspace_servers` | 按会话选择工作目录（D-074）：检查拒绝名单和禁止目录，系统盘要确认（服务端校验）；每次运行按目录启动文件和沙盒服务，禁止目录用 `--deny` 传给它们 |
@@ -106,7 +106,7 @@ RAG：`knowledge_registry_tool.py` → `rag_search_service.py` → query rewrite
 | ConversationTurn/Memory | `app/models/conversation_memory.py` | 一次用户交互及近期完整 Turns、阶段摘要索引；一个 Task 可跨多个 Turn |
 | ConversationArchive | `app/services/conversation_archive.py` | 原始用户输入、不可变完成 sidecar、摘要正文、工具 artifact、来源引用；持久化权威 |
 | RunState / RunMemory | `app/models/run_state.py` | 当前任务的目标、状态、约束、固定上下文、问题和失败，加上资源表；不是跨会话用户档案 |
-| ContextManager | `app/services/context_manager.py` | 从记忆构造预算内模型请求；不修改原始历史和任务真值 |
+| ContextManager | `app/services/context_manager.py` 及 `conversation_context.py`、`tool_result_projector.py`、`request_fitter.py`、`context_budget.py` | 从记忆构造预算内模型请求；不修改原始历史和任务真值；第 5 阶段拆成三个部分，`ContextManager` 是门面（D-082） |
 | LLMCompressor | `app/services/memory_compression/llm_compressor.py` | 由原始 Turns 生成有结构、有来源但有损的摘要 |
 | SummaryScheduler | `app/services/summary_scheduler.py` | 有界后台排队、合并通知、重试、超时与关闭 |
 | LongTermMemoryService | `app/services/memory_service.py` | 跨会话可复用事实/偏好/项目背景；与会话摘要分开 |

@@ -71,12 +71,15 @@ Every failure kind has a Chinese explanation in `FAILURE_MESSAGES`
 never replays a failed task: there is no replanning (`replan_count` stays 0).
 
 Defaults: 16 executions per task (counted across resumes); the loop's own limits
-are 20 tool rounds, 40 tool calls and 480 seconds (`LoopOptions`); the step
-deadline is the larger of `AGENT_STEP_TIMEOUT_SECONDS` (default 60) and the
-runner's limit plus 5 seconds, and a caller's run budget can only shorten it. The
-token budget is checked before and after the loop's step, not between the model
-calls inside it, so one step can finish its calls and then fail the task on
-`budget` (the step's receipt is kept).
+are 20 tool rounds and 40 tool calls (`LoopOptions`). Since stage 5b each task has
+one deadline, enforced once by `LoopRun`: the chosen runner's own limit, 480 seconds
+for the single loop (`AGENT_TASK_TIMEOUT_SECONDS`) and 180 seconds for the team
+(`--team-timeout`); a caller's run budget can only shorten it. Team members (120 s)
+and `--delegate` members (120 s) have their own limit inside it. Waiting for an
+approval counts against none of them (D-061). With the sandbox, a task deadline
+that cannot hold one sandbox call is refused at start-up (`DeadlineError`).
+`python -m app.agent --show-limits` prints every limit without a model call. The
+token and time budget is checked before every model call (stage 4d-3).
 
 `RAG_JSON_MODE=true` requests provider JSON-object output. `RAG_ENABLE_THINKING` is
 optional and provider specific. Unsupported provider options surface as errors,
@@ -131,9 +134,10 @@ restart restores the archived history, not the waiting task.
 
 ## Current limits
 
-The service reads `RAG_MODEL_TIMEOUT_SECONDS` (default 30) and
-`AGENT_STEP_TIMEOUT_SECONDS` (default 60). `AGENT_PLANNING_TIMEOUT_SECONDS` is
-still accepted in `.env` but no longer read (plan mode was removed). For slower
+The service reads `RAG_MODEL_TIMEOUT_SECONDS` (default 30, one model request) and
+`AGENT_TASK_TIMEOUT_SECONDS` (default 480, the single loop's task deadline).
+`AGENT_STEP_TIMEOUT_SECONDS` and `AGENT_PLANNING_TIMEOUT_SECONDS` are still
+accepted in `.env` but no longer read (stage 5b; plan mode was removed in 4c). For slower
 real API responses, increase these finite limits rather than disabling them; a
 request timeout is a failed execution, never a completed one.
 
@@ -191,7 +195,11 @@ silently accepting lost history. `clear`, `pop` and `remove` affect the in-memor
 view, not the durable archive; this is not a permanent deletion API.
 
 `RunState` remains the authoritative task state. `ContextManager` projects
-copies for the loop's model requests and never edits that state. Configure
+copies for the loop's model requests and never edits that state. Since stage 5c it
+is a facade over `ConversationContext` (session history, long-term memories),
+`ToolResultProjector` (tool result views and archived previews) and
+`RequestFitter` (fitting one request into the window: the loops' two compaction
+tiers, then shrinking, then one retry after a context overflow). Configure
 `CONTEXT_WINDOW_TOKENS`, `CONTEXT_OUTPUT_TOKENS` and `CONTEXT_SAFETY_TOKENS`
 (defaults 32768/8192/1024; the output cap was 2048 before D-036) for the deployed model. Estimates include serialized
 messages, system instructions, native tool schemas, tool responses and output

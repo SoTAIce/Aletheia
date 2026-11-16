@@ -1,6 +1,6 @@
 # 第 5 阶段：限额、时限和上下文整理（方案）
 
-日期：2026-11-16。状态：**用户已回答第 7 节，由 Claude 实现**（stage5-limits-context-001）。
+日期：2026-11-16。状态：**已实现（第 8 节，D-081、D-082）**（stage5-limits-context-001）。
 来源：用户 2026-11-16 选择“先写第 5 阶段方案”。原来的迁移路线（`docs/architecture_review.md` 第 6 节）只有第 0～4 阶段，已全部完成；“第 5 阶段”指架构梳理里还没解决的问题 3（限额和时限分散）和问题 4（上下文策略和模型包装拼凑）。
 依据：当前代码 `84b530e`（钩子加固 D-080 之后）逐个文件清点，不来自历史报告。
 
@@ -116,3 +116,29 @@
 5. **做完后要不要跑一次调参集**（单一循环和团队，真实模型调用）：(a) 做完 5b 后跑一次（建议，到时再单独授权）；(b) 不跑。
 
 **用户回答（2026-11-16）**：第 1 问 (a) 按 5b 分层；第 2 问 (a) 新设任务时限设置，旧名字不再读取；第 3 问 (a) 保留 `replan_count`，恒为 0；第 4 问由 Claude 直接实现；第 5 问没有单独回答，做完后再单独请求授权。
+
+## 8. 实现记录（2026-11-16，Claude）
+
+三步各自一个提交，都在本地 `main` 上：`a477484`（5a）、`4c8d6f0`（5b）、`9e55f87`（5c）。全部测试（云端 Linux）：1862 通过、22 跳过、4 失败（只在 Windows 上成立的路径断言，同前）。`init.ps1` 没在 Windows 上跑。
+
+**5a（行为不变）**
+- 删除 `RunnerLimits`、`RunnerDependencies.limits`，以及 `LoopRun` 的 `max_tool_rounds` / `max_total_tool_calls` 参数；再传这两个参数会报 `TypeError`。
+- `LoopRun._run` 改成直线流程：先查（`_pending_stop`：阻塞问题和预算），再判断能不能开始（`_start_problem`：执行次数，以及续跑必须有新回答），然后发一次 `plan` 区间和事件，执行一次，最后完成。
+- 和第 3 节原计划不同：**失败文字没有改**。67 个黄金对照文件（`tests/fixtures/loop_run_golden/`）固定了每种结束方式的结果、事件和文字，包括“Agent replanning limit reached”和两处执行次数上限分别是 `internal` 和 `limit`。这些文件写明“差别是要解释的行为变化”，所以 5a 保持它们全部通过，只改内部结构。
+- 删掉了实际到不了的“Planning failed”分支；`FAILURE_MESSAGES['planning']` 保留，给旧结果文件用。
+
+**5b（行为改变，已按第 7 节确认）**
+- 任务时限就是执行器自己的时限，由 `LoopRun` 执行一次：单一循环 480 秒（新设置 `AGENT_TASK_TIMEOUT_SECONDS`），团队 180 秒（`--team-timeout`）。`RunAssembler` 和命令行不再放宽（原来是“设置值和执行器时限 + 5 取大”）。`AGENT_STEP_TIMEOUT_SECONDS` 不再读取；你本机 `.env` 里的 240 现在不起作用，可以删掉。
+- 团队负责人循环里那层 `asyncio.timeout` 删除，团队时限就是 `LoopRun` 的任务时限；超时后的结果和文字不变。
+- 团队成员新加 `DelegationOptions.member_timeout_seconds`（默认 120 秒），嵌套在任务时限里，等待确认时暂停。成员超时写成成员失败报告（`failure: TimeoutError`，附说明），负责人可以继续；任务时限先到时仍是整个团队 `timeout`。调研成员的 120 秒时限同样改为可暂停。
+- 带沙箱时，任务时限必须长于一次沙箱调用（默认 90 秒），否则启动时报 `DeadlineError` 并退出，不再悄悄放宽。默认值 480 / 180 都满足。
+- `app/agent/run_limits.py`：和第 3 节原计划不同，`RunLimits` **只把各层的值收在一起显示和检查**，各层仍读自己的选项（`LoopOptions`、`DelegationOptions`、`ExploreOptions`、模型档案）。这样每个限额仍只在一处执行，又不用把同一个值同时放在两个地方。`python -m app.agent --show-limits` 打印全部限额，不调用模型。
+- 黄金对照的构造函数原来照搬旧装配规则（时限至少 60 秒）；改成新规则后，团队超时那一项从等满 60 秒变回 0.02 秒，67 项仍全部通过。
+
+**5c（行为不变）**
+- 新文件：`context_budget.py`（共享的窗口、输出、余量和计数器）、`conversation_context.py`、`tool_result_projector.py`、`request_fitter.py`。`ContextManager` 是门面，原有方法名、属性（可读可写）、类常量和错误文字不变；`LONGTERM_POLICY` 和 `ContextBudgetError` 仍可以从原模块导入。
+- `CompactingManager` 删除。它的两级折叠成了 `RequestFitter.compact`，循环调用 `generate(..., compact=True)`；其他直接调用 `generate` 的地方（知识库工具、查询改写）和以前一样不折叠。原来记的 `compacted` / `strong` 两个计数没有任何地方读取，没有保留。
+- 对照：拆分前先用旧代码录了 `tests/fixtures/context_split_golden.json`（一个循环 15 次请求，覆盖两级折叠、参数省略、旧输出缩短；一次溢出重试；`prepare` 的五种窗口；六个工具结果的视图和转存；请求计数），拆分后逐字节相同。反向检查：把第二级阈值从 0.85 改成 0.9、或把预览下限从 1200 改成 1201，这项测试都会失败。
+
+**没做的**
+- 第 5 问的调参集评测：5b 改变了团队成员的时限和单一循环的时限（485 → 480 秒），要不要跑一次，等你单独决定（真实模型调用）。

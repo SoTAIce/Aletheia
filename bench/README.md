@@ -42,7 +42,7 @@
 ## 文件交付与沙盒模式
 
 - `--write`：智能体把交付物写进临时根目录里的指定文件（`task.json` 的 `deliverable`），评分读取该文件；文件没写或没改动都算失败。
-- `--sandbox`：在 `--write` 基础上开放 `run_tests` / `run_python`（Docker 沙盒，需要先构建 `aletheia-sandbox:py313`），并提示智能体先测试再交付；团队模式结束任务前必须有通过的运行。`--team-timeout` 可以加长团队的时间预算。
+- `--sandbox`：在 `--write` 基础上开放 `run_tests` / `run_python`（Docker 沙盒，需要先构建 `aletheia-sandbox:py313`），并提示智能体先测试再交付；团队模式结束任务前必须有通过的运行。`--team-timeout` 可以加长团队的任务时限（默认 180 秒；单一循环的任务时限由 `AGENT_TASK_TIMEOUT_SECONDS` 决定，默认 480 秒；每个团队成员另有 120 秒，第 5 阶段）。单次超时 `--timeout` 要长于任务时限。
 - 第一版沙盒只支持 Python，`todo_html` 在沙盒模式下仍然只做静态评分。
 
 ## 调参集与留出集（D-035）

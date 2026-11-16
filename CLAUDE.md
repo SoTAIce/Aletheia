@@ -39,21 +39,22 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./init.ps1
 - `python -m app.knowledge`：从目录建 Milvus 知识库（默认只切块，确认后才替换）。
 - `python -m bench.run_bench`：基准任务；`--confirm-live` 才真正调用模型，见 [bench/README.md](bench/README.md)。
 - `python -m app.agent.trace FILE.jsonl` 或 `--session NAME`：只读查看运行轨迹，不连接任何服务。
+- `python -m app.agent --show-limits`：打印这条命令会用到的所有限额和时限，不调用模型。
 
 pytest 配置在 `pyproject.toml`（`asyncio_mode = "auto"`，测试只在内存中运行）。仓库没有 lint/格式化配置。
 
 ## 架构概览
 
-**任务运行（`app/agent/`）**：每个任务是一个循环（D-076）。`loop_run.py` 的 `LoopRun` 负责宿主保证：锁、重新绑定后旧执行器作废、取消后不提交、版本校验、预算、单步时限、副作用监视、执行次数上限、失败分类，以及 `plan`/`step` 事件和追踪区间；任务状态在 `app/models/run_state.py` 的 `RunState`/`RunMemory`。执行器只返回输出，由 `LoopRun` 提交。结果和失败分类在 `runtime.py`（`AgentRunResult`、`FAILURE_MESSAGES`）。规划模式和规划—执行骨架已在第 4 阶段删除。
+**任务运行（`app/agent/`）**：每个任务是一个循环（D-076）。`loop_run.py` 的 `LoopRun` 负责宿主保证：锁、重新绑定后旧执行器作废、取消后不提交、版本校验、预算、任务时限（唯一的外层时限，取执行器自己的时限；第 5 阶段）、副作用监视、执行次数上限、失败分类，以及 `plan`/`step` 事件和追踪区间；任务状态在 `app/models/run_state.py` 的 `RunState`/`RunMemory`。执行器只返回输出，由 `LoopRun` 提交。结果和失败分类在 `runtime.py`（`AgentRunResult`、`FAILURE_MESSAGES`）。规划模式和规划—执行骨架已在第 4 阶段删除。
 
 **执行模式**：`route_selection.py` 每个任务开始前选一次模式（先走宿主规则，再一次有界模型调用，失败回落到 single），同时判断任务是否写文件，只读任务看不到写入和运行类工具。`app/services/run_assembler.py` 的 `RunAssembler` 按模式选执行器工厂并建 `LoopRun`。
 - single：`agent_loop.py` 的 `AgentLoopRunner`，整个任务一个工具循环，纯文本即最终答案，自带 `todo` / `ask_user` 控制工具，阻塞后在内存中接着原来的消息续跑；`--delegate` 时用 `delegation.py` 的 `ExploreLoopRunner`，可以把只读调研交给子循环（默认关闭）。
 - team：`delegation.py` 的 `DelegatingLoopRunner`，负责人也是一个循环，只有宿主工具 `delegate`/`review`，每次委派都起一个全新上下文的子循环成员；共享状态在工作区文件里，完成由宿主判定（D-075）。
 - `step_runner.py` 是执行器接口（`RunnerDependencies`、`RunnerFactory`、错误类型）；能力需求来自应用代码，不来自模型。
 
-**横切机制**：`hooks.py`（观察者 + 只能拒绝的门控，通过上下文变量挂到 `HookedTool`/`HookedModel` 上，事件不带工具输出或模型原文）；`run_meter.py`（预算计量，每次模型调用前查预算，D-078）；`provider_state.py`（服务商报告的提示令牌与本机估算之比分档、模型名是否被替换，异常时提示，D-079）；`side_effects.py`（外部副作用不确定时不重试）；`trace.py` / `trace_view.py`（本地轨迹）。
+**横切机制**：`hooks.py`（观察者 + 只能拒绝的门控，通过上下文变量挂到 `HookedTool`/`HookedModel` 上，事件不带工具输出或模型原文）；`run_meter.py`（预算计量，每次模型调用前查预算，D-078）；`run_limits.py`（把所有限额和时限收在一处，`python -m app.agent --show-limits` 打印出来，D-081）；`provider_state.py`（服务商报告的提示令牌与本机估算之比分档、模型名是否被替换，异常时提示，D-079）；`side_effects.py`（外部副作用不确定时不重试）；`trace.py` / `trace_view.py`（本地轨迹）。
 
-**服务层**：`app/services/rag_agent_service.py` 是面向会话的门面（CLI 和 Web 都经过它），持有工具注册表和每个任务的 `LoopRun`，选择和组装交给 `run_assembler.py`。记忆分三层：`app/models/conversation_memory.py`（会话视图）、`app/models/run_state.py`（任务真值）、`app/services/context_manager.py`（只做投影）；`conversation_archive.py` 归档原文，`summary_scheduler.py` 做后台摘要。长期记忆以 PostgreSQL（`postgres_memory_store.py`）为准，Milvus（`memory_vector_index.py`）是可重建的索引。RAG 检索链：`rag_search_service.py`（稠密 / BM25 / 混合）→ `reciprocal_rank_fusion.py` → `rag_reranker_service.py`。
+**服务层**：`app/services/rag_agent_service.py` 是面向会话的门面（CLI 和 Web 都经过它），持有工具注册表和每个任务的 `LoopRun`，选择和组装交给 `run_assembler.py`。记忆分三层：`app/models/conversation_memory.py`（会话视图）、`app/models/run_state.py`（任务真值）、`app/services/context_manager.py`（只做投影；第 5 阶段起是门面，下面三个部分共用一个 `ContextBudget`：`conversation_context.py` 会话历史和长期记忆、`tool_result_projector.py` 工具结果的视图和转存、`request_fitter.py` 把一次请求放进窗口，含循环的两级折叠和溢出重试，D-082）；`conversation_archive.py` 归档原文，`summary_scheduler.py` 做后台摘要。长期记忆以 PostgreSQL（`postgres_memory_store.py`）为准，Milvus（`memory_vector_index.py`）是可重建的索引。RAG 检索链：`rag_search_service.py`（稠密 / BM25 / 混合）→ `reciprocal_rank_fusion.py` → `rag_reranker_service.py`。
 
 **工具（`app/tools/`）**：都注册进 `tool_registry.py`。文件系统、联网搜索（Tavily）和沙箱（Docker）都是 stdio MCP 子进程（各子目录下的 `server.py`），经 `mcp_client.py` + `mcp_tool_adapter.py` 接入；MCP 连接的进入和退出必须在同一个 asyncio task 里，并覆盖整个执行期。
 
