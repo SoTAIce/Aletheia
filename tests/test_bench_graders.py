@@ -204,3 +204,62 @@ def test_code_that_parses_as_a_whole_is_code_only():
     assert extract_code(code, 'python') == code
     prose = '已读取规格，实现如下：\n' + code
     assert extract_code(prose, 'python').startswith('def f():')
+
+
+# todo_html in a headless browser (deliverable-quality-001). Skipped without node + Playwright.
+from pathlib import Path as _Path
+
+from bench.graders import BEHAVIOUR_CHECKS, html_behaviour
+
+_REFERENCE = (_Path(__file__).resolve().parents[1] / 'bench' / 'tasks' / 'todo_html' / 'reference.html').read_text(
+    encoding='utf-8')
+_BROWSER = html_behaviour(_REFERENCE) is not None
+browser = pytest.mark.skipif(not _BROWSER, reason='node with Playwright is not available')
+
+
+def _failed(html):
+    return {k for k, v in grade_html_todo(html, browser=True).items() if v is not True}
+
+
+def test_without_a_browser_the_static_checks_stay(monkeypatch):
+    import bench.graders as graders
+    monkeypatch.setattr(graders.shutil, 'which', lambda name: None)
+    checks = grade_html_todo(_REFERENCE, browser=True)
+    assert 'enter_key_and_trim' in checks and not set(BEHAVIOUR_CHECKS) & set(checks)
+
+
+@browser
+def test_a_correct_form_submit_page_passes_in_the_browser_but_not_the_old_text_check():
+    assert grade_html_todo(_REFERENCE)['enter_key_and_trim'] is False      # the old false failure
+    assert _failed(_REFERENCE) == set()
+    assert set(BEHAVIOUR_CHECKS) <= set(grade_html_todo(_REFERENCE, browser=True))
+
+
+@browser
+@pytest.mark.parametrize('old, new, wrong', [
+    ('const text = input.value.trim();', 'const text = input.value;', {'enter_adds_trimmed', 'blank_not_added'}),
+    ('<form class="row" id="add-form">', '<div class="row" id="add-form">', {'enter_adds_trimmed'}),
+    ('function save() { localStorage.setItem(KEY, JSON.stringify(todos)); }', 'function save() {}',
+     {'enter_adds_trimmed', 'persists_after_reload'}),
+    ('.todo-item.done .text { text-decoration: line-through; }', '', {'complete_strikethrough'}),
+    ('if (filter === "active" && todo.done) continue;', '', {'filters_show_matching_items'}),
+    ('body { margin: 0;', 'body { min-width: 600px; margin: 0;', {'no_horizontal_scroll_375'}),
+    ('render();\n</script>', 'render(); undefinedFunction();\n</script>', {'no_script_errors'}),
+])
+def test_wrong_pages_fail_the_matching_behaviour(old, new, wrong):
+    assert _REFERENCE.count(old) == 1
+    html = _REFERENCE.replace(old, new)
+    if 'add-form' in new:      # a div cannot submit: the button gets a click handler instead
+        html = html.replace('</form>', '</div>').replace(
+            'document.getElementById("add-form").addEventListener("submit", event => {\n    event.preventDefault();',
+            'document.getElementById("add-btn").addEventListener("click", event => {')
+    assert wrong <= _failed(html), _failed(html)
+    assert 'button_adds' not in _failed(html) or 'no_script_errors' in wrong
+
+
+@browser
+def test_the_page_cannot_reach_the_network(tmp_path):
+    # Requests other than the page are aborted; the static check still refuses external URLs.
+    html = _REFERENCE.replace('</head>', '<script src="http://127.0.0.1:9/x.js"></script></head>')
+    failed = _failed(html)
+    assert 'no_external_resources' in failed

@@ -60,7 +60,7 @@ def load_tasks(names, split='tune'):
 
 def grade(task, content):
     if task['grader'] == 'html_todo':
-        return grade_html_todo(content)
+        return grade_html_todo(content, browser=True)
     if task['grader'] == 'python_checks':
         return grade_python(content, task['dir'] / task['checker'])
     if task['grader'] == 'answer_json':
@@ -277,6 +277,9 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
                 checks['workspace_unchanged'] = _snapshot(root) == before
             row['checks_passed'], row['checks_total'], row['passed'] = summarize(checks)
             row['failed_checks'] = sorted(k for k, v in checks.items() if v is not True)
+            if task['grader'] == 'html_todo':
+                # Which kind of checks graded the page: in a browser, or the source text only.
+                row['html_checks'] = 'browser' if 'enter_adds_trimmed' in checks else 'static'
             if checks.get('_reason') in _GUARD_REASONS:
                 row['guard_reason'] = checks['_reason']  # host enum: why the static guard refused
             row.update(lenient(task, content))

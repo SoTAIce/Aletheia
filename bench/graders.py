@@ -56,8 +56,42 @@ class _Collector(HTMLParser):
 _EXTERNAL = re.compile(r'^\s*(https?:)?//', re.I)
 
 
-def grade_html_todo(html: str) -> dict:
-    """Static checks for bench/tasks/todo_html/spec.md; behaviour is checked by hand in a browser."""
+_BEHAVIOUR_SCRIPT = Path(__file__).with_name('todo_behaviour.cjs')
+BEHAVIOUR_CHECKS = ('enter_adds_trimmed', 'button_adds', 'blank_not_added', 'complete_strikethrough',
+                    'remaining_count_updates', 'filters_show_matching_items', 'persists_after_reload',
+                    'delete_removes_item', 'no_horizontal_scroll_375', 'no_script_errors')
+
+
+def html_behaviour(html: str, timeout: float = 60.0) -> dict | None:
+    """The todo page's behaviour in a headless browser (bench/todo_behaviour.cjs), or None when
+    node or its Playwright is not available. The page runs from a file in a fresh TEMP directory
+    and every other request is aborted."""
+    node = shutil.which('node')
+    if node is None:
+        return None
+    with tempfile.TemporaryDirectory(prefix='aletheia-todo-') as directory:
+        page = Path(directory) / 'index.html'
+        page.write_text(html, encoding='utf-8')
+        try:
+            done = subprocess.run([node, str(_BEHAVIOUR_SCRIPT), str(page)], capture_output=True, text=True,
+                                  encoding='utf-8', errors='replace', timeout=timeout, cwd=directory)
+            result = json.loads(done.stdout.strip().splitlines()[-1])
+        except (subprocess.TimeoutExpired, ValueError, IndexError, OSError):
+            return None
+    checks = result.get('checks') if isinstance(result, dict) else None
+    if not isinstance(checks, dict) or set(checks) != set(BEHAVIOUR_CHECKS):
+        return None
+    return {name: checks[name] is True for name in BEHAVIOUR_CHECKS}
+
+
+def grade_html_todo(html: str, browser: bool = False) -> dict:
+    """Checks for bench/tasks/todo_html/spec.md.
+
+    Static checks look at the source. With browser=True and a browser available, the page is also
+    operated (typing, Enter, the button, checkbox, filters, reload, delete, 375 px width), and those
+    results replace the static enter_key_and_trim, which refused correct pages that add on Enter
+    through a <form> submit (deliverable-quality-001). Without a browser the static check stays.
+    """
     html = strip_fence(html)
     parser = _Collector()
     try:
@@ -68,7 +102,7 @@ def grade_html_todo(html: str) -> dict:
         parsed = False
     viewport = any(m.get('name') == 'viewport' and 'width=device-width' in (m.get('content') or '')
                    for m in parser.metas)
-    return {
+    checks = {
         'parses': parsed,
         'doctype_and_close': bool(re.match(r'\s*<!doctype html', html, re.I)) and html.rstrip().lower().endswith('</html>'),
         'no_external_resources': not any(_EXTERNAL.match(u) for u in parser.urls)
@@ -82,6 +116,11 @@ def grade_html_todo(html: str) -> dict:
         'localstorage_todos_key': all(_uses_todos_key(html, op) for op in ('getItem', 'setItem')),
         'viewport_meta': viewport,
     }
+    behaviour = html_behaviour(html) if browser else None
+    if behaviour is not None:
+        del checks['enter_key_and_trim']
+        checks.update(behaviour)
+    return checks
 
 
 def _uses_todos_key(html: str, op: str) -> bool:

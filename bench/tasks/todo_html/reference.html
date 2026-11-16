@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>待办事项</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 16px; font-family: system-ui, sans-serif; }
+  .row { display: flex; gap: 8px; }
+  #new-todo { flex: 1; min-width: 0; padding: 6px; }
+  ul { list-style: none; padding: 0; }
+  .todo-item { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+  .todo-item .text { flex: 1; overflow-wrap: anywhere; }
+  .todo-item.done .text { text-decoration: line-through; }
+  footer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+</style>
+</head>
+<body>
+<h1>待办事项</h1>
+<form class="row" id="add-form">
+  <input id="new-todo" placeholder="要做什么？" autocomplete="off">
+  <button id="add-btn" type="submit">添加</button>
+</form>
+<ul id="list"></ul>
+<footer>
+  <span>未完成：<span id="remaining-count">0</span></span>
+  <button data-filter="all">全部</button>
+  <button data-filter="active">未完成</button>
+  <button data-filter="completed">已完成</button>
+</footer>
+<script>
+  // Enter in the input submits the form, the same path as the button (spec item 2).
+  const KEY = "todos";
+  let todos = [];
+  try { todos = JSON.parse(localStorage.getItem(KEY) || "[]"); } catch (e) { todos = []; }
+  let filter = "all";
+  const list = document.getElementById("list");
+  const input = document.getElementById("new-todo");
+
+  function save() { localStorage.setItem(KEY, JSON.stringify(todos)); }
+
+  function render() {
+    list.textContent = "";
+    for (const todo of todos) {
+      if (filter === "active" && todo.done) continue;
+      if (filter === "completed" && !todo.done) continue;
+      const li = document.createElement("li");
+      li.className = "todo-item" + (todo.done ? " done" : "");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = todo.done;
+      box.addEventListener("change", () => { todo.done = box.checked; save(); render(); });
+      const text = document.createElement("span");
+      text.className = "text";
+      text.textContent = todo.text;
+      const del = document.createElement("button");
+      del.className = "delete-btn";
+      del.textContent = "删除";
+      del.addEventListener("click", () => { todos = todos.filter(t => t !== todo); save(); render(); });
+      li.append(box, text, del);
+      list.append(li);
+    }
+    document.getElementById("remaining-count").textContent = String(todos.filter(t => !t.done).length);
+  }
+
+  document.getElementById("add-form").addEventListener("submit", event => {
+    event.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    todos.push({ text, done: false });
+    input.value = "";
+    save();
+    render();
+  });
+  for (const button of document.querySelectorAll("[data-filter]")) {
+    button.addEventListener("click", () => { filter = button.dataset.filter; render(); });
+  }
+  render();
+</script>
+</body>
+</html>
