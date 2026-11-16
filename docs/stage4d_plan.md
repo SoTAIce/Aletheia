@@ -1,6 +1,6 @@
 # 第 4 阶段 4d：模型档案（设计）
 
-日期：2026-11-12。状态：**用户已回答第 7 节；4d-1、4d-3 已实现（第 9 节，D-078），4d-2、4d-4 等有第二个模型再做**（stage4d-001）。
+日期：2026-11-12。状态：**用户已回答第 7 节；4d-1、4d-3 已实现（第 9 节，D-078）；4d-2 已实现（第 10、11 节，D-084，2026-11-16）；4d-4 真实评测等有第二个模型再做**（stage4d-001）。
 来源：用户 2026-11-12“接下来来设计4d方案吧”。依据是当前 `main`（`e6973f3`）和 [第 4 阶段方案](stage4_plan.md) 第 3 节“4d 模型档案”。
 
 ## 1. 现状（以代码为准）
@@ -269,3 +269,44 @@ explorer = "cheap"
 - **计量**：两个档案的 `by_profile` 和费用相加；有一个档案缺价格时费用是 `None`；只有 `default` 时快照的费用和现在相同。
 - **评测行和轨迹**：`calls` 带 `profile`；查看器显示档案名。
 - 全部测试照 `init.ps1` 的方式跑。
+
+## 11. 4d-2 实现记录（2026-11-16，Claude）
+
+提交 `2f99803`（本地 `main`），按第 10 节实现，没有偏离。没有调用模型。
+
+- **档案文件**：
+  - `app/models/model_profile.py` 新增 `ModelProfiles`、`load_profiles`、`ModelProfileError`；
+  - `Settings.model_profiles()`；
+  - 新设置 `MODEL_PROFILES_FILE`（默认 `models.toml`）；
+  - 仓库新增 `models.example.toml`，`.gitignore` 加 `models.toml`，`.env.example` 加说明。
+- **接线**：
+  - 服务层：`RagAgentService._role_models` 和 `_base_models` 按档案建模型，同一地址、密钥变量和时限的档案共用客户端；`_member_role` 给另一个档案的成员另建上下文管理器。
+  - 执行器依赖：`step_runner.RoleModel`、`RunnerDependencies.member` 和 `explorer`、`LoopRun(..., member, explorer)` 以及 `rebind`。
+  - 运行装配：`RunAssembler.run(route_model, member, explorer)`；成员角色只在设了时才传，所以只用主模型时装配和以前完全一样。
+  - 委派：`MemberSpawner(..., role)`，`DelegatingLoopRunner`、`ExploreDelegation`、`ExploreLoopRunner` 都多收 `member`。
+- **计量、追踪和评测**：
+  - `profile_model` 给模型记上档案；`RunMeter` 按档案累计用量和费用。
+  - `HookedModel` 的模型调用事件在有档案时加 `profile`，轨迹查看器显示“档案 xxx”。
+  - 评测行的 `calls` 保留 `profile`；用到两个以上档案时加 `by_profile`。
+- **启动检查**：
+  - `python -m app.agent` 和 `python -m app.api` 遇到有错的档案文件，打印 `ModelProfileError: …`，退出码 2。
+  - `--show-limits` 列出每个角色的档案、模型和窗口。
+  - 在云端用真实设置试过：没有档案文件时四个角色都是 `default`（`gpt-5.6-luna`，128,000）；用示例文件时 `route`、`member`、`explorer` 换成 `cheap`；路径写错时退出码 2。
+- **测试**：
+  - `tests/test_model_profiles.py` 34 项：
+    - 解析和 11 种错误；
+    - 空密钥报错且不显示密钥；
+    - 示例文件能读；
+    - 只建用到的模型，客户端共用；
+    - 钩子包装每个模型一次；
+    - 成员上下文按自己的窗口建；
+    - 团队成员和调研成员确实用各自的模型；
+    - 续跑时用新的成员模型；
+    - 路由用路由模型；
+    - 按档案计量和费用相加，没有档案的调用照旧计价；
+    - 轨迹和评测行带档案名；
+    - 命令行的启动检查和限额表。
+  - 有 4 处故意改错各自被测试抓到：装配不传团队成员、不传调研成员、路由不用路由模型、`LoopRun` 不把成员角色放进依赖。
+  - `tests/test_stage4_cleanup.py` 里 `LoopRun.rebind` 的签名断言加上 `member`、`explorer`。
+- **全部测试（云端 Linux）**：1908 通过、23 跳过、4 失败（只在 Windows 上成立的路径断言，同前）。黄金对照文件都没有改。
+- **你本机**：不建 `models.toml` 就什么都不变。以后要加模型时，把 `models.example.toml` 复制成 `models.toml`，填地址、模型名和放密钥的变量名，把密钥写进 `.env`。

@@ -58,7 +58,7 @@ pytest 配置在 `pyproject.toml`（`asyncio_mode = "auto"`，测试只在内存
 
 **工具（`app/tools/`）**：都注册进 `tool_registry.py`。文件系统、联网搜索（Tavily）和沙箱（Docker）都是 stdio MCP 子进程（各子目录下的 `server.py`），经 `mcp_client.py` + `mcp_tool_adapter.py` 接入；MCP 连接的进入和退出必须在同一个 asyncio task 里，并覆盖整个执行期。
 
-**配置**：`app/config.py`（pydantic-settings，读取 `.env`，参考 `.env.example`）；对话模型的地址、窗口、能力和价格由 `Settings.agent_model_profile` 收成一个 `ModelProfile`（`app/models/model_profile.py`，D-078）。模型走 DashScope 兼容接口；Milvus 本地栈在 `deploy/milvus/compose.yaml`。
+**配置**：`app/config.py`（pydantic-settings，读取 `.env`，参考 `.env.example`）；对话模型的地址、窗口、能力和价格由 `Settings.agent_model_profile` 收成一个 `ModelProfile`（`app/models/model_profile.py`，D-078）；可选的 `models.toml`（`MODEL_PROFILES_FILE`，模板 `models.example.toml`）可以给路由、团队成员、调研成员各配一个档案，没有这个文件时四个角色都用默认档案（`Settings.model_profiles()`，D-084）。模型走 DashScope 兼容接口；Milvus 本地栈在 `deploy/milvus/compose.yaml`。
 
 ## 注意
 
