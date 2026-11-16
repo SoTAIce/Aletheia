@@ -110,8 +110,9 @@ async def test_a_message_may_pick_the_team_in_a_single_default_service(fake_runt
     team, single = fake_runtime
     assert team.options['step_description'] == TEAM_STEP and single.options['step_description'] == LOOP_STEP
     assert callable(team.options['runner_factory'])
-    assert team.options['step_timeout_seconds'] >= SANDBOX.timeout_seconds + 5   # widened for the team only
-    assert single.options['step_timeout_seconds'] == LoopOptions().timeout_seconds + 5   # the loop's own limit
+    # Each mode's task deadline is its own runner's limit, not widened (stage 5b).
+    assert team.options['step_timeout_seconds'] == SANDBOX.timeout_seconds
+    assert single.options['step_timeout_seconds'] == LoopOptions().timeout_seconds
     assert events[0] == {'type': 'route', 'mode': 'team', 'read_only': False,
                          'options': {'mode': 'team', 'runner': 'loop', 'write': True, 'memory': False}}
 
@@ -353,7 +354,7 @@ async def test_the_web_launcher_always_prepares_the_team_but_keeps_the_default_m
     team = seen['team_options']
     assert isinstance(team, DelegationOptions)
     assert ('write_file' in team.allowed_tools) is writes and team.require_passing_run is sandbox
-    assert seen['step_timeout_seconds'] is None            # the service widens team tasks only
+    assert 'step_timeout_seconds' not in seen               # each runner brings its own deadline (5b)
     assert seen['app']['write_enabled'] is writes
     # The routing rules are unchanged: auto without the sandbox never offers the team (D-026).
     assert route_selection.allowed_modes(team)[0] == frozenset({'single'})

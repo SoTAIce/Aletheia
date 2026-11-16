@@ -187,10 +187,11 @@ async def test_team_timeout_and_cancellation_are_not_member_reports():
     import asyncio
     async def stalled(messages, tools):
         await asyncio.sleep(10)
-    runner = DelegatingLoopRunner(SimpleNamespace(generate=stalled), _registry(),
-                                  DelegationOptions(timeout_seconds=0.001))
+    # The team deadline belongs to LoopRun (stage 5b); here the caller's timeout stands in for it.
+    runner = DelegatingLoopRunner(SimpleNamespace(generate=stalled), _registry(), DelegationOptions())
     with pytest.raises(TimeoutError):
-        await runner.run(_context())
+        async with asyncio.timeout(0.001):
+            await runner.run(_context())
     async def cancelled(messages, tools):
         raise asyncio.CancelledError
     runner = DelegatingLoopRunner(SimpleNamespace(generate=cancelled), _registry(), DelegationOptions())
@@ -217,7 +218,7 @@ async def test_service_uses_delegating_loop_factory_and_one_step_runtime(monkeyp
             team_options=DelegationOptions(timeout_seconds=3)) as service:
         result = await service.query_result('Explain this', 'test')
     assert isinstance(captured['instance']._runner.runner, DelegatingLoopRunner)
-    assert captured['step_timeout_seconds'] >= 8 and 'max_replans' not in captured
+    assert captured['step_timeout_seconds'] == 3 and 'max_replans' not in captured   # the team deadline (5b)
     assert result.status is TaskStatus.COMPLETED and result.content == 'answer'
     assert result.execution_count == 1 and result.replan_count == 0 and model.generate.await_count == 1
     assert result.step_log[0]['runner'] == 'agent_team'
@@ -793,3 +794,43 @@ async def test_team_without_run_hooks_does_not_install_its_gate_as_run_hooks():
         await DelegatingLoopRunner(HookedModel(model), _registry(*_sandbox_tools()), SANDBOX).run(_context())
     assert _policy_denial(caught.value).hook == 'hooks_not_installed'   # LoopRun reports it as 'hooks'
     assert model.requests == []
+
+
+class _Waits(FakeTool):
+    """read_file that takes `seconds`; with `approval`, that time counts as waiting for the user."""
+
+    def __init__(self, seconds, approval=False):
+        super().__init__('read_file', 'x = 1')
+        self.seconds, self.approval = seconds, approval
+
+    async def invoke(self, arguments):
+        import asyncio
+        from app.agent.hooks import extend_deadlines
+        if self.approval:
+            extend_deadlines(self.seconds + 1)          # what the approval gate does while it waits (D-061)
+        await asyncio.sleep(self.seconds)
+        return await super().invoke(arguments)
+
+
+async def test_a_member_has_its_own_deadline_and_the_lead_continues():
+    # Stage 5b: members had no limit of their own inside the team deadline.
+    model = Scripted(delegate('d'), call('r', 'read_file', path='a.py'), text('answer myself'))
+    options = DelegationOptions(member_timeout_seconds=0.05)
+    output = await DelegatingLoopRunner(model, _registry(_Waits(5)), options).run(_context())
+    report = reports(model)[0]
+    assert report['status'] == 'error' and report['failure'] == 'TimeoutError'
+    assert '0.05-second limit' in report['note'] and output.content == 'answer myself'
+
+
+async def test_waiting_for_an_approval_does_not_use_up_a_members_deadline():
+    model = Scripted(delegate('d'), call('r', 'read_file', path='a.py'), text('notes'), text('answer'))
+    options = DelegationOptions(member_timeout_seconds=0.05)
+    await DelegatingLoopRunner(model, _registry(_Waits(0.2, approval=True)), options).run(_context())
+    assert reports(model)[0]['status'] == 'succeeded'
+
+
+@pytest.mark.parametrize('name', ['timeout_seconds', 'member_timeout_seconds'])
+@pytest.mark.parametrize('value', [0, -1, float('inf'), float('nan'), True, '5'])
+def test_team_deadlines_are_validated(name, value):
+    with pytest.raises(ValueError):
+        DelegationOptions(**{name: value})

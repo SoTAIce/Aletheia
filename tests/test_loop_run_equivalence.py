@@ -115,7 +115,8 @@ def build(new, turns, *, mode='loop', options=None, limits=None, invoke=None, wr
         runner = assemble(deps)
         return wrap(runner, deps) if wrap is not None else runner
     kwargs = dict(runner_factory=factory,
-                  step_timeout_seconds=max(60, options.timeout_seconds + 5), context_manager=manager)
+                  # As RunAssembler does since stage 5b: the runner's own limit is the task deadline.
+                  step_timeout_seconds=options.timeout_seconds, context_manager=manager)
     kwargs.update(limits or {})
     runtime = LoopRun(memory, model, registry, step_description=TEAM_STEP if mode == 'team' else LOOP_STEP, **kwargs)
     return runtime, model, store

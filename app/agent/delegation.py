@@ -34,7 +34,9 @@ class DelegationOptions:
     worker_tool_rounds: int = 12
     worker_tool_calls: int = 24
     report_chars: int = 1500
+    # The team's task deadline (LoopRun enforces it) and each member's own limit inside it (stage 5b).
     timeout_seconds: float = 180
+    member_timeout_seconds: float = 120
 
     def __post_init__(self):
         if not isinstance(self.allowed_tools, frozenset) or any(
@@ -47,9 +49,10 @@ class DelegationOptions:
                      'worker_tool_calls', 'report_chars'):
             if type(getattr(self, name)) is not int or getattr(self, name) < 1:
                 raise ValueError(f'{name} must be a positive integer')
-        if (type(self.timeout_seconds) not in (int, float) or not math.isfinite(self.timeout_seconds)
-                or self.timeout_seconds <= 0):
-            raise ValueError('timeout_seconds must be finite and positive')
+        for name in ('timeout_seconds', 'member_timeout_seconds'):
+            value = getattr(self, name)
+            if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f'{name} must be finite and positive')
 
 
 _UNAVAILABLE = 'Model requested unavailable tool: '
@@ -272,11 +275,21 @@ class DelegatingLoopRunner:
                  'required': ['decision', 'problems']})
             host_tools = (HostTool(definition, decide),)
         spawner = MemberSpawner(self.model, self.registry, self.context_manager)
-        runner, seen = spawner.build(tools, LoopOptions(o.worker_tool_rounds, o.worker_tool_calls, o.timeout_seconds),
+        runner, seen = spawner.build(tools, LoopOptions(o.worker_tool_rounds, o.worker_tool_calls,
+                                                        o.member_timeout_seconds),
                                      self._worker_brief(task, role), host_tools)
         entry = {'member': name, 'role': role, 'tools': sorted(tools)}
         try:
-            output = await spawner.run(runner, context, name)
+            # The member's own limit (stage 5b). Nested in the task deadline, so it never outlasts the
+            # task; time waiting for the user's approval does not count (D-061).
+            async with asyncio.timeout(o.member_timeout_seconds) as deadline:
+                with pausable_deadline(deadline):
+                    output = await spawner.run(runner, context, name)
+        except TimeoutError:
+            report = {'member': name, 'status': 'error', 'failure': 'TimeoutError',
+                      'note': f'the member reached its {o.member_timeout_seconds:g}-second limit; '
+                              'the host kept the tool results it observed'}
+            entry.update(status='error', failure='TimeoutError')
         except StepRunError as exc:
             failure = failure_types(failure_details(exc))
             report = {'member': name, 'status': 'error', 'failure': failure}
@@ -364,10 +377,9 @@ class DelegatingLoopRunner:
                           'Reply with the final answer as plain text, without a status envelope.'),
             finish_state=lambda: self._state(run), finish_gates=(gate,) if hooks is None else ())
         try:
+            # The team deadline is LoopRun's task deadline (stage 5b); members have their own inside it.
             with using_hooks(hooks) if hooks is not None else nullcontext():
-                async with asyncio.timeout(self.options.timeout_seconds) as deadline:
-                    with pausable_deadline(deadline):
-                        output = await lead.run(context)
+                output = await lead.run(context)
             return replace(output, observation=json.dumps({'team': 'loop',
                 'delegations': run.budget['delegations'], 'members': [e['member'] for e in run.trace]}),
                 tool_calls=tuple(run.calls), tool_results=tuple(run.results), source_refs=tuple(run.refs))
@@ -504,8 +516,9 @@ class ExploreDelegation:
         logged = len(meter.call_log) if meter is not None else 0
         report = {'member': name}
         try:
-            async with asyncio.timeout(o.member_timeout_seconds):
-                output = await self.spawner.run(runner, _member_context(context, task), name)
+            async with asyncio.timeout(o.member_timeout_seconds) as deadline:
+                with pausable_deadline(deadline):      # an approval wait does not count (D-061)
+                    output = await self.spawner.run(runner, _member_context(context, task), name)
         except (StepRunError, TimeoutError) as exc:
             # Exception type names only, never provider text or model output.
             report.update(status='error', failure=(failure_types(failure_details(exc))

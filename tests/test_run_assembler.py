@@ -53,7 +53,7 @@ async def test_a_single_task_is_one_loop_with_one_attempt():
     runtime, result = await _run(assembler)
     assert runtime.kwargs['step_description'] == LOOP_STEP and isinstance(_runner(runtime), AgentLoopRunner)
     assert 'max_replans' not in runtime.kwargs and runtime.kwargs['max_executions'] == 16
-    assert runtime.kwargs['step_timeout_seconds'] == LoopOptions().timeout_seconds + 5
+    assert runtime.kwargs['step_timeout_seconds'] == LoopOptions().timeout_seconds   # the task deadline (5b)
     assert events == [{'type': 'route', 'mode': 'single', 'read_only': False,
                        'options': {'mode': 'single', 'runner': 'loop', 'write': True, 'memory': False}}]
     assert routes[('k', 't1')].mode == 'single' and task_options[('k', 't1')]['runner'] == 'loop'

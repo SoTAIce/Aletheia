@@ -133,7 +133,7 @@ class RagAgentService:
         self, streaming: bool = True, model: Any | None = None, *,
         mcp_servers: Sequence[StdioServerParameters] | None = None,
         knowledge_search=None, include_knowledge: bool = True,
-        max_executions: int = 16, step_timeout_seconds: float | None = None,
+        max_executions: int = 16,
         memory_directory=None, conversation_compressor=None,
         longterm_memory:"LongTermMemoryService | None" = None,
         longterm_recall_limit: int = 5,
@@ -165,7 +165,7 @@ class RagAgentService:
         if loop_options is not None and not isinstance(loop_options, LoopOptions):
             raise TypeError('loop_options must be LoopOptions')
         self._single_runner = single_runner
-        self._loop_options = loop_options or LoopOptions()
+        self._loop_options = loop_options or LoopOptions(timeout_seconds=config.agent_task_timeout_seconds)
         # On-demand read-only delegation inside the single loop (loop-delegate-001); off by default.
         if type(delegate) is not bool:
             raise TypeError('delegate must be a bool')
@@ -191,9 +191,8 @@ class RagAgentService:
         self._session_workspaces: dict = {}     # conversation key -> directory of its last task
         self._knowledge_search = knowledge_search
         self._include_knowledge = include_knowledge
-        self._limits = dict(max_executions=max_executions,
-                            step_timeout_seconds=(config.agent_step_timeout_seconds
-                                                  if step_timeout_seconds is None else step_timeout_seconds))
+        # The task deadline comes from the chosen runner's options (RunAssembler, stage 5b).
+        self._limits = dict(max_executions=max_executions)
         self._run_assembler = RunAssembler(
             team_options=self._team_options, loop_options=self._loop_options, delegate=self._delegate,
             limits=self._limits, routes=self._routes, task_options=self._task_options,

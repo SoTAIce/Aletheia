@@ -9,7 +9,7 @@ import asyncio
 import ipaddress
 from contextlib import AsyncExitStack
 
-from app.agent.__main__ import sandbox_problem, step_timeout_for, team_options_for
+from app.agent.__main__ import deadline_problem, sandbox_problem, team_options_for
 from app.config import config
 from app.services.rag_agent_service import RagAgentService
 from app.tools.tool_loader import local_mcp_servers
@@ -71,8 +71,12 @@ async def serve(args) -> int:
             memory = await stack.enter_async_context(open_longterm_memory())
         # The team is always prepared under the fixed-team rules so a message may pick it; the default
         # mode stays --execution-mode, and auto still allows the team only with writes and the sandbox
-        # (D-026). The step timeout widens for team tasks only, inside the service (D-051).
+        # (D-026). Each mode's task deadline comes from its own options (stage 5b).
         team_options = team_options_for('team', write_root or choice, args.sandbox)
+        problem = deadline_problem(args.sandbox, team_options)
+        if problem:
+            print(f'DeadlineError: {problem}')
+            return 2
         service = await stack.enter_async_context(RagAgentService(
             mcp_servers=local_mcp_servers(
                 filesystem_root=filesystem_root,
@@ -85,7 +89,7 @@ async def serve(args) -> int:
             workspace_policy=policy, default_workspace=write_root or filesystem_root,
             include_knowledge=not args.no_knowledge, execution_mode=args.execution_mode,
             single_runner=args.single_runner, delegate=args.delegate,
-            team_options=team_options, step_timeout_seconds=step_timeout_for(args.sandbox, None),
+            team_options=team_options,
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
         ))
         app = create_app(service, user_id=config.web_user_id, access_token=config.web_access_token,

@@ -24,19 +24,20 @@ async def test_configured_timeout_reaches_provider_and_runtime(monkeypatch):
         return httpx.Response(200, json=response("Verified").model_dump())
 
     monkeypatch.setattr(config, "rag_model_timeout_seconds", 90.0)
-    monkeypatch.setattr(config, "agent_step_timeout_seconds", 240.0)
+    monkeypatch.setattr(config, "agent_task_timeout_seconds", 240.0)
     monkeypatch.setattr(module, "AsyncOpenAI", lambda **kwargs: AsyncOpenAI(
         **(kwargs | {"api_key": "test-key", "base_url": "https://example.com/v1"}),
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(respond)),
     ))
     service = RagAgentService(mcp_servers=(), include_knowledge=False)
-    assert service._limits["step_timeout_seconds"] == 240.0
+    assert service._loop_options.timeout_seconds == 240.0          # the single loop's task deadline (5b)
+    assert service._limits == {"max_executions": 16}
     assert "planning_timeout_seconds" not in service._limits    # plan mode went in stage 4c
     async with service._models(hooks=EMPTY) as model:
         turn = await model.generate((UserMessage("Verify timeout configuration"),), ())
         assert turn.content == "Verified"
-    override = RagAgentService(step_timeout_seconds=5)
-    assert override._limits["step_timeout_seconds"] == 5
+    with pytest.raises(TypeError):
+        RagAgentService(step_timeout_seconds=5)                  # replaced by the runner's own deadline
 
 
 def response(content=None, calls=None):

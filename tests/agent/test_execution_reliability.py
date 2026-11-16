@@ -12,9 +12,16 @@ def test_every_failure_kind_has_a_chinese_message():
     assert all(text and not text.isascii() for text in FAILURE_MESSAGES.values())
 
 
-def test_the_step_deadline_outlasts_a_sandbox_call():
-    from app.agent.__main__ import step_timeout_for
+def test_a_task_deadline_shorter_than_a_sandbox_call_is_refused_at_start_up(monkeypatch):
+    # Stage 5b: the deadline is no longer widened behind the user's back (D-033).
+    from app.agent.__main__ import deadline_problem
+    from app.agent.delegation import DelegationOptions
+    from app.config import config
     from app.tools.sandbox.executor import host_call_timeout_seconds
-    assert step_timeout_for(False, None) is None
-    assert step_timeout_for(True, None) >= host_call_timeout_seconds() + 30
-    assert step_timeout_for(True, SimpleNamespace(timeout_seconds=400)) == 405
+    call = host_call_timeout_seconds()
+    assert deadline_problem(False, DelegationOptions(timeout_seconds=1)) is None
+    assert deadline_problem(True, DelegationOptions()) is None          # defaults: 480 / 180 > one call
+    short = deadline_problem(True, DelegationOptions(timeout_seconds=call))
+    assert 'team' in short and 'single' not in short and '--team-timeout' in short
+    monkeypatch.setattr(config, 'agent_task_timeout_seconds', call - 1)
+    assert 'single' in deadline_problem(True, None)

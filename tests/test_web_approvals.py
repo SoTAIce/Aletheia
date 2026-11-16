@@ -97,12 +97,13 @@ async def test_no_answer_in_time_is_a_denial(tmp_path):
     assert 'did not answer within 0.05 seconds' in told['error']
 
 
-async def test_waiting_for_the_user_does_not_use_up_the_step_time(tmp_path):
-    svc = service(tmp_path, [call(), outcome('in time')], step_timeout_seconds=0.3)
+async def test_waiting_for_the_user_does_not_use_up_the_task_deadline(tmp_path):
+    from app.agent.agent_loop import LoopOptions
+    svc = service(tmp_path, [call(), outcome('in time')], loop_options=LoopOptions(timeout_seconds=0.3))
     async with api(svc, **approvals_on(approval_wait_seconds=5)) as web:
         await web.send('s', 'what time is it', 'r')
         approval_id = await pending(web, 'r')
-        await asyncio.sleep(0.6)                                    # longer than the whole step allows
+        await asyncio.sleep(0.6)                                    # longer than the whole task allows
         await answer(web, 'r', approval_id, 'allow')
         events = await web.events('r')
     assert events[-1]['type'] == 'completed' and events[-1]['content'] == 'in time'

@@ -72,8 +72,8 @@ class RunAssembler:
                         return AgentLoopRunner(deps.model, deps.tool_registry, self._loop_options,
                                                deps.context_manager, store)
                 runner_timeout = self._loop_options.timeout_seconds
-            # The task's one step must outlast its runner.
-            limits['step_timeout_seconds'] = max(limits['step_timeout_seconds'], runner_timeout + 5)
+            # The runner's own time limit is the task deadline; LoopRun enforces it once (stage 5b).
+            limits['step_timeout_seconds'] = runner_timeout
             from app.agent.agent_loop import LOOP_STEP, TEAM_STEP
             from app.agent.loop_run import LoopRun
             build = loop_run_factory or LoopRun

@@ -62,18 +62,25 @@ def team_options_for(execution_mode, write_root, sandbox=False, timeout_seconds=
                              else timeout_seconds)
 
 
-def step_timeout_for(sandbox, team_options):
-    """A step must outlast one sandbox call, so the sandbox's own timeout result is seen (D-033).
-
-    None keeps the configured default (the service still widens it for the team).
-    """
+def deadline_problem(sandbox, team_options):
+    """With the sandbox, every task deadline must outlast one sandbox call so its own timeout
+    result is seen (D-033). Refused at start-up; the deadline is no longer widened (stage 5b)."""
     if not sandbox:
         return None
+    from app.agent.run_limits import RunLimits
     from app.tools.sandbox.executor import host_call_timeout_seconds
-    seconds = max(config.agent_step_timeout_seconds, host_call_timeout_seconds() + 30)
-    if team_options is not None:
-        seconds = max(seconds, team_options.timeout_seconds + 5)
-    return seconds
+    return RunLimits.current(team=team_options).sandbox_problem(host_call_timeout_seconds())
+
+
+def show_limits(args) -> str:
+    """The --show-limits table: every limit this command line would run under; no model call."""
+    from app.agent.run_limits import RunLimits
+    write_root = args.write_root or config.mcp_filesystem_write_root or None
+    team = team_options_for(getattr(args, 'execution_mode', 'single'), write_root,
+                            getattr(args, 'sandbox', False), getattr(args, 'team_timeout', None))
+    return RunLimits.current(team=team, max_executions=args.max_executions,
+                             max_total_tokens=getattr(args, 'max_tokens', None),
+                             max_seconds=getattr(args, 'max_seconds', None)).table()
 
 
 def result_record(result) -> dict:
@@ -263,6 +270,9 @@ def sandbox_problem(write_root, sandbox):
 
 
 async def main(args) -> int:
+    if getattr(args, 'show_limits', False):
+        print(show_limits(args))
+        return 0
     async with AsyncExitStack() as stack:
         compressor = None
         if getattr(args, 'compress_history', False):
@@ -293,6 +303,10 @@ async def main(args) -> int:
         args.user_id = getattr(args, 'user_id', None) or ('local' if memory is not None else None)
         team_options = team_options_for(getattr(args, 'execution_mode', 'single'), write_root, sandbox,
                                         getattr(args, 'team_timeout', None))
+        problem = deadline_problem(sandbox, team_options)
+        if problem:
+            print(f'DeadlineError: {problem}')
+            return 2
         from app.tools.tool_loader import workspace_servers
         service = await stack.enter_async_context(RagAgentService(
             hooks=trace_hooks(filesystem_root, write_root),
@@ -311,7 +325,6 @@ async def main(args) -> int:
             conversation_compressor=compressor,
             execution_mode=getattr(args, 'execution_mode', 'single'),
             team_options=team_options,
-            step_timeout_seconds=step_timeout_for(sandbox, team_options),
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
             single_runner=getattr(args, 'single_runner', 'loop'),
             delegate=getattr(args, 'delegate', False),
@@ -372,6 +385,8 @@ def build_parser():
                         help='Stop between model calls once this many tokens were used (D-034)')
     parser.add_argument('--max-seconds', type=_positive(float), help='Total time budget for the task in seconds (D-034)')
     parser.add_argument('--result-json', help='Also write the outcome, usage and step log as JSON here')
+    parser.add_argument('--show-limits', action='store_true',
+                        help='Print every limit and deadline this command line would use, then exit (no model call)')
     return parser
 
 

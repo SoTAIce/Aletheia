@@ -57,7 +57,9 @@ class Settings(BaseSettings):
     rag_json_mode: bool = True
     rag_enable_thinking: bool | None = None
     rag_model_timeout_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
-    agent_step_timeout_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
+    # The single loop's task deadline, enforced once by LoopRun (stage 5b). It replaced
+    # AGENT_STEP_TIMEOUT_SECONDS, which the loop and the team always widened away; that name is no longer read.
+    agent_task_timeout_seconds: float = Field(default=480.0, gt=0, allow_inf_nan=False)
     # Optional prices for the usage report; unset means no cost estimate (D-034).
     model_input_price_per_million_tokens: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     model_output_price_per_million_tokens: float | None = Field(default=None, ge=0, allow_inf_nan=False)

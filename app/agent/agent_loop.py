@@ -49,6 +49,8 @@ CONTEXT_FIELDS = ('task_id', 'active_goal', 'constraints', 'pinned_contexts', 'r
 class LoopOptions:
     max_tool_rounds: int = 20
     max_tool_calls: int = 40
+    # The loop's deadline, enforced by whoever runs it: LoopRun for the task's loop, the delegation for
+    # a member (stage 5b). The loop itself does not set a second one.
     timeout_seconds: float = 480.0
 
     def __post_init__(self):
