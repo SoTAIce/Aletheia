@@ -18,6 +18,14 @@
 
 ## Session Record
 
+### 2026-11-16 — stage4d-001（4d-2）：模型档案文件和角色
+
+- **Goal**：用户说检查点“暂时不急，后续可以实现，现在可以先做之前定下的其余阶段”；路线里第 0～5 阶段、钩子加固、交付质量都已完成，唯一剩下的是 4d-2/4d-4，用户选“现在做 4d-2”。
+- **Completed**：方案 `docs/stage4d_plan.md` 第 10 节；实现记录第 11 节；D-084。可选的 `models.toml`（`MODEL_PROFILES_FILE`）给 `route`、`member`、`explorer` 配各自的模型，`main` 不变；成员按自己档案的窗口建上下文；按档案计量和计费（`calls[].profile`、`by_profile`）；启动检查和 `--show-limits` 列出角色。
+- **Verification**：`tests/test_model_profiles.py` 34 项；4 处故意改错各被抓到；Linux 全部测试 1908 通过、23 跳过、4 失败（Windows 专用）；黄金对照文件未改；云端用真实设置跑 `--show-limits`（无模型调用）。
+- **Commits**：`b1ee2db`、`2f99803`、`973ef0c`（本地 `main`，待用户同意推送）。
+- **Next**：4d-4 真实评测等真有第二个模型；检查点（任务状态写盘、重启后续跑）用户说以后再做。
+
 ### 2026-11-16 — deliverable-quality-001：交付质量（评分修正）
 
 - **Goal**：用户在第 5 阶段后选“交付质量”；回答“关闭待办并修误判”“按行为判定”“两种答案都算对”“Claude 直接实现”。

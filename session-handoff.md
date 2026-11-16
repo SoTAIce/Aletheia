@@ -1,5 +1,12 @@
 # Current Session Handoff — 2026-11-16
 
+## 4d-2 模型档案文件和角色（2026-11-16，用户选“现在做 4d-2”）
+
+- 方案 `docs/stage4d_plan.md` 第 10 节，实现记录第 11 节，D-084。
+- 可选的 `models.toml`（设置 `MODEL_PROFILES_FILE`，模板 `models.example.toml`）写档案和角色：`main`（单一循环和团队负责人）、`route`、`member`、`explorer`，没写的角色用 `main`。没有这个文件时一切照旧。
+- 状态：本地 `main` 3 个提交（`b1ee2db`、`2f99803`、`973ef0c`）。Linux 测试 1908 通过、23 跳过、4 项 Windows 专用失败。没有真实模型调用。
+- 4d-4 真实评测等真有第二个模型；用户问过检查点（任务状态写盘、重启后续跑），现在没有实现，用户说以后再做。
+
 ## 交付质量（2026-11-16，用户选“交付质量”）
 
 - 方案和实现记录 `docs/deliverable_quality_plan.md`（第 6 节），D-083。
