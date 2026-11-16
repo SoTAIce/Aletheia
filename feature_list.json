@@ -1673,6 +1673,19 @@
         "preview absent from observer events, audit and trace"
       ],
       "evidence": "2026-11-14: init.ps1 1855 passed, 16 skipped. Not committed. Approval card not yet checked in a live web run (needs authorization)."
+    },
+    {
+      "id": "stage5-limits-context-001",
+      "name": "Stage 5: one task deadline, member deadlines, RunLimits; ContextManager split",
+      "description": "docs/stage5_plan.md, D-081, D-082. 5a: RunnerLimits and LoopRun's plan/replan shell removed, behaviour pinned by the 67 golden files. 5b: the runner's own limit is the task deadline, enforced once by LoopRun (single 480 s AGENT_TASK_TIMEOUT_SECONDS, team 180 s); AGENT_STEP_TIMEOUT_SECONDS no longer read; team members get a 120 s limit inside it; sandbox start-up refuses a deadline shorter than one call; --show-limits. 5c: ContextManager is a facade over ConversationContext, ToolResultProjector and RequestFitter (CompactingManager folded in); requests byte-for-byte unchanged.",
+      "status": "done",
+      "dependencies": [],
+      "acceptance": [
+        "tests/test_loop_run_equivalence.py golden files unchanged",
+        "tests/fixtures/context_split_golden.json recorded before the split, unchanged",
+        "init.ps1 PASS on Windows"
+      ],
+      "evidence": "2026-11-16 cloud Linux: 1862 passed, 22 skipped, 4 Windows-only failures. init.ps1 not run (no PowerShell). Commits 8f78aef, a477484, 4c8d6f0, 9e55f87, afc80d0 on local main, not pushed. No real model calls; tuning-set rerun waits for authorization."
     }
   ],
   "cleanup_2026_11_04": {
@@ -1683,7 +1696,7 @@
     "baseline": "1093 passed, 2 skipped before test removal"
   },
   "schema_version": 2,
-  "updated_at": "2026-11-14",
+  "updated_at": "2026-11-16",
   "active_feature": null,
   "verification_context": {
     "tests_present": true,
