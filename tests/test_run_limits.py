@@ -7,7 +7,8 @@ from app.config import Settings
 
 
 def _settings(**kw):
-    return Settings(_env_file=None, dashscope_api_key='k', agent_model_base_url='', agent_model='', **kw)
+    return Settings(_env_file=None, dashscope_api_key='k', agent_model_base_url='',
+                    agent_model_api_key='', agent_model='', **kw)
 
 
 def test_the_limits_come_from_the_settings_and_the_options():
