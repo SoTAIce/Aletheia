@@ -27,8 +27,6 @@ def make(**kwargs):
 @pytest.mark.parametrize('name,values', [
     ('max_executions', [False, True, 0, -1, 1.5, None, '2']),
     ('step_timeout_seconds', [False, True, 0, -1, float('inf'), float('nan'), None, '2']),
-    ('max_tool_rounds', [False, True, -1, 1.5, None, '2']),
-    ('max_total_tool_calls', [False, True, -1, 1.5, None, '2']),
 ])
 def test_validation_matches_runtime(name, values):
     # AgentRuntime's errors for the same values, recorded before stage 4c deleted it.
@@ -46,11 +44,19 @@ def test_validation_matches_runtime(name, values):
 @pytest.mark.parametrize('kwargs', [
     {'max_executions': 1},
     {'step_timeout_seconds': 0.01},
-    {'max_tool_rounds': 0, 'max_total_tool_calls': 0},
 ])
 def test_valid_limits(kwargs):
     runtime, _ = make(**kwargs)
     assert isinstance(runtime.memory, RunMemory)
+
+
+@pytest.mark.parametrize('name', ['max_tool_rounds', 'max_total_tool_calls'])
+def test_the_old_per_step_tool_limits_are_gone(name):
+    # Stage 5a: RunnerLimits was read by no runner; the loops use LoopOptions.
+    with pytest.raises(TypeError):
+        make(**{name: 4})
+    from app.agent.step_runner import RunnerDependencies
+    assert 'limits' not in RunnerDependencies.__dataclass_fields__
 
 
 def test_conversation_is_not_accepted():

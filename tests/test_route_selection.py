@@ -169,11 +169,11 @@ async def test_auto_service_routes_each_task_and_binds_the_chosen_runner(monkeyp
     team, single = FakeRuntime.created
     from app.agent.agent_loop import LOOP_STEP, TEAM_STEP
     assert team.options['step_description'] == TEAM_STEP and single.options['step_description'] == LOOP_STEP
-    from app.agent.step_runner import RunnerDependencies, RunnerLimits
+    from app.agent.step_runner import RunnerDependencies
     from app.tools.tool_registry import ToolRegistry
-    runner = team.options['runner_factory'](RunnerDependencies(model, ToolRegistry(), None, RunnerLimits()))
+    runner = team.options['runner_factory'](RunnerDependencies(model, ToolRegistry(), None))
     assert runner.runner_id == 'agent_team'
-    assert single.options['runner_factory'](RunnerDependencies(model, ToolRegistry(), None, RunnerLimits())).runner_id == 'agent_loop'
+    assert single.options['runner_factory'](RunnerDependencies(model, ToolRegistry(), None)).runner_id == 'agent_loop'
     assert service._routes == {}                                     # finished tasks forget their route
 
 

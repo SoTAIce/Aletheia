@@ -488,7 +488,7 @@ def test_init_and_rebind_use_same_factory_inputs_and_atomic_replacement():
         if reject:
             raise ValueError('binding rejected')
         return SimpleNamespace(runner_id='tool_calling', run=AsyncMock(return_value=StepRunOutput('done')))
-    runtime, memory, model = runtime_fixture(runner_factory=factory, max_tool_rounds=2, max_total_tool_calls=3)
+    runtime, memory, model = runtime_fixture(runner_factory=factory)
     old = runtime._runner
     replacement_model, tools, manager = AsyncMock(), ToolRegistry(), ContextManager()
     reject = True
@@ -498,9 +498,7 @@ def test_init_and_rebind_use_same_factory_inputs_and_atomic_replacement():
     reject = False
     runtime.rebind(replacement_model, tools, context_manager=manager)
     assert seen[-1].model is replacement_model and seen[-1].tool_registry.inner is tools   # side-effect watch (D-032)
-    assert seen[-1].context_manager is manager and seen[-1].limits == seen[0].limits
-    assert seen[-1].limits.max_tool_rounds == 2
-    assert seen[-1].limits.max_total_tool_calls == 3
+    assert seen[-1].context_manager is manager
     assert old is not runtime._runner
 
 
@@ -729,13 +727,6 @@ async def test_strong_tier_also_drops_old_code_arguments_and_long_outputs():
     assert _worker_writes(request) == {'a.py': 'a' * 3000}      # the latest turn stays whole
     assert [c.arguments['code'] for c in output.tool_calls if c.tool_name == 'run_python'] == [
         'p' * 3000, 'q' * 3000, 'r' * 3000]                      # evidence keeps full arguments
-
-
-@pytest.mark.parametrize('args', [(True, 1), (1, False), (-1, 1), (1, -1)])
-def test_limits_keep_original_strict_validation(args):
-    from app.agent.step_runner import RunnerLimits
-    with pytest.raises((TypeError, ValueError)):
-        RunnerLimits(*args)
 
 
 async def test_format_repair_count_comes_from_current_runner():

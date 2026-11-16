@@ -73,24 +73,10 @@ class StepRunnerContractError(TypeError):
 
 
 @dataclass(frozen=True, slots=True)
-class RunnerLimits:
-    max_tool_rounds: int = 4
-    max_total_tool_calls: int = 8
-
-    def __post_init__(self):
-        for name, value in [('max_tool_rounds', self.max_tool_rounds), ('max_total_tool_calls', self.max_total_tool_calls)]:
-            if type(value) is not int:
-                raise TypeError(f'{name} must be an integer')
-            if value < 0:
-                raise ValueError(f'{name} must be non-negative')
-
-
-@dataclass(frozen=True, slots=True)
 class RunnerDependencies:
     model: ToolCallingModel
     tool_registry: ToolRegistry
     context_manager: ContextManager
-    limits: RunnerLimits
 
 
 RunnerFactory = Callable[[RunnerDependencies], StepRunner]

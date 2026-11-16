@@ -151,10 +151,10 @@ async def test_auto_with_writes_on_still_asks_the_model(fake_runtime):
 async def test_a_team_with_writes_off_gets_read_only_workers(fake_runtime, monkeypatch):
     async with service(team_options=SANDBOX) as svc:
         await svc.query_result('review it', 's', execution_mode='team', allow_writes=False)
-    from app.agent.step_runner import RunnerDependencies, RunnerLimits
+    from app.agent.step_runner import RunnerDependencies
     from app.tools.tool_registry import ToolRegistry
     runtime = fake_runtime[0]
-    options = runtime.options['runner_factory'](RunnerDependencies(AsyncMock(), ToolRegistry(), None, RunnerLimits())).options
+    options = runtime.options['runner_factory'](RunnerDependencies(AsyncMock(), ToolRegistry(), None)).options
     assert options.allowed_tools == READ_TOOLS
     assert not options.require_passing_run
     assert options.timeout_seconds == SANDBOX.timeout_seconds

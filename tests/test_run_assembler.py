@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from app.agent.agent_loop import AgentLoopRunner, LOOP_STEP, LoopOptions, TEAM_STEP
 from app.agent.delegation import DelegatingLoopRunner, DelegationOptions, ExploreLoopRunner
-from app.agent.step_runner import RunnerDependencies, RunnerLimits
+from app.agent.step_runner import RunnerDependencies
 from app.services.rag_agent_service import RagAgentService
 from app.services.run_assembler import RunAssembler
 from app.tools.tool_registry import ToolRegistry
@@ -44,7 +44,7 @@ async def _run(assembler, mode='single', write=True, runtime=None):
 
 
 def _runner(runtime):
-    deps = RunnerDependencies(SimpleNamespace(generate=lambda *a: None), ToolRegistry(), None, RunnerLimits())
+    deps = RunnerDependencies(SimpleNamespace(generate=lambda *a: None), ToolRegistry(), None)
     return runtime.kwargs['runner_factory'](deps)
 
 

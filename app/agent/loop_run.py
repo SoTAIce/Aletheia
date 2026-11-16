@@ -18,7 +18,7 @@ from loguru import logger
 from app.agent.runtime import AgentRunResult, FAILURE_MESSAGES, _policy_denial, _int_or_none
 from app.agent.run_meter import RunMeter, cache_text as _cache_text, call_text as _call_text, current_meter, metering
 from app.agent.side_effects import SideEffectWatch
-from app.agent.step_runner import (RunnerDependencies, RunnerLimits, StepBlockedError, StepBudgetError, StepRunError,
+from app.agent.step_runner import (RunnerDependencies, StepBlockedError, StepBudgetError, StepRunError,
     StepBusinessError, StepFormatError, StepModelError, StepToolError, StepRunner)
 from app.agent.step_models import (StepExecutionContext, StepExecutionReceipt, StepRunOutput,
     StepOutcome, ToolCall, ToolResult)
@@ -45,6 +45,9 @@ def step_context(memory: RunMemory, step: PlanStep, plan_revision: int) -> StepE
                                 if r.selected_context is not None),
         resolved_questions=tuple(q for q in scratch.open_questions if q.resolved_at is not None
                                  and q.goal_revision == snapshot.goal_revision), final_step=True)
+
+
+_RETRY = object()      # an execution failed in a way that only a new answer may retry
 
 
 class _BoundRunner:
@@ -90,8 +93,7 @@ class LoopRun:
     """One task's loop binding. Counters and receipts survive blocked/resumed runs."""
 
     def __init__(self, memory: RunMemory, model, registry, *, runner_factory,
-                 step_description: str, max_executions=16, step_timeout_seconds=60.0,
-                 max_tool_rounds=4, max_total_tool_calls=8, context_manager=None):
+                 step_description: str, max_executions=16, step_timeout_seconds=60.0, context_manager=None):
         if type(max_executions) is not int or max_executions < 1:
             raise ValueError("max_executions must be an integer >= 1")
         if (isinstance(step_timeout_seconds, bool) or not isinstance(step_timeout_seconds, (int, float))
@@ -100,14 +102,13 @@ class LoopRun:
         self.memory = memory
         self._registry = registry
         self._context_manager = context_manager or ContextManager()
-        self._runner_limits = RunnerLimits(max_tool_rounds, max_total_tool_calls)
         self._runner_factory = runner_factory
         self._runner = self._assemble_runner(model, registry, self._context_manager)
         self._step_description = step_description
         self._max_executions = max_executions
-        # A loop never replays a failed task: its one step is the whole task (D-076).
-        self._max_replans = 0
         self._step_timeout = step_timeout_seconds
+        # A loop never replays a failed task: its one step is the whole task (D-076), so replan_count
+        # stays 0. It is kept in results and the status line for old readers (stage 5a).
         self._execution_count = self._replan_count = self._plan_revision = 0
         self._answers_seen = 0
         self._steps = []
@@ -119,7 +120,7 @@ class LoopRun:
 
     def _assemble_runner(self, model, registry, context_manager):
         self._watch = SideEffectWatch(registry)
-        dependencies = RunnerDependencies(model, self._watch, context_manager, self._runner_limits)
+        dependencies = RunnerDependencies(model, self._watch, context_manager)
         runner = _BoundRunner(self._runner_factory(dependencies))
         if not callable(getattr(runner.runner, 'run', None)):
             raise TypeError("runner must provide an async run(context) method")
@@ -208,131 +209,145 @@ class LoopRun:
             yield
 
     async def _run(self) -> AgentRunResult:
-        task = self.memory.task_state
-        if self._final is not None and task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
-            return self._final
-        needs_plan = True
-        content = None
+        """One execution of the task's step; a resumed run (after a blocked one) executes it again.
 
-        while task.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
-            blockers = [q for q in task.scratchpad.open_questions
-                        if q.goal_revision == task.goal_revision and q.blocking and q.resolved_at is None]
-            if blockers:
-                # The state was blocked by the previous attempt.
-                return self._result("\n".join(q.content for q in blockers))
-            spent = self._meter.budget_problem()
-            if spent:
-                return self._fail(spent, 'budget')
-            if needs_plan:
-                if self._execution_count >= self._max_executions:
-                    return self._fail("Agent execution limit reached")
-                answers = sum(1 for q in task.scratchpad.open_questions
-                              if q.goal_revision == task.goal_revision and q.resolved_at is not None)
-                if self._plan_revision and answers > self._answers_seen:
-                    # Planning again after the user answered is the normal flow, not a failure (D-033).
-                    self._answers_seen = answers
-                elif self._plan_revision:
-                    if self._replan_count >= self._max_replans:
-                        return self._fail("Agent replanning limit reached" + self._last_failure(), 'limit')
-                    self._replan_count += 1
-                try:
-                    from app.agent.hooks import trace_scope
-                    revision = _int_or_none(self._plan_revision)
-                    with trace_scope('plan', revision=None if revision is None else revision + 1):
-                        self._plan_revision += 1
-                        next_step = PlanStep(str(uuid4()), self._step_description, StepStatus.PENDING,
-                                             task.goal_revision, self._plan_revision, datetime.now(UTC))
-                        self._resource_version = self.memory.resources.context_version
-                    needs_plan = False
-                    logger.info('Plan revision {}: {} step(s)', self._plan_revision, 1)
-                    self._emit({'type': 'plan', 'revision': self._plan_revision,
-                                'steps': [self._step_description],
-                                'step_ids': [next_step.step_id]})
-                except Exception as exc:
-                    spent = self._meter.budget_problem()
-                    if spent:
-                        return self._fail(spent, 'budget')
-                    denied = _policy_denial(exc)
-                    if denied is not None:
-                        return self._fail(f'Model call denied by {denied.hook}: {denied.reason}',
-                                          'hooks' if denied.hook == 'hooks_not_installed' else 'policy')
-                    # Planner validation messages are host-authored (see bench _SAFE_FAILURE).
-                    return self._fail(f"Planning failed: {type(exc).__name__}: {exc}", 'planning')
-            if content is not None and self._steps and not needs_plan:
-                try:
-                    self._check_resource_context()
-                    task.complete()
-                except Exception as exc:
-                    return self._fail(f"Task completion rejected: {type(exc).__name__}", 'rejected')
-                break
+        Stage 5a removed the plan/replan shell. The order of checks and every result, event and
+        message stay as recorded in tests/fixtures/loop_run_golden/.
+        """
+        task = self.memory.task_state
+        if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            if self._final is not None:
+                return self._final
+            if task.status is TaskStatus.FAILED:
+                return self._result(task.scratchpad.failure_history[-1].message, 'business')
+            return self._result("")
+        while True:
+            stop = self._pending_stop() or self._start_problem()
+            if stop is not None:
+                return stop
+            step = self._begin_attempt()
             if self._execution_count >= self._max_executions:
                 return self._fail("Agent execution limit reached", 'limit')
-            self._execution_count += 1
-            self._watch.reset()
-            started = time.monotonic()
+            outcome = await self._attempt(step)
+            if isinstance(outcome, AgentRunResult):
+                return outcome
+            if outcome is _RETRY:
+                # Only a new answer starts another execution; _start_problem() ends the task otherwise.
+                continue
+            stop = self._pending_stop()
+            if stop is not None:
+                return stop
             try:
-                try:
-                    from app.agent.hooks import pausable_deadline, trace_scope
-                    # Time spent waiting for the user's approval does not count (D-061).
-                    with trace_scope('step', index=self._execution_count,
-                                     revision=_int_or_none(self._plan_revision)):
-                        async with asyncio.timeout(self._meter.bound(self._step_timeout)) as deadline:
-                            with pausable_deadline(deadline):
-                                receipt = await self._execute(next_step)
-                except BaseException as exc:
-                    self._log_step(next_step.step_id, started, exc)
-                    raise
-                self._log_step(next_step.step_id, started, None)
-                self._steps.append(receipt)
-                content = receipt.result_summary
-            except StepBlockedError as exc:
-                return self._result(exc.message)
-            except StepBudgetError as exc:
-                # Checked before a model call inside the step (stage 4d-3).
-                return self._fail(exc.message, 'budget')
-            except (StepFormatError, StepModelError) as exc:
-                # Local format repair is exhausted, or the provider failed.
-                # Replanning would repeat completed tools without fixing either.
-                denied = _policy_denial(exc)
-                if denied is not None:
-                    return self._fail(f'Model call denied by {denied.hook}: {denied.reason}',
-                                          'hooks' if denied.hook == 'hooks_not_installed' else 'policy')
-                kind = 'format' if isinstance(exc, StepFormatError) else 'model'
-                return self._fail(f"{type(exc).__name__}: {exc.message}", kind)
-            except StepToolError as exc:
-                if self._watch.uncertain:
-                    # A write or run raised: it may have taken effect, so never replay it (D-032).
-                    return self._fail(f"{type(exc).__name__}: {exc.message}; automatic replanning is disabled",
-                                      'side_effect')
-                needs_plan = True
-                continue
-            except StepRunError:
-                needs_plan = True
-                continue
-            except StaleExecutionError:
-                # Never overwrite evidence or lifecycle belonging to newer work.
-                raise
-            except TimeoutError:
-                if self._runner.runner_id == 'agent_team':
-                    # A team owns many side effects; an outer deadline must not replay it.
-                    return self._fail('Team execution timed out; automatic replanning is disabled', 'timeout')
-                if self._context_manager.overflow_recovery_interrupted:
-                    return self._fail("Context overflow recovery timed out; completed tools will not be repeated",
-                                      'timeout')
-                if self._watch.touched:
-                    # The step started a write or run before the deadline (D-032).
-                    return self._fail("Step execution timed out after a write or run; automatic replanning "
-                                      "is disabled", 'side_effect')
-                task.add_failure("Step execution timed out; only read-only tools had run")
-                needs_plan = True
+                self._check_resource_context()
+                task.complete()
             except Exception as exc:
-                # Contract/implementation errors are terminal, not retry instructions.
-                # Only the type name: arbitrary exception text may carry host paths or provider output.
-                return self._fail(f"Execution failed: {type(exc).__name__}", 'internal')
+                return self._fail(f"Task completion rejected: {type(exc).__name__}", 'rejected')
+            return self._result(outcome or "")
 
-        if task.status is TaskStatus.FAILED:
-            return self._result(task.scratchpad.failure_history[-1].message, 'business')
-        return self._result(content or "")
+    def _pending_stop(self):
+        """Open blocking questions or a spent budget end the run before anything else."""
+        task = self.memory.task_state
+        blockers = [q for q in task.scratchpad.open_questions
+                    if q.goal_revision == task.goal_revision and q.blocking and q.resolved_at is None]
+        if blockers:
+            return self._result("\n".join(q.content for q in blockers))
+        spent = self._meter.budget_problem()
+        return self._fail(spent, 'budget') if spent else None
+
+    def _start_problem(self):
+        """Whether another execution may start: the execution limit, and after the first execution
+        only a newly answered question (D-033); a failed execution is never replayed (D-076)."""
+        task = self.memory.task_state
+        if self._execution_count >= self._max_executions:
+            # 'internal' here and 'limit' below are both recorded in the golden files.
+            return self._fail("Agent execution limit reached")
+        if self._plan_revision:
+            answers = sum(1 for q in task.scratchpad.open_questions
+                          if q.goal_revision == task.goal_revision and q.resolved_at is not None)
+            if answers <= self._answers_seen:
+                return self._fail("Agent replanning limit reached" + self._last_failure(), 'limit')
+            self._answers_seen = answers
+        return None
+
+    def _begin_attempt(self) -> PlanStep:
+        """The 'plan' span and event of one execution (the web timeline and traces read them)."""
+        from app.agent.hooks import trace_scope
+        task = self.memory.task_state
+        revision = _int_or_none(self._plan_revision)
+        with trace_scope('plan', revision=None if revision is None else revision + 1):
+            self._plan_revision += 1
+            step = PlanStep(str(uuid4()), self._step_description, StepStatus.PENDING,
+                            task.goal_revision, self._plan_revision, datetime.now(UTC))
+            self._resource_version = self.memory.resources.context_version
+        logger.info('Plan revision {}: {} step(s)', self._plan_revision, 1)
+        self._emit({'type': 'plan', 'revision': self._plan_revision,
+                    'steps': [self._step_description], 'step_ids': [step.step_id]})
+        return step
+
+    async def _attempt(self, step):
+        """Run the step once. Returns its content, _RETRY after a failure that may be retried only on
+        a new answer, or the final AgentRunResult."""
+        task = self.memory.task_state
+        self._execution_count += 1
+        self._watch.reset()
+        started = time.monotonic()
+        try:
+            try:
+                from app.agent.hooks import pausable_deadline, trace_scope
+                # Time spent waiting for the user's approval does not count (D-061).
+                with trace_scope('step', index=self._execution_count,
+                                 revision=_int_or_none(self._plan_revision)):
+                    async with asyncio.timeout(self._meter.bound(self._step_timeout)) as deadline:
+                        with pausable_deadline(deadline):
+                            receipt = await self._execute(step)
+            except BaseException as exc:
+                self._log_step(step.step_id, started, exc)
+                raise
+            self._log_step(step.step_id, started, None)
+            self._steps.append(receipt)
+            return receipt.result_summary
+        except StepBlockedError as exc:
+            return self._result(exc.message)
+        except StepBudgetError as exc:
+            # Checked before a model call inside the step (stage 4d-3).
+            return self._fail(exc.message, 'budget')
+        except (StepFormatError, StepModelError) as exc:
+            # Local format repair is exhausted, or the provider failed; repeating the step would
+            # repeat completed tools without fixing either.
+            denied = _policy_denial(exc)
+            if denied is not None:
+                return self._fail(f'Model call denied by {denied.hook}: {denied.reason}',
+                                  'hooks' if denied.hook == 'hooks_not_installed' else 'policy')
+            kind = 'format' if isinstance(exc, StepFormatError) else 'model'
+            return self._fail(f"{type(exc).__name__}: {exc.message}", kind)
+        except StepToolError as exc:
+            if self._watch.uncertain:
+                # A write or run raised: it may have taken effect, so never replay it (D-032).
+                return self._fail(f"{type(exc).__name__}: {exc.message}; automatic replanning is disabled",
+                                  'side_effect')
+            return _RETRY
+        except StepRunError:
+            return _RETRY
+        except StaleExecutionError:
+            # Never overwrite evidence or lifecycle belonging to newer work.
+            raise
+        except TimeoutError:
+            if self._runner.runner_id == 'agent_team':
+                # A team owns many side effects; an outer deadline must not replay it.
+                return self._fail('Team execution timed out; automatic replanning is disabled', 'timeout')
+            if self._context_manager.overflow_recovery_interrupted:
+                return self._fail("Context overflow recovery timed out; completed tools will not be repeated",
+                                  'timeout')
+            if self._watch.touched:
+                # The step started a write or run before the deadline (D-032).
+                return self._fail("Step execution timed out after a write or run; automatic replanning "
+                                  "is disabled", 'side_effect')
+            task.add_failure("Step execution timed out; only read-only tools had run")
+            return _RETRY
+        except Exception as exc:
+            # Contract/implementation errors are terminal, not retry instructions.
+            # Only the type name: arbitrary exception text may carry host paths or provider output.
+            return self._fail(f"Execution failed: {type(exc).__name__}", 'internal')
 
     def _check_resource_context(self):
         if self.memory.resources.context_version != self._resource_version:

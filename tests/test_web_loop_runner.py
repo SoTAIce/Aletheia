@@ -130,9 +130,9 @@ async def test_explicit_team_runs_the_team_lead_loop(monkeypatch):
     step, options = seen[0]
     assert step == TEAM_STEP
     from app.agent.delegation import DelegatingLoopRunner
-    from app.agent.step_runner import RunnerDependencies, RunnerLimits
+    from app.agent.step_runner import RunnerDependencies
     from app.tools.tool_registry import ToolRegistry
-    assert isinstance(options['runner_factory'](RunnerDependencies(AsyncMock(), ToolRegistry(), None, RunnerLimits())),
+    assert isinstance(options['runner_factory'](RunnerDependencies(AsyncMock(), ToolRegistry(), None)),
                       DelegatingLoopRunner)
 
 
