@@ -148,3 +148,19 @@ def test_answer_rows_compare_the_joined_answer_with_the_last_step(monkeypatch):
     monkeypatch.setattr(run_bench, 'launch_agent', launch)
     row = run_bench.run_one(TASK, 'single', 1, 5)
     assert row['last_step_all_passed'] is False and row['lenient_all_passed'] is True
+
+
+def test_a_documented_second_reading_is_accepted_and_nothing_else():
+    # side_effects_qa: remember(item, history=[]) mutates a caller's history when one is passed.
+    import pytest
+    from bench.run_bench import grade, load_tasks
+    [task] = load_tasks(['side_effects_qa'], 'all')
+    expected = json.loads((task['dir'] / task['expected']).read_text(encoding='utf-8'))
+    with_remember = dict(expected, mutates_arguments=['add_item', 'apply_coupon', 'remember', 'sort_by_price'])
+    wrong = dict(expected, mutates_arguments=['add_item', 'sort_by_price'])
+    assert summarize(grade(task, json.dumps(expected)))[2]
+    assert summarize(grade(task, json.dumps(with_remember)))[2]
+    assert grade(task, json.dumps(wrong))['mutates_arguments'] is False
+    assert 'also_accept' not in task['files'] and 'remember' in task['also_accept_reason']
+    with pytest.raises(ValueError):
+        grade_answer_json('{}', task['dir'] / task['expected'], also_accept={'not_a_key': [1]})

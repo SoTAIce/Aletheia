@@ -9,5 +9,16 @@
   "delivery": "answer",
   "expected_route": "single",
   "category": "qa",
-  "split": "holdout"
+  "split": "holdout",
+  "also_accept": {
+    "mutates_arguments": [
+      [
+        "add_item",
+        "apply_coupon",
+        "remember",
+        "sort_by_price"
+      ]
+    ]
+  },
+  "also_accept_reason": "remember(item, history=[]) mutates history. The goal excludes functions that only mutate a default value, but a caller may pass its own history, which remember then mutates; listing remember is an equally valid reading. Accepted since 2026-11-16 (docs/deliverable_quality_plan.md 1.4); the goal is unchanged."
 }

@@ -64,7 +64,7 @@ def grade(task, content):
     if task['grader'] == 'python_checks':
         return grade_python(content, task['dir'] / task['checker'])
     if task['grader'] == 'answer_json':
-        return grade_answer_json(content, task['dir'] / task['expected'])
+        return grade_answer_json(content, task['dir'] / task['expected'], also_accept=task.get('also_accept'))
     raise ValueError(f'unknown grader {task["grader"]}')
 
 
@@ -300,7 +300,8 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
 def lenient(task, content):
     """Diagnostic score after extracting code from prose; never counts as a pass."""
     if task['grader'] == 'answer_json':
-        checks = grade_answer_json(content, task['dir'] / task['expected'], lenient=True)
+        checks = grade_answer_json(content, task['dir'] / task['expected'], lenient=True,
+                                   also_accept=task.get('also_accept'))
         passed, total, ok = summarize(checks)
         tail = last_block(content)
         last_passed, _, last_ok = summarize(grade(task, tail)) if tail is not None else (0, 0, False)

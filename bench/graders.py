@@ -105,6 +105,13 @@ def extract_code(text: str, kind: str) -> str:
     blocks = re.findall(r'```[\w-]*[^\n]*\n(.*?)```', text, re.S)
     if blocks:
         return max(blocks, key=len).strip()
+    try:
+        # Code that parses as a whole is all code, even when it starts with module constants
+        # (business_days was reported as not code-only; deliverable-quality-001).
+        ast.parse(text)
+        return text
+    except SyntaxError:
+        pass
     lines = text.splitlines()
     start = next((i for i, line in enumerate(lines)
                   if re.match(r'(import |from |class |def |@)', line)), None)
@@ -249,10 +256,17 @@ def last_block(text: str):
     return None
 
 
-def grade_answer_json(text: str, expected: Path, lenient: bool = False) -> dict:
+def grade_answer_json(text: str, expected: Path, lenient: bool = False, also_accept=None) -> dict:
     """One check per expected key. Strict: the answer is one JSON object (a fence is allowed).
-    Lenient (diagnostic only): the last JSON object embedded anywhere in the answer."""
+    Lenient (diagnostic only): the last JSON object embedded anywhere in the answer.
+
+    also_accept (task.json, hidden from the agent) maps a key to further answers that are equally
+    right because the question allows two readings; each case is documented in its task."""
     want = json.loads(expected.read_text(encoding='utf-8'))
+    also_accept = also_accept or {}
+    if not isinstance(also_accept, dict) or set(also_accept) - set(want) or not all(
+            isinstance(v, list) for v in also_accept.values()):
+        raise ValueError('also_accept must map expected keys to lists of answers')
     if lenient:
         objects = json_objects(text)
         if not objects:
@@ -265,7 +279,8 @@ def grade_answer_json(text: str, expected: Path, lenient: bool = False) -> dict:
             return {'_parse': False}
     if not isinstance(payload, dict):
         return {'_parse': False}
-    return {key: _same(payload.get(key, _MISSING), value) for key, value in want.items()}
+    return {key: any(_same(payload.get(key, _MISSING), option) for option in (value, *also_accept.get(key, ())))
+            for key, value in want.items()}
 
 
 def summarize(checks: dict) -> tuple[int, int, bool]:

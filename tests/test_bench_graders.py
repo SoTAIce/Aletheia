@@ -196,3 +196,11 @@ def test_extract_code_is_diagnostic_and_strict_score_still_fails_prose():
 ])
 def test_failure_line_filter(line, safe):
     assert bool(run_bench._SAFE_FAILURE.match(line)) is safe
+
+
+def test_code_that_parses_as_a_whole_is_code_only():
+    # deliverable-quality-001: module constants before the first def were cut off.
+    code = '_DAYS = (31, 28)\n\n\ndef f():\n    return _DAYS\n'
+    assert extract_code(code, 'python') == code
+    prose = '已读取规格，实现如下：\n' + code
+    assert extract_code(prose, 'python').startswith('def f():')
