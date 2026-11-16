@@ -126,3 +126,13 @@ def remember(item, history=[]):
   - 你本机 Windows 如果没装 Node 版 Playwright，评测会退回文本检查。要用浏览器检查，需要你自己装（`npm install playwright` 和 `npx playwright install chromium`），我没有动依赖。
 
 **没做的**：第 5 问的调参集评测（真实模型调用），等你单独决定。
+
+## 7. 调参集评测（2026-11-16，用户授权，真实模型调用）
+
+命令：`python -m bench.run_bench --confirm-live --tasks all --modes single --runs 1 --max-runs 11 --keep-answers output/answers-tune-1116 --out output/bench-tune-loop-1116.json`（代码 `1050991`，云端）。报告和答案只在云端会话的 `output/` 里，没有进仓库。
+
+- **结果：10/11**。11 次都是 `completed`，每次 1 次执行、0 次重规划、没有超时，共 25 次模型调用、约 49 万 token、约 245 秒。
+- **`todo_html`**：`html_checks` 为 `browser`，20 项全部通过（10 项行为检查加 10 项静态检查）。这是第一次在浏览器检查下评测，比以前严格，和以前的结果不能直接比。
+- **唯一失败 `config_merge_qa` 的 `top_keys`**：答案写成 `hooks`，期望是 `hooks+`。按 `loader.py`，基础层没有 `hooks` 列表，所以 `"hooks+"` 走“其他情况原样替换”，键名保留 `+`。期望是对的，这是智能体推理错了，不是评分器的问题，不改评分器。1.5 记的“偶尔失败”原因就是这个陷阱。
+- **中转站状态**：10 次 `heavy`，全部通过；`config_merge_qa` 一次是 `padded`（第二次调用是 `plain`），这次失败了。11 次的 `model_mismatch` 都是真（请求 `gpt-5.6-luna`，返回的是别的模型名），同 D-079。
+- **第 5 阶段顺带核对**：单一循环的任务时限 480 秒，这次最长的一次 40.8 秒，没有触发任何时限。
