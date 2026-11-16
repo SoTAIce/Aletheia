@@ -1686,6 +1686,19 @@
         "init.ps1 PASS on Windows"
       ],
       "evidence": "2026-11-16 cloud Linux: 1862 passed, 22 skipped, 4 Windows-only failures. init.ps1 not run (no PowerShell). Commits 8f78aef, a477484, 4c8d6f0, 9e55f87, afc80d0 pushed to origin/main with the user's consent. No real model calls; user chose not to rerun the tuning set now."
+    },
+    {
+      "id": "deliverable-quality-001",
+      "name": "Deliverable quality: grading fixes",
+      "description": "docs/deliverable_quality_plan.md, D-083. extract_code keeps whole-parsing code (answer_is_code_only false negative); side_effects_qa also accepts remember in mutates_arguments via task.json also_accept (goal unchanged); todo_html graded by ten behaviour checks in a headless browser (bench/todo_behaviour.cjs, node Playwright) replacing the static enter_key_and_trim, static fallback without a browser; hidden reference page.",
+      "status": "done",
+      "dependencies": [],
+      "acceptance": [
+        "reference page passes every browser check",
+        "broken variants fail their check",
+        "tests/test_bench_tasks.py PASS"
+      ],
+      "evidence": "2026-11-16 cloud Linux: 1874 passed, 23 skipped, 4 Windows-only failures. Rescored 4c holdout rerun answers: 13/13 (record only). Commits ae44392, f4f9208, 1050991 on local main. No model calls; a tune-set run waits for authorization."
     }
   ],
   "cleanup_2026_11_04": {
@@ -1716,13 +1729,6 @@
       "disposition": "Superseded 2026-11-10 (status-cleanup-001): read-only recall plus explicit /remember shipped in longterm-memory-001 and passed e2e-live-001. Nothing left to authorize here."
     },
     {
-      "id": "deliverable-format-001",
-      "authorized": false,
-      "priority": 2,
-      "next_action": "Make the final answer contain only the deliverable (host deliverable contract or final-step-only output); re-run bench single to compare strict score.",
-      "source": "docs/harness/capability-phase1-2026-11-04.md"
-    },
-    {
       "id": "sandbox-execution",
       "authorized": false,
       "priority": 2,
@@ -1742,6 +1748,14 @@
       "retired": "2026-11-14",
       "reason": "Diagnosed the 2026-11-04 team (team_v2), deleted in stage 3 (D-075). The rewritten team passes fix_inventory and parse_duration in 3b, 4b and 4c.",
       "last_next_action": "Sandbox run (2026-11-04): team 0/2 before any sandbox run - parse_duration ModelToolArgumentsError after repairs exhausted; fix_inventory type lost (filter fixed). Next: re-run fix_inventory/team once to get its type; consider more argument repairs or chunked writes for members."
+    },
+    {
+      "id": "deliverable-format-001",
+      "authorized": false,
+      "priority": 2,
+      "next_action": "Make the final answer contain only the deliverable (host deliverable contract or final-step-only output); re-run bench single to compare strict score.",
+      "source": "docs/harness/capability-phase1-2026-11-04.md",
+      "disposition": "Retired 2026-11-16 (deliverable-quality-001, D-083): the prose-around-code problem of the plan-mode era no longer appears with the single loop; all 13 answers of the 4c holdout rerun held only the deliverable."
     }
   ]
 }
