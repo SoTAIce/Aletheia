@@ -100,7 +100,10 @@ def test_split_summary_groups_by_split_and_mode():
             {'task': 'c', 'split': 'holdout', 'mode': 'single', 'passed': False}]
     table = split_summary(rows)
     assert table['tune/single'] == {'passed': 2, 'runs': 3, 'tasks': 2, 'pass_rate': 0.667,
-                                    'ci95': wilson(2, 3)}
+                                    'ci95': wilson(2, 3), 'excluded': {'provider': 0, 'grader': 0},
+                                    'runs_per_task': [1, 2], 'tasks_all_passed': 1, 'all_passed_rate': 0.5,
+                                    'agent_runs': 3, 'agent_passed': 2, 'agent_pass_rate': 0.667,
+                                    'agent_ci95': wilson(2, 3)}
     assert table['holdout/single']['pass_rate'] == 0.0
 
 

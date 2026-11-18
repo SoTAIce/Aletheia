@@ -806,3 +806,37 @@
   - 一次循环里的抛异常次数在阻塞后续跑时重新计数。
   - 没有用真实模型验证。
 - 记录：[方案](failure_handling_plan.md)；测试在 `tests/agent/test_failure_kinds.py`、`tests/agent/test_model_retry.py`、`tests/test_agent_loop.py`、`tests/test_loop_run_guarantees.py`、`tests/test_run_limits.py`。
+
+## D-086 2026-11-18 评测用临时归档，失败归因，k 次统计
+
+- 起因：设计审查（`docs/agent_design_review.md`，暂未入库）3.2、4.1 两节，以及 4.3 的统计部分。
+  - 评测给子进程设了 `CONVERSATION_STORAGE_DIR=''`，产品默认却是开归档的，所以 D-052 的转存、预览和读回从没在真实模型下评测过。
+  - `--runs` 默认 1，11 题跑一次时 Wilson 区间宽约 ±25 个百分点。
+  - 服务商出错和智能体自己的失败算在同一个分母里。
+  - 用户 2026-11-18 确认方案，由 Claude 实施。
+- 决策（只改 `bench/run_bench.py`，智能体代码不动）：
+  - **临时归档**：每次运行在临时目录里建 `archive/`，和智能体根目录并列，子进程的 `CONVERSATION_STORAGE_DIR` 指向它，随运行删除。`--no-archive` 跑无归档对照。行里记 `archive`、`archived_tool_results`（数 `session-*/artifacts/` 下的文件）和 `artifact_reads`（工具记录里 `read_context_artifact` 的次数）。后台对话摘要只在 `--compress-history` 时启用，评测不传，不会多出模型调用。
+  - **失败归因** `attribute(row)`：
+    - `provider`：`failure_kind == 'model'`，且失败行不含 `ModelOutputLimitError`、`ModelToolArgumentsError`；
+    - `grader`：评分抛了异常，现在只让这一行失败，只记类型名；
+    - `unknown`：评测杀掉了子进程，或失败行认不出来；
+    - `agent`：其余。
+    - 只看宿主字段，不看模型原文；失败行的识别正则不放宽，因为业务失败的消息里夹带模型写的原因。
+  - **统计**：
+    - `summary` 加 `all_passed`、两类失败次数；
+    - `by_split` 加每题次数、k 次全过的题数和比例、排除的失败数，以及去掉服务商和评分失败后的通过率和区间。原来那套数保留不变；
+    - 报告加 `provider_state_counts` 和 `headline`（每个“划分/模式”一行中文，只由数字和固定文字拼成）。
+- 被否方案：
+  - 把 `--runs` 默认改成 3：会悄悄多花钱；改为在 README 写验收命令 `--runs 3 --max-runs 33`。
+  - 服务商失败自动重跑：用户以前决定过不自动重跑。
+  - 解析失败文字细分 Docker 问题：要放宽对模型原文的过滤。
+- 不做：
+  - 直连服务商对照：要第二个服务商和费用；
+  - `model_mismatch` 只在与上次不同时提示：这是产品提示，不属于评测统计；
+  - 补长上下文、两轮、追问题（审查 4.2）；
+  - 比较两份报告的工具。
+- 约束：
+  - 调参集的文件都小，多数运行不会触发转存。这一步只让评测和产品走同一条路径；要真正测到转存，得等补长上下文题。
+  - 黄金对照文件没有变化。
+  - 没有跑真实评测；k=3 的调参集评测（33 次）另请用户授权。
+- 记录：[方案](bench_stats_plan.md)；测试在 `tests/test_bench_report.py`、`tests/test_archive_default.py`、`tests/test_bench_qa.py`、`tests/test_bench_tasks.py`。

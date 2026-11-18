@@ -3,8 +3,10 @@
 Every run calls the configured model provider and costs money, so live runs need
 --confirm-live and stay under --max-runs (see bench/README.md). Each run gets a
 fresh TEMP filesystem root holding only the task's public files; checkers are
-never exposed. Web search is disabled for the child process. Only statuses,
-counts, exception type names and check results are reported, never model text.
+never exposed. Each run also gets its own conversation archive next to that root,
+as the product has by default (D-086; --no-archive for the control). Web search is
+disabled for the child process. Only statuses, counts, exception type names and
+check results are reported, never model text.
 """
 
 import argparse
@@ -167,7 +169,43 @@ def usage_fields(record):
         fields['step_attempts'] = len(steps)
         fields['tool_calls'] = len(tools)
         fields['failed_tool_calls'] = sum(1 for c in tools if c.get('success') is not True)
+        # Reads of a saved tool result back from the archive (D-052, D-086).
+        fields['artifact_reads'] = sum(1 for c in tools if c.get('tool') == 'read_context_artifact')
     return fields
+
+
+def archived_results(archive: Path) -> int:
+    """Tool results this run saved to its archive instead of sending them whole (D-052); a count only."""
+    return sum(1 for p in archive.glob('session-*/artifacts/*') if p.is_file() and not p.is_symlink())
+
+
+# Model errors that are the model's own doing, not the provider's: output past the limit, and
+# tool arguments still wrong after the repairs (D-086).
+_AGENT_MODEL_ERRORS = ('ModelOutputLimitError', 'ModelToolArgumentsError')
+
+
+def attribute(row):
+    """Who a failed run is put down to, from host fields only (D-086); None for a pass.
+
+    provider: the provider still failed after the retries; grader: grading itself raised;
+    unknown: the bench killed the run, or its failure line was not recognised; agent: the rest.
+    """
+    if row.get('passed'):
+        return None
+    if 'grader_error' in row:
+        return 'grader'
+    if row.get('status') == 'timeout' or row.get('failure') == 'unrecognized':
+        return 'unknown'
+    if row.get('failure_kind') == 'model' and not any(name in (row.get('failure') or '')
+                                                      for name in _AGENT_MODEL_ERRORS):
+        return 'provider'
+    return 'agent'
+
+
+def _finish(row):
+    if not row.get('passed'):
+        row['attribution'] = attribute(row)
+    return row
 
 
 def _read_deliverable(root: Path, name: str, limit: int = 1_000_000):
@@ -183,7 +221,7 @@ SANDBOX_HINT = ('写完后先写测试，再用 run_tests 或 run_python 在沙�
 
 
 def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=False, team_timeout=None,
-            single_runner='loop', trace_dir=None, delegate=False):
+            single_runner='loop', trace_dir=None, delegate=False, archive=True):
     write = write or sandbox
     # Answer tasks are graded on the final answer even when write and sandbox tools are offered;
     # offering them is what lets auto routing consider the team (D-026).
@@ -191,6 +229,11 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
     work = Path(tempfile.mkdtemp(prefix='aletheia-bench-'))
     root = work / 'root'
     root.mkdir()
+    # The run's own archive, a sibling of the root so the agent's file tools never see it; it goes
+    # with the work directory. Without it the child runs with no archive at all (D-086).
+    archive_dir = work / 'archive'
+    if archive:
+        archive_dir.mkdir()
     try:
         for name in task['files']:
             # Probe tasks keep files in subdirectories (relative, '/'-separated, checked by the tests).
@@ -198,7 +241,7 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             shutil.copyfile(task['dir'] / name, root / name)
         env = dict(os.environ, TAVILY_API_KEY='', PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8',
                    ALETHEIA_TEAM_TRACE='1',
-                   CONVERSATION_STORAGE_DIR='')   # no archive: ids differ per run, keep data/ clean
+                   CONVERSATION_STORAGE_DIR=str(archive_dir) if archive else '')
         env.pop('ALETHEIA_TRACE_DIR', None)
         env.pop('ALETHEIA_TRACE_NAME', None)
         if trace_dir is not None:
@@ -250,7 +293,8 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
         row = {'task': task['id'], 'split': task.get('split', 'tune'), 'mode': mode, 'run': index,
                'status': 'timeout' if timed_out else status,
                'executions': executions, 'replans': replans, 'seconds': seconds,
-               'result_source': 'result_json' if record is not None else 'stdout'}
+               'result_source': 'result_json' if record is not None else 'stdout',
+               'archive': archive, 'archived_tool_results': archived_results(archive_dir) if archive else 0}
         if mode == 'single':
             row['runner'] = single_runner
         if delegate and mode in ('single', 'auto'):
@@ -275,10 +319,14 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             row['deliverable_written'] = written is not None and written != original
             if status == 'completed' and written is None:
                 row.update(passed=False, failure='deliverable_missing')
-                return row
+                return _finish(row)
             content = written if written is not None else content
         if status == 'completed':
-            checks = grade(task, content)
+            try:
+                checks = grade(task, content)
+            except Exception as exc:   # a broken grader fails this row, not the whole bench (D-086)
+                row.update(passed=False, grader_error=type(exc).__name__)
+                return _finish(row)
             if answer_only:
                 checks['workspace_unchanged'] = _snapshot(root) == before
             row['checks_passed'], row['checks_total'], row['passed'] = summarize(checks)
@@ -288,7 +336,10 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
                 row['html_checks'] = 'browser' if 'enter_adds_trimmed' in checks else 'static'
             if checks.get('_reason') in _GUARD_REASONS:
                 row['guard_reason'] = checks['_reason']  # host enum: why the static guard refused
-            row.update(lenient(task, content))
+            try:
+                row.update(lenient(task, content))
+            except Exception as exc:   # diagnostics only; the strict result above stands
+                row['lenient_error'] = type(exc).__name__
             if keep_dir is not None:
                 suffix = {'html_todo': '.html', 'answer_json': '.json'}.get(task['grader'], '.py')
                 Path(keep_dir).mkdir(parents=True, exist_ok=True)
@@ -296,12 +347,15 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
         else:
             if write and not answer_only and written is not None and written != original:
                 # Diagnostic only: how good the file was when the run stopped. Never a pass.
-                passed, total, _ = summarize(grade(task, written))
-                row['file_checks_passed'], row['file_checks_total'] = passed, total
+                try:
+                    passed, total, _ = summarize(grade(task, written))
+                    row['file_checks_passed'], row['file_checks_total'] = passed, total
+                except Exception as exc:
+                    row['file_checks_error'] = type(exc).__name__
             first = cli_content.splitlines()[0] if cli_content else ''
             row['failure'] = first if _SAFE_FAILURE.match(first) else ('timeout' if timed_out else 'unrecognized')
             row['passed'] = False
-        return row
+        return _finish(row)
     finally:
         _rmtree(work)
 
@@ -340,20 +394,91 @@ def wilson(passed, runs, z=1.96):
     return [round(max(0.0, centre - half), 3), round(min(1.0, centre + half), 3)]
 
 
+_EXCLUDED = ('provider', 'grader')   # failures not counted against the agent (D-086)
+
+
 def split_summary(rows):
-    """Pass rate with a 95% interval for each split and mode, over every run in it."""
-    table = {}
+    """Pass rate with a 95% interval for each split and mode, over every run in it.
+
+    Also (D-086): how many tasks passed every one of their runs, and the agent's pass rate once
+    runs that failed on the provider or the grader are left out of the denominator.
+    """
+    table, per_task = {}, {}
     for row in rows:
-        cell = table.setdefault(f'{row.get("split", "tune")}/{row["mode"]}',
-                                {'passed': 0, 'runs': 0, 'tasks': set()})
+        key = f'{row.get("split", "tune")}/{row["mode"]}'
+        cell = table.setdefault(key, {'passed': 0, 'runs': 0, 'tasks': set(),
+                                      'excluded': dict.fromkeys(_EXCLUDED, 0)})
         cell['runs'] += 1
         cell['passed'] += bool(row.get('passed'))
         cell['tasks'].add(row['task'])
-    for cell in table.values():
+        if row.get('attribution') in _EXCLUDED:
+            cell['excluded'][row['attribution']] += 1
+        counts = per_task.setdefault(key, {}).setdefault(row['task'], [0, 0])
+        counts[0] += bool(row.get('passed'))
+        counts[1] += 1
+    for key, cell in table.items():
         cell['tasks'] = len(cell['tasks'])
         cell['pass_rate'] = round(cell['passed'] / cell['runs'], 3)
         cell['ci95'] = wilson(cell['passed'], cell['runs'])
+        runs = [n for _, n in per_task[key].values()]
+        cell['runs_per_task'] = [min(runs), max(runs)]
+        cell['tasks_all_passed'] = sum(1 for passed, n in per_task[key].values() if passed == n)
+        cell['all_passed_rate'] = round(cell['tasks_all_passed'] / cell['tasks'], 3)
+        cell['agent_runs'] = cell['runs'] - sum(cell['excluded'].values())
+        cell['agent_passed'] = cell['passed']
+        cell['agent_pass_rate'] = (round(cell['agent_passed'] / cell['agent_runs'], 3)
+                                   if cell['agent_runs'] else None)
+        cell['agent_ci95'] = wilson(cell['agent_passed'], cell['agent_runs'])
     return table
+
+
+def provider_state_counts(rows):
+    """Runs per provider state of their first call, over the whole report (D-079, D-086)."""
+    from app.agent.provider_state import STATES
+    counts = dict.fromkeys(STATES, 0)
+    for row in rows:
+        state = row.get('provider_state')
+        counts[state if state in STATES else 'unknown'] += 1
+    return counts
+
+
+_KEY = re.compile(r'[a-z]{1,20}/[a-z]{1,20}')
+
+
+def _percent(value):
+    return f'{round(100 * value)}%'
+
+
+def headline(rows, by_split):
+    """One Chinese line per split and mode, built by the host from numbers only (D-086)."""
+    from app.agent.provider_state import STATES
+    lines = []
+    for key, cell in by_split.items():
+        mine = [row for row in rows if f'{row.get("split", "tune")}/{row["mode"]}' == key]
+        low, high = cell['ci95']
+        text = (f'{key if _KEY.fullmatch(key) else "?"}：{cell["runs"]} 次运行通过 {cell["passed"]} 次'
+                f'（{_percent(cell["pass_rate"])}，95% 区间 {_percent(low)}～{_percent(high)}）；')
+        fewest, most = cell['runs_per_task']
+        if fewest == most:
+            text += f'每题 {fewest} 次，全过 {cell["tasks_all_passed"]}/{cell["tasks"]} 题；'
+        else:
+            text += (f'每题 {fewest}～{most} 次，全过 {cell["tasks_all_passed"]}/{cell["tasks"]} 题'
+                     '（次数不一致，全过比例仅供参考）；')
+        excluded = cell['excluded']
+        text += f'不计服务商失败 {excluded["provider"]} 次、评分失败 {excluded["grader"]} 次后'
+        if cell['agent_runs']:
+            agent_low, agent_high = cell['agent_ci95']
+            text += (f'为 {cell["agent_passed"]}/{cell["agent_runs"]}（{_percent(cell["agent_pass_rate"])}，'
+                     f'区间 {_percent(agent_low)}～{_percent(agent_high)}）；')
+        else:
+            text += '没有可计的运行；'
+        states = provider_state_counts(mine)
+        text += '服务商状态 ' + '、'.join(f'{state} {states[state]}' for state in STATES if states[state])
+        mismatched = sum(1 for row in mine if row.get('model_mismatch') is True)
+        if mismatched:
+            text += f'；回答模型和请求不同 {mismatched} 次'
+        lines.append(text + '。')
+    return lines
 
 
 def state_summary(rows):
@@ -375,10 +500,13 @@ def summary(rows):
     table = {}
     for row in rows:
         key = f'{row["task"]}/{row["mode"]}'
-        cell = table.setdefault(key, {'passed': 0, 'lenient_passed': 0, 'runs': 0})
+        cell = table.setdefault(key, {'passed': 0, 'lenient_passed': 0, 'runs': 0,
+                                      'provider_failures': 0, 'grader_failures': 0})
         cell['runs'] += 1
         cell['passed'] += bool(row.get('passed'))
         cell['lenient_passed'] += bool(row.get('lenient_all_passed'))
+        if row.get('attribution') in _EXCLUDED:
+            cell[f'{row["attribution"]}_failures'] += 1
         if 'total_tokens' in row:
             cell['total_tokens'] = cell.get('total_tokens', 0) + row['total_tokens']
             cell['model_calls'] = cell.get('model_calls', 0) + row.get('model_calls', 0)
@@ -390,6 +518,7 @@ def summary(rows):
             chosen = row['route'].get('mode', '?') if isinstance(row.get('route'), dict) else '?'
             routes[chosen] = routes.get(chosen, 0) + 1
     for cell in table.values():
+        cell['all_passed'] = cell['passed'] == cell['runs']
         cell['ci95'] = wilson(cell['passed'], cell['runs'])
     return table
 
@@ -418,6 +547,8 @@ def main(argv=None):
                         help='let the single loop delegate read-only research (loop-delegate-001)')
     parser.add_argument('--write', action='store_true',
                         help='let the agent write the deliverable file into its TEMP root and grade that file')
+    parser.add_argument('--no-archive', action='store_true',
+                        help='run without a conversation archive (the control; by default each run has its own, D-086)')
     args = parser.parse_args(argv)
     if args.runs < 1:
         parser.error('--runs must be at least 1')
@@ -428,7 +559,8 @@ def main(argv=None):
     plan = (f'{planned} agent run(s): tasks={[t["id"] for t in tasks]} modes={args.modes} runs={args.runs} '
             f'splits={sorted({t.get("split", "tune") for t in tasks})} '
             f'single_runner={args.single_runner} delegate={args.delegate} '
-            f'delivery={"file" if args.write or args.sandbox else "answer"} sandbox={args.sandbox}')
+            f'delivery={"file" if args.write or args.sandbox else "answer"} sandbox={args.sandbox} '
+            f'archive={"off" if args.no_archive else "on"}')
     if not args.confirm_live:
         over = f' (exceeds --max-runs {args.max_runs}; a live run would be refused)' if planned > args.max_runs else ''
         print('DRY RUN (no model calls). Add --confirm-live to execute ' + plan + over)
@@ -443,17 +575,22 @@ def main(argv=None):
                 for index in range(1, args.runs + 1):
                     rows.append(run_one(task, mode, index, args.timeout, args.keep_answers, args.write,
                                         args.sandbox, args.team_timeout,
-                                        args.single_runner, args.keep_traces, args.delegate))
+                                        args.single_runner, args.keep_traces, args.delegate,
+                                        archive=not args.no_archive))
                     print(json.dumps(rows[-1], ensure_ascii=False), file=sys.stderr, flush=True)
     finally:
         # The MCP stdio child does not inherit PYTHONDONTWRITEBYTECODE (DECISIONS D-011).
         for path in _pycache_dirs() - before:
             _rmtree(path)
-    report = {'plan': plan, 'rows': rows, 'summary': summary(rows), 'by_split': split_summary(rows),
-              'by_provider_state': state_summary(rows),
+    by_split = split_summary(rows)
+    report = {'plan': plan, 'headline': headline(rows, by_split), 'rows': rows, 'summary': summary(rows),
+              'by_split': by_split, 'by_provider_state': state_summary(rows),
+              'provider_state_counts': provider_state_counts(rows),
               'model_mismatch_runs': sum(1 for row in rows if row.get('model_mismatch'))}
     text = json.dumps(report, ensure_ascii=False, indent=2)
     print(text)
+    for line in report['headline']:
+        print(line, file=sys.stderr)
     if args.out:
         Path(args.out).write_text(text + '\n', encoding='utf-8')
     return 0
