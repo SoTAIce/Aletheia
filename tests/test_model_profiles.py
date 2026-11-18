@@ -420,7 +420,8 @@ def test_the_command_line_refuses_a_bad_file_and_shows_the_roles(tmp_path, monke
     assert cli.profile_problem().startswith('找不到模型档案文件')
     assert asyncio.run(cli.main(args)) == 0
     assert 'ModelProfileError: 找不到模型档案文件' in capsys.readouterr().out
-    run = cli.parse_args(['goal', '--filesystem-root', str(tmp_path), '--no-knowledge'])
+    run = cli.parse_args(['goal', '--filesystem-root', str(tmp_path), '--no-knowledge',
+                          '--confirm-system-drive'])     # tmp_path is on the system drive on Windows (D-074)
     assert asyncio.run(cli.main(run)) == 2
     assert 'ModelProfileError' in capsys.readouterr().out
 

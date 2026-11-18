@@ -15,11 +15,11 @@ from uuid import uuid4
 
 from loguru import logger
 
-from app.agent.runtime import AgentRunResult, FAILURE_MESSAGES, _policy_denial, _int_or_none
+from app.agent.runtime import AgentRunResult, FAILURE_MESSAGES, _context_overflow, _policy_denial, _int_or_none
 from app.agent.run_meter import RunMeter, cache_text as _cache_text, call_text as _call_text, current_meter, metering
 from app.agent.side_effects import SideEffectWatch
 from app.agent.step_runner import (RunnerDependencies, StepBlockedError, StepBudgetError, StepRunError,
-    StepBusinessError, StepFormatError, StepModelError, StepToolError, StepRunner)
+    StepBusinessError, StepFormatError, StepModelError, StepToolError, StepRunner, ToolRoundLimitError)
 from app.agent.step_models import (StepExecutionContext, StepExecutionReceipt, StepRunOutput,
     StepOutcome, ToolCall, ToolResult)
 from app.models.run_state import RunMemory, StaleExecutionError
@@ -45,9 +45,6 @@ def step_context(memory: RunMemory, step: PlanStep, plan_revision: int) -> StepE
                                 if r.selected_context is not None),
         resolved_questions=tuple(q for q in scratch.open_questions if q.resolved_at is not None
                                  and q.goal_revision == snapshot.goal_revision), final_step=True)
-
-
-_RETRY = object()      # an execution failed in a way that only a new answer may retry
 
 
 class _BoundRunner:
@@ -233,9 +230,6 @@ class LoopRun:
             outcome = await self._attempt(step)
             if isinstance(outcome, AgentRunResult):
                 return outcome
-            if outcome is _RETRY:
-                # Only a new answer starts another execution; _start_problem() ends the task otherwise.
-                continue
             stop = self._pending_stop()
             if stop is not None:
                 return stop
@@ -267,7 +261,8 @@ class LoopRun:
             answers = sum(1 for q in task.scratchpad.open_questions
                           if q.goal_revision == task.goal_revision and q.resolved_at is not None)
             if answers <= self._answers_seen:
-                return self._fail("Agent replanning limit reached" + self._last_failure(), 'limit')
+                return self._fail("Agent execution limit reached: a task runs again only after a new answer",
+                                  'limit')
             self._answers_seen = answers
         return None
 
@@ -287,8 +282,8 @@ class LoopRun:
         return step
 
     async def _attempt(self, step):
-        """Run the step once. Returns its content, _RETRY after a failure that may be retried only on
-        a new answer, or the final AgentRunResult."""
+        """Run the step once. Returns its content or the final AgentRunResult; a failed execution
+        ends the task with its own failure kind (D-085)."""
         task = self.memory.task_state
         self._execution_count += 1
         self._watch.reset()
@@ -320,32 +315,42 @@ class LoopRun:
             if denied is not None:
                 return self._fail(f'Model call denied by {denied.hook}: {denied.reason}',
                                   'hooks' if denied.hook == 'hooks_not_installed' else 'policy')
-            kind = 'format' if isinstance(exc, StepFormatError) else 'model'
+            kind = ('format' if isinstance(exc, StepFormatError)
+                    else 'context' if _context_overflow(exc) else 'model')
             return self._fail(f"{type(exc).__name__}: {exc.message}", kind)
         except StepToolError as exc:
             if self._watch.uncertain:
                 # A write or run raised: it may have taken effect, so never replay it (D-032).
-                return self._fail(f"{type(exc).__name__}: {exc.message}; automatic replanning is disabled",
+                return self._fail(f"{type(exc).__name__}: {exc.message}; it will not be repeated",
                                   'side_effect')
-            return _RETRY
-        except StepRunError:
-            return _RETRY
+            # Read-only tools kept raising (the loop hands single raises back to the model, D-085).
+            return self._fail(f"{type(exc).__name__}: {exc.message}", 'tool')
+        except ToolRoundLimitError as exc:
+            return self._fail(f"{type(exc).__name__}: {exc.message}", 'limit')
+        except StepBusinessError as exc:
+            return self._fail(f"{type(exc).__name__}: {exc.message}", 'business')
+        except StepRunError as exc:
+            # For example a tool the model kept asking for that does not exist (D-085).
+            return self._fail(f"{type(exc).__name__}: {exc.message}", 'tool')
         except StaleExecutionError:
             # Never overwrite evidence or lifecycle belonging to newer work.
             raise
         except TimeoutError:
             if self._runner.runner_id == 'agent_team':
                 # A team owns many side effects; an outer deadline must not replay it.
-                return self._fail('Team execution timed out; automatic replanning is disabled', 'timeout')
+                return self._fail('Team execution timed out; it will not be repeated', 'timeout')
             if self._context_manager.overflow_recovery_interrupted:
                 return self._fail("Context overflow recovery timed out; completed tools will not be repeated",
                                   'timeout')
             if self._watch.touched:
                 # The step started a write or run before the deadline (D-032).
-                return self._fail("Step execution timed out after a write or run; automatic replanning "
-                                  "is disabled", 'side_effect')
-            task.add_failure("Step execution timed out; only read-only tools had run")
-            return _RETRY
+                return self._fail("Step execution timed out after a write or run; it will not be repeated",
+                                  'side_effect')
+            spent = self._meter.budget_problem()
+            if spent:
+                # The run's time budget bounded the deadline (4d-3): say so, not a plain timeout.
+                return self._fail(spent, 'budget')
+            return self._fail("Step execution timed out; only read-only tools had run", 'timeout')
         except Exception as exc:
             # Contract/implementation errors are terminal, not retry instructions.
             # Only the type name: arbitrary exception text may carry host paths or provider output.
@@ -354,7 +359,7 @@ class LoopRun:
     def _check_resource_context(self):
         if self.memory.resources.context_version != self._resource_version:
             raise InvalidStateTransitionError(
-                "Plan is unbound or selected context changed; install a fresh plan")
+                "The selected context changed during the execution; start the task again")
 
     def _source_refs(self, refs):
         if not isinstance(refs, tuple) or not all(isinstance(ref, str) for ref in refs):
@@ -506,14 +511,6 @@ class LoopRun:
         tools = ', '.join(f"{c['tool']} {'ok' if c['success'] else 'failed'}" for c in entry['tools']) or 'none'
         logger.info('Step {} {} in {:.1f}s; tools: {}', entry['step'], outcome, entry['seconds'], tools)
         self._emit({'type': 'step', **entry, 'tools': [dict(c) for c in entry['tools']]})
-
-    def _last_failure(self) -> str:
-        """The latest recorded step failure, so a limit message keeps its root cause (D-033)."""
-        history = self.memory.task_state.scratchpad.failure_history
-        if not history:
-            return ""
-        text = " ".join(history[-1].message.split())
-        return "; last failure: " + (text[:300] + "..." if len(text) > 300 else text)
 
     def _fail(self, message: str, kind: str = 'internal') -> AgentRunResult:
         self.memory.task_state.fail_task(message)

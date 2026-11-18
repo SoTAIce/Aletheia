@@ -39,7 +39,7 @@
     "receipts": [],
     "result": [
      "failed",
-     "Team execution timed out; automatic replanning is disabled",
+     "Team execution timed out; it will not be repeated",
      "timeout",
      1,
      0

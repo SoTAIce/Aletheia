@@ -83,6 +83,7 @@ class RunLimits:
             ('调研成员', '每个成员的时限（--delegate）', seconds(explore.member_timeout_seconds)),
             ('调研成员', '委派次数 / 每个成员的调用次数', f'{explore.max_delegations} / {explore.member_tool_calls}'),
             ('单次调用', '模型请求时限', seconds(self.model_request_seconds)),
+            ('单次调用', '模型调用失败后的重试', retry_policy()),
             ('单次调用', '选择执行模式的调用时限', seconds(self.route_seconds)),
             ('单次调用', '每个门控的时限', seconds(self.gate_seconds)),
         ]
@@ -92,3 +93,12 @@ class RunLimits:
         lines = ['等待人工确认的时间不计入任何时限。']
         lines += [f'{layer}\t{name}\t{value}' for layer, name, value in self.rows()]
         return '\n'.join(lines)
+
+
+def retry_policy() -> str:
+    """The model call retry policy (D-085), from the adapter's own constants."""
+    from app.agent.openai_compatible_tool_calling_model import (MAX_RETRIES, MAX_RETRY_AFTER_SECONDS,
+                                                                MAX_RETRY_WAIT_SECONDS, RETRY_BASE_SECONDS)
+    waits = '/'.join(f'{RETRY_BASE_SECONDS * 2 ** i:g}' for i in range(MAX_RETRIES))
+    return (f'最多 {MAX_RETRIES} 次，等 {waits} 秒（带抖动，每次最多 {MAX_RETRY_WAIT_SECONDS:g} 秒），'
+            f'遵守 Retry-After（最多 {MAX_RETRY_AFTER_SECONDS:g} 秒）')

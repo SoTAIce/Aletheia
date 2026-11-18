@@ -5,8 +5,11 @@ import json
 import logging
 import math
 import os
+import random
 from copy import deepcopy
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from typing import Any
 
 from openai import APIConnectionError, APIError, APIResponseValidationError, APIStatusError, APITimeoutError, AsyncOpenAI
@@ -28,6 +31,49 @@ logger = logging.getLogger(__name__)
 
 # Statuses worth asking again: request timeout, conflict, rate limit, server errors (D-039).
 _RETRYABLE_STATUS = frozenset({408, 409, 429})
+# How a failed call is asked again (D-085): up to 4 retries, waits of about 1, 2, 4, 8 seconds with
+# jitter, each at most 30 seconds; a provider's Retry-After is followed up to 60 seconds.
+MAX_RETRIES = 4
+RETRY_BASE_SECONDS = 1.0
+MAX_RETRY_WAIT_SECONDS = 30.0
+MAX_RETRY_AFTER_SECONDS = 60.0
+
+
+def retry_after_seconds(error: Exception) -> float | None:
+    """The wait a provider asked for in its response headers (retry-after-ms, or Retry-After as
+    seconds or an HTTP date), or None. Only these headers are read, never the body (D-039)."""
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        headers = getattr(getattr(error, 'response', None), 'headers', None)
+        if headers is not None:
+            break
+        error = error.__cause__ or error.__context__
+    else:
+        return None
+    try:
+        millis = headers.get('retry-after-ms')
+        if millis is not None:
+            value = float(millis) / 1000
+            return max(0.0, value) if math.isfinite(value) else None
+        text = headers.get('retry-after')
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if not isinstance(text, str) or not text.strip():
+        return None
+    try:
+        value = float(text)
+    except ValueError:
+        try:
+            when = parsedate_to_datetime(text)
+        except (TypeError, ValueError, IndexError):
+            return None
+        if when is None:
+            return None
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        return max(0.0, (when - datetime.now(UTC)).total_seconds())
+    return max(0.0, value) if math.isfinite(value) else None
 
 
 def _retryable(error: Exception, value: bool = True) -> Exception:
@@ -52,9 +98,10 @@ class OpenAICompatibleToolCallingModel:
         timeout_seconds: float | None = None,
         json_mode: bool = False,
         enable_thinking: bool | None = None,
-        max_retries: int = 2,
-        retry_delay_seconds: float = 0.5,
+        max_retries: int = MAX_RETRIES,
+        retry_delay_seconds: float = RETRY_BASE_SECONDS,
         prompt_cache_key: str | None = None,
+        jitter: Callable[[], float] | None = None,
     ) -> None:
         create = getattr(getattr(getattr(client, "chat", None), "completions", None), "create", None)
         if not callable(create):
@@ -87,6 +134,8 @@ class OpenAICompatibleToolCallingModel:
         if (isinstance(retry_delay_seconds, bool) or not isinstance(retry_delay_seconds, (int, float))
                 or not math.isfinite(retry_delay_seconds) or retry_delay_seconds < 0):
             raise ValueError("retry_delay_seconds must be a finite non-negative number")
+        if jitter is not None and not callable(jitter):
+            raise TypeError("jitter must be callable or None")
 
         self._client = client
         self._model = model.strip()
@@ -97,6 +146,8 @@ class OpenAICompatibleToolCallingModel:
         self._enable_thinking = enable_thinking
         self._max_retries = max_retries
         self._retry_delay_seconds = float(retry_delay_seconds)
+        # A number in [0, 1) that spreads the waits of requests failing together (D-085).
+        self._jitter = jitter if jitter is not None else random.random
         # Requests with the same key are routed together by OpenAI-style providers, which
         # raises prompt-cache hits (D-057); None sends nothing.
         self._prompt_cache_key = prompt_cache_key
@@ -171,7 +222,16 @@ class OpenAICompatibleToolCallingModel:
         """
         if attempt >= self._max_retries or getattr(error, 'retryable', False) is not True:
             return None
-        delay = self._retry_delay_seconds * (2 ** attempt)
+        asked = retry_after_seconds(error)
+        if asked is not None:
+            # The provider said how long to wait; a longer wait than the cap is not worth it.
+            if asked > MAX_RETRY_AFTER_SECONDS:
+                return None
+            delay = asked
+        else:
+            # Exponential backoff with jitter: about 1, 2, 4, 8 seconds, at most 30 (D-085).
+            base = min(MAX_RETRY_WAIT_SECONDS, self._retry_delay_seconds * (2 ** attempt))
+            delay = base * (0.5 + 0.5 * min(max(float(self._jitter()), 0.0), 1.0))
         meter = current_meter()
         if meter is not None:
             if meter.budget_problem() is not None:

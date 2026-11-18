@@ -12,12 +12,13 @@ from app.models.taskstate import TaskStatus
 
 # Why a task failed, for callers and for the user-facing message (D-033).
 FAILURE_MESSAGES = {
-    'limit': '已达到执行步数或重新规划次数的上限，任务停止。',
-    'planning': '模型没有给出可用的计划，任务停止。',
+    'limit': '已达到工具调用次数或执行次数的上限，任务停止。',
+    'tool': '工具调用反复出错或不可用，任务停止。可以检查工具服务（文件系统、联网搜索、沙箱）是否正常。',
+    'context': '这次任务需要的上下文超过了模型窗口，重试也放不下，任务停止。可以缩小任务范围，或者换一个窗口更大的模型档案。',
     'format': '模型多次没有按要求的格式给出步骤结果，任务停止。',
     'model': '调用模型失败（服务出错或请求超时），任务停止，可以稍后重试。',
     'side_effect': '一个会修改文件或运行代码的操作没有正常结束，结果不确定。为避免重复执行，任务已停止，请先检查工作区。',
-    'timeout': '执行超时，为避免重复已完成的操作，任务已停止。',
+    'timeout': '执行超时，任务停止。已完成的修改不会重复执行。',
     'rejected': '任务结果没有通过完成检查，任务停止。',
     'business': '任务无法完成。',
     'budget': '已用完本次任务的令牌或时间预算，任务停止。',
@@ -30,6 +31,20 @@ FAILURE_MESSAGES = {
 def _int_or_none(value):
     """A trace label takes only a real integer (D-073)."""
     return value if type(value) is int else None
+
+
+def _context_overflow(exc):
+    """Whether an error comes from a request that does not fit the model's window: the host's own
+    budget check, or the provider still refusing after the overflow retry (D-085)."""
+    from app.agent.tool_calling_model import ModelContextOverflowError
+    from app.services.request_fitter import ContextBudgetError
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, (ContextBudgetError, ModelContextOverflowError)):
+            return True
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
 
 
 def _policy_denial(exc):

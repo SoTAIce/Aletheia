@@ -55,10 +55,14 @@ Goal -> RunMemory(RunState + Resources)
 | --- | --- |
 | plain-text reply | `COMPLETED`, content is the trimmed answer |
 | `ask_user` | `BLOCKED`, content is the question; a blocking question is recorded |
-| round limit, a refused or failing read, a timeout after reads only, unavailable tools after the repairs | `FAILED`, `limit` |
+| tool round or call limit, or the execution limit | `FAILED`, `limit` |
+| a read-only tool raised: the model sees the failure (type name only) and carries on; the third raise in one loop, or unavailable tools after the repairs, ends it (D-085) | `FAILED`, `tool` |
+| a timeout after reads only | `FAILED`, `timeout` (`budget` when the time budget bounded it) |
+| the model reported that the task cannot be done | `FAILED`, `business` |
+| the request does not fit the window, or the provider still refuses it after the overflow retry | `FAILED`, `context` |
 | a write or run tool raised, or a timeout after a write or run | `FAILED`, `side_effect` (never replayed) |
 | repeated empty replies | `FAILED`, `format` |
-| provider error or request timeout | `FAILED`, `model` |
+| provider error or request timeout, after up to 4 retries that follow `Retry-After` (D-085) | `FAILED`, `model` |
 | a gate refused a model or tool call | `FAILED`, `policy` |
 | no hooks installed for a model or tool call | `FAILED`, `hooks` |
 | the team's own time budget, or overflow recovery interrupted | `FAILED`, `timeout` |

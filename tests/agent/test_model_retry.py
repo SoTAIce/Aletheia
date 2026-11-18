@@ -30,8 +30,8 @@ def completion(content='hi', finish='stop', refusal=None, tool_calls=None):
                           usage={'prompt_tokens': 4, 'completion_tokens': 2, 'total_tokens': 6})
 
 
-def status(cls, code, body=None):
-    return cls('SECRET provider text', response=httpx.Response(code, request=REQUEST), body=body)
+def status(cls, code, body=None, headers=None):
+    return cls('SECRET provider text', response=httpx.Response(code, request=REQUEST, headers=headers), body=body)
 
 
 TRANSIENT = {
@@ -73,6 +73,7 @@ def model_with(outcomes, monkeypatch, **options):
 
     create_mock = AsyncMock(side_effect=create)
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create_mock)))
+    options.setdefault('jitter', lambda: 1.0)      # the top of the jitter range: waits of 1, 2, 4, 8
     return OpenAICompatibleToolCallingModel(client, 'm', **options), create_mock, sleeps
 
 
@@ -82,7 +83,7 @@ async def test_transient_failures_are_asked_again(kind, monkeypatch):
     with metering(RunMeter()) as meter:
         turn = await model.generate([UserMessage('q')], ())
     assert turn.content == 'hi'
-    assert create.await_count == 2 and sleeps == [0.5]
+    assert create.await_count == 2 and sleeps == [1.0]
     assert meter.model_calls == 2   # every attempt is metered
 
 
@@ -96,13 +97,13 @@ async def test_deterministic_failures_are_not_retried(kind, monkeypatch):
 
 
 async def test_gives_up_after_the_retry_limit_with_backoff(monkeypatch, caplog):
-    model, create, sleeps = model_with([TRANSIENT['server']] * 4, monkeypatch)
+    model, create, sleeps = model_with([TRANSIENT['server']] * 6, monkeypatch)
     with caplog.at_level(logging.WARNING, logger=adapter.__name__):
         with pytest.raises(ModelRequestError) as caught:
             await model.generate([UserMessage('q')], ())
-    assert create.await_count == 3 and sleeps == [0.5, 1.0]
+    assert create.await_count == 5 and sleeps == [1.0, 2.0, 4.0, 8.0]
     assert isinstance(caught.value.__cause__, InternalServerError)
-    assert 'retry 2/2' in caplog.text and 'SECRET' not in caplog.text
+    assert 'retry 4/4' in caplog.text and 'SECRET' not in caplog.text
 
 
 async def test_retries_can_be_disabled(monkeypatch):
@@ -142,3 +143,82 @@ def test_invalid_retry_options(options):
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock())))
     with pytest.raises(ValueError):
         OpenAICompatibleToolCallingModel(client, 'm', **options)
+
+
+# --- D-085: jitter, a cap on each wait, and the provider's Retry-After ------------------------------
+
+async def test_jitter_spreads_each_wait_over_its_upper_half(monkeypatch):
+    model, _, sleeps = model_with([TRANSIENT['server']] * 4 + [completion], monkeypatch, jitter=lambda: 0.0)
+    await model.generate([UserMessage('q')], ())
+    assert sleeps == [0.5, 1.0, 2.0, 4.0]
+    model, _, sleeps = model_with([TRANSIENT['server'], completion], monkeypatch, jitter=lambda: 7.0)
+    await model.generate([UserMessage('q')], ())
+    assert sleeps == [1.0]          # an out-of-range jitter is clamped, never a longer wait
+
+
+async def test_each_wait_is_capped(monkeypatch):
+    model, _, sleeps = model_with([TRANSIENT['server']] * 3 + [completion], monkeypatch, retry_delay_seconds=20)
+    await model.generate([UserMessage('q')], ())
+    assert sleeps == [20.0, 30.0, 30.0]
+
+
+def test_the_default_policy():
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock())))
+    model = OpenAICompatibleToolCallingModel(client, 'm')
+    assert (model._max_retries, model._retry_delay_seconds) == (4, 1.0)
+    assert 0.0 <= model._jitter() < 1.0
+    with pytest.raises(TypeError):
+        OpenAICompatibleToolCallingModel(client, 'm', jitter=0.5)
+
+
+@pytest.mark.parametrize('headers, wait', [({'retry-after': '3'}, 3.0), ({'retry-after': '0.5'}, 0.5),
+                                           ({'retry-after-ms': '1500'}, 1.5),
+                                           ({'retry-after-ms': '250', 'retry-after': '9'}, 0.25),
+                                           ({'retry-after': '-4'}, 0.0)])
+async def test_the_provider_retry_after_is_followed(headers, wait, monkeypatch):
+    model, create, sleeps = model_with([lambda: status(RateLimitError, 429, headers=headers), completion],
+                                       monkeypatch)
+    await model.generate([UserMessage('q')], ())
+    assert create.await_count == 2 and sleeps == [wait]
+
+
+async def test_retry_after_as_an_http_date(monkeypatch):
+    from datetime import UTC, datetime, timedelta
+    from email.utils import format_datetime
+    when = format_datetime(datetime.now(UTC) + timedelta(seconds=20), usegmt=True)
+    model, _, sleeps = model_with([lambda: status(InternalServerError, 503, headers={'retry-after': when}),
+                                   completion], monkeypatch)
+    await model.generate([UserMessage('q')], ())
+    assert len(sleeps) == 1 and 17.0 <= sleeps[0] <= 20.0
+
+
+@pytest.mark.parametrize('value', ['soon', '', 'nan'])
+async def test_an_unreadable_retry_after_falls_back_to_backoff(value, monkeypatch):
+    model, _, sleeps = model_with([lambda: status(RateLimitError, 429, headers={'retry-after': value}),
+                                   completion], monkeypatch)
+    await model.generate([UserMessage('q')], ())
+    assert sleeps == [1.0]
+
+
+async def test_a_retry_after_over_a_minute_is_not_waited_for(monkeypatch):
+    model, create, sleeps = model_with([lambda: status(RateLimitError, 429, headers={'retry-after': '61'}),
+                                        completion], monkeypatch)
+    with pytest.raises(ModelRequestError):
+        await model.generate([UserMessage('q')], ())
+    assert create.await_count == 1 and sleeps == []
+
+
+async def test_a_retry_after_longer_than_the_time_left_is_not_waited_for(monkeypatch):
+    model, create, sleeps = model_with([lambda: status(RateLimitError, 429, headers={'retry-after': '30'}),
+                                        completion], monkeypatch)
+    with metering(RunMeter(timeout_seconds=10)), pytest.raises(ModelRequestError):
+        await model.generate([UserMessage('q')], ())
+    assert create.await_count == 1 and sleeps == []
+
+
+async def test_retry_after_on_a_final_error_is_ignored(monkeypatch):
+    model, create, sleeps = model_with([lambda: status(BadRequestError, 400, headers={'retry-after': '1'}),
+                                        completion], monkeypatch)
+    with pytest.raises(ModelRequestError):
+        await model.generate([UserMessage('q')], ())
+    assert create.await_count == 1 and sleeps == []

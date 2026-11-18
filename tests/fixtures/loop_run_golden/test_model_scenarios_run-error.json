@@ -19,7 +19,7 @@
    "receipts": [],
    "result": [
     "failed",
-    "StepToolError: Tool run_tests raised OSError; automatic replanning is disabled",
+    "StepToolError: Tool run_tests raised OSError; it will not be repeated",
     "side_effect",
     1,
     0

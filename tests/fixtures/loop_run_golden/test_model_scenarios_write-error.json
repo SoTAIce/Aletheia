@@ -19,7 +19,7 @@
    "receipts": [],
    "result": [
     "failed",
-    "StepToolError: Tool write_file raised OSError; automatic replanning is disabled",
+    "StepToolError: Tool write_file raised OSError; it will not be repeated",
     "side_effect",
     1,
     0

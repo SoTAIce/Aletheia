@@ -139,10 +139,11 @@ async def test_results_carry_usage_and_a_step_log_without_tool_text():
 
 async def test_a_failed_tool_is_logged_with_its_type_only():
     reader = tool('read_file', ConnectionError('C:\\host\\path'))
-    result = await loop_run(Metered([call('read_file')]), reader).run()
-    assert result.status is TaskStatus.FAILED and result.failure_kind == 'limit'
+    # D-085: the read's failure goes back to the model, which answers; the log keeps the type only.
+    result = await loop_run(Metered([call('read_file'), ModelTurn('answer')]), reader).run()
+    assert result.status is TaskStatus.COMPLETED and result.content == 'answer'
     [entry] = result.step_log
-    assert entry['outcome'] == 'failed' and entry['tools'][0] == {
+    assert entry['outcome'] == 'succeeded' and entry['tools'][0] == {
         'tool': 'read_file', 'success': False, 'error': 'ConnectionError', 'seconds': entry['tools'][0]['seconds']}
     assert 'host' not in json.dumps(result.step_log)
 

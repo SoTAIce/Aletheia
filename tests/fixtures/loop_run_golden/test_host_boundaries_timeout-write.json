@@ -44,7 +44,7 @@
     "receipts": [],
     "result": [
      "failed",
-     "Step execution timed out after a write or run; automatic replanning is disabled",
+     "Step execution timed out after a write or run; it will not be repeated",
      "side_effect",
      1,
      0

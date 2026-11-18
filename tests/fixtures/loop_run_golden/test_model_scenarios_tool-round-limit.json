@@ -18,7 +18,7 @@
    "receipts": [],
    "result": [
     "failed",
-    "Agent replanning limit reached; last failure: tool budget used up: 1 rounds, 40 calls",
+    "ToolRoundLimitError: tool budget used up: 1 rounds, 40 calls",
     "limit",
     1,
     0

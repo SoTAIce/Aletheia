@@ -44,8 +44,8 @@
     "receipts": [],
     "result": [
      "failed",
-     "Agent replanning limit reached; last failure: Step execution timed out; only read-only tools had run",
-     "limit",
+     "Step execution timed out; only read-only tools had run",
+     "timeout",
      1,
      0
     ]
@@ -98,7 +98,7 @@
    },
    {
     "cached_prompt_tokens": 0,
-    "failure_kind": "limit",
+    "failure_kind": "timeout",
     "model_calls": 0,
     "status": "failed",
     "total_tokens": 0,

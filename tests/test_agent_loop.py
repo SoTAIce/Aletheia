@@ -105,13 +105,43 @@ async def test_an_unavailable_tool_is_answered_then_bounded():
         await runner.run(context)
 
 
-async def test_a_raising_tool_is_a_step_tool_error():
+async def test_a_raising_read_goes_back_to_the_model():
+    """D-085: a read that raised changed nothing, so the model sees the failure and carries on."""
     def boom(args):
         raise OSError('C:/secret/path')
-    runner, model, read, context = setup([call('a')], invoke=boom)
+    runner, model, read, context = setup([call('a'), text('worked around it')], invoke=boom)
+    output = await runner.run(context)
+    assert output.content == 'worked around it' and output.outcome is StepOutcome.SUCCEEDED
+    reply = json.loads(model.generate.await_args_list[1].args[0][-1].content)
+    assert reply == {'success': False, 'content': '', 'source_refs': [],
+                     'error': 'tool read raised OSError; the call did not complete'}
+    assert [r.success for r in output.tool_results] == [False] and len(output.tool_calls) == 1
+    assert 'secret' not in json.dumps([m.content for m in model.generate.await_args_list[1].args[0]])
+
+
+async def test_a_read_raising_a_third_time_is_a_step_tool_error():
+    def boom(args):
+        raise OSError('C:/secret/path')
+    runner, model, read, context = setup([call('a'), call('b'), call('c'), text('never')], invoke=boom)
     with pytest.raises(StepToolError) as info:
         await runner.run(context)
     assert 'secret' not in info.value.message and 'OSError' in info.value.message
+    assert read.invoke.await_count == 3 and model.generate.await_count == 3
+
+
+@pytest.mark.parametrize('name', ['write_file', 'run_tests', 'run_python'])
+async def test_a_raising_write_or_run_still_ends_the_loop(name):
+    tool = SimpleNamespace(definition=ToolDefinition(name, name, {'type': 'object'}),
+                           invoke=AsyncMock(side_effect=OSError('C:/secret/path')))
+    registry = ToolRegistry()
+    registry.register(tool)
+    model = AsyncMock()
+    model.generate.side_effect = [call('w', name), text('never')]
+    runner = AgentLoopRunner(model, registry)
+    with pytest.raises(StepToolError) as info:
+        await runner.run(started_context(goal='g', user='u'))
+    assert 'secret' not in info.value.message and tool.invoke.await_count == 1
+    assert model.generate.await_count == 1
 
 
 async def test_empty_replies_are_nudged_then_fail():

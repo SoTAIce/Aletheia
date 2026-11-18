@@ -13,8 +13,8 @@
    "receipts": [],
    "result": [
     "failed",
-    "Agent replanning limit reached; last failure: Model requested unavailable tool: missing",
-    "limit",
+    "StepRunError: Model requested unavailable tool: missing",
+    "tool",
     1,
     0
    ]
@@ -62,7 +62,7 @@
   },
   {
    "cached_prompt_tokens": 0,
-   "failure_kind": "limit",
+   "failure_kind": "tool",
    "model_calls": 0,
    "status": "failed",
    "total_tokens": 0,

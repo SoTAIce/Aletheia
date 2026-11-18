@@ -22,6 +22,9 @@ def test_the_limits_come_from_the_settings_and_the_options():
     assert rows['每个成员的时限'] == '120 秒' and rows['时间预算（--max-seconds）'] == '60 秒'
     assert rows['一个任务最多执行次数（含阻塞后续跑）'] == '3' and rows['令牌预算（--max-tokens）'] == '不限'
     assert RunLimits.current(settings=_settings()).deadlines() == {'single': 480.0}
+    # D-085: the model retry policy is shown with the other limits.
+    assert rows['模型调用失败后的重试'] == ('最多 4 次，等 1/2/4/8 秒（带抖动，每次最多 30 秒），'
+                                         '遵守 Retry-After（最多 60 秒）')
 
 
 def test_the_old_step_timeout_setting_is_no_longer_read():

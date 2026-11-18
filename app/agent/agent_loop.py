@@ -19,8 +19,9 @@ from textwrap import dedent
 from app.agent.run_meter import current_meter
 from app.agent.step_models import (
     ModelTurn, StepExecutionContext, StepOutcome, StepRunOutput, SystemMessage, ToolCall, ToolDefinition,
-    ToolMessage, ToolsShownOnly, UserMessage, TOOL_LIST_SOURCE,
+    ToolMessage, ToolResult, ToolsShownOnly, UserMessage, TOOL_LIST_SOURCE,
 )
+from app.agent.side_effects import SIDE_EFFECT_TOOLS
 from app.agent.step_runner import (StepBudgetError, StepFormatError, StepModelError, StepRunError,
                                    StepRunnerContractError,
                                    StepTimeoutError, StepToolError, ToolRoundLimitError)
@@ -37,6 +38,7 @@ MAX_TODO_ITEMS = 20
 MAX_TODO_CHARS = 200
 MAX_QUESTION_CHARS = 1000
 _REPAIRS = 2          # bounded host repairs: tool arguments, unavailable tools, empty replies
+MAX_TOOL_RAISES = 3   # read-only tool calls that may raise in one loop; the last one ends it (D-085)
 
 # Context fields in the order sent: stable ones first, for the provider's prompt cache (D-057).
 # available_tools is left out: the same tools are sent as native tool definitions.
@@ -267,7 +269,7 @@ class AgentLoopRunner:
             system += '\n\n' + self._instructions
         messages = [SystemMessage(system), UserMessage(_context_message(context))]
         calls, results, refs, seen = [], [], [], set()
-        rounds = arg_repairs = unavailable_replies = empty_replies = prior_calls = 0
+        rounds = arg_repairs = unavailable_replies = empty_replies = prior_calls = tool_raises = 0
         restored = self._store.take(context) if self._store is not None else None
         if restored is not None:
             # Continue the stopped loop: the answer is the result of its ask_user call.
@@ -412,7 +414,17 @@ class AgentLoopRunner:
                     result = await self._registry.invoke(call)
                 except Exception as exc:
                     # Only the type name: exception text may carry host paths (D-033).
-                    raise StepToolError(f'Tool {call.tool_name} raised {type(exc).__name__}', tuple(refs)) from exc
+                    problem = f'Tool {call.tool_name} raised {type(exc).__name__}'
+                    tool_raises += 1
+                    if (call.tool_name in SIDE_EFFECT_TOOLS or getattr(self._registry, 'uncertain', False)
+                            or tool_raises >= MAX_TOOL_RAISES):
+                        # A write or run may have taken effect (D-032); repeated raises mean a broken tool.
+                        raise StepToolError(problem, tuple(refs)) from exc
+                    # A read that raised changed nothing: the model sees the failure and may work
+                    # around it (D-085).
+                    result = ToolResult(call.call_id, call.tool_name, False, '',
+                                        error=f'tool {call.tool_name} raised {type(exc).__name__}; '
+                                              'the call did not complete')
                 calls.append(call)
                 results.append(result)
                 refs.extend(ref for ref in result.source_refs if ref not in refs)

@@ -39,8 +39,8 @@
     "receipts": [],
     "result": [
      "failed",
-     "Agent replanning limit reached; last failure: StepBusinessError: reason details Tool evidence: evidence",
-     "limit",
+     "StepBusinessError: reason\ndetails\nTool evidence: evidence",
+     "business",
      1,
      0
     ]
@@ -88,7 +88,7 @@
    },
    {
     "cached_prompt_tokens": 0,
-    "failure_kind": "limit",
+    "failure_kind": "business",
     "model_calls": 0,
     "status": "failed",
     "total_tokens": 0,

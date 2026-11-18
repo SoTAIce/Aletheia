@@ -191,8 +191,9 @@ async def test_model_scenarios(request, scenario):
         elif scenario == 'unavailable-tool':
             turns = [call('a', 'missing'), call('b', 'missing'), call('c', 'missing')]
         elif scenario in ('read-error', 'write-error', 'run-error'):
+            # A read that raises goes back to the model, which then answers (D-085).
             turns = [call('a', {'read-error': 'read_file', 'write-error': 'write_file',
-                               'run-error': 'run_tests'}[scenario])]
+                               'run-error': 'run_tests'}[scenario]), ModelTurn('answer')]
             kwargs['invoke'] = lambda args: (_ for _ in ()).throw(OSError('private'))
         elif scenario == 'empty-format':
             turns = [ModelTurn(''), ModelTurn(''), ModelTurn('')]
