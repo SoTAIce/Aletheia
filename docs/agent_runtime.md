@@ -54,6 +54,7 @@ Goal -> RunMemory(RunState + Resources)
 | What happens | Task result |
 | --- | --- |
 | plain-text reply | `COMPLETED`, content is the trimmed answer |
+| plain-text reply after a successful write with no passing run since, with the reminder on (single loop with the sandbox, `AGENT_REMIND_TO_RUN`) | the first is answered with one reminder to run the tests; the second is `COMPLETED` and marked unverified: `unverified` in the step log, `usage['unverified_changes']`, a Chinese notice on the command line and the web page (D-087) |
 | `ask_user` | `BLOCKED`, content is the question; a blocking question is recorded |
 | tool round or call limit, or the execution limit | `FAILED`, `limit` |
 | a read-only tool raised: the model sees the failure (type name only) and carries on; the third raise in one loop, or unavailable tools after the repairs, ends it (D-085) | `FAILED`, `tool` |
@@ -61,6 +62,8 @@ Goal -> RunMemory(RunState + Resources)
 | the model reported that the task cannot be done | `FAILED`, `business` |
 | the request does not fit the window, or the provider still refuses it after the overflow retry | `FAILED`, `context` |
 | a write or run tool raised, or a timeout after a write or run | `FAILED`, `side_effect` (never replayed) |
+
+Write, run and read are each tool's own effect (D-087): a tool declares it (local tools in their definition, MCP tools by the server's `readOnlyHint`), an undeclared tool is looked up in the one built-in table in `app/agent/tool_effects.py`, and anything else is `external` and treated as a side effect.
 | repeated empty replies | `FAILED`, `format` |
 | provider error or request timeout, after up to 4 retries that follow `Retry-After` (D-085) | `FAILED`, `model` |
 | a gate refused a model or tool call | `FAILED`, `policy` |

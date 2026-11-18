@@ -29,11 +29,16 @@ async def test_filesystem_stdio_registry(tmp_path, writable):
         tools = await client.list_tools()
         expected = {"read_file", "list_directory", "search_files"}      # search_files: D-055
         if writable:
-            expected.add("write_file")
+            expected |= {"write_file", "edit_file"}                     # edit_file: D-087
         assert {tool.name for tool in tools} == expected
         assert all(tool.description for tool in tools)
         for tool in tools:
             registry.register(MCPToolAdapter(client, tool))
+        # The server's annotations declare read-only tools; the rest fall to the built-in table (D-087).
+        from app.agent.tool_effects import BUILTIN_EFFECTS, effect_of
+        for definition in registry.list_definitions():
+            assert effect_of(definition) == BUILTIN_EFFECTS[definition.name]
+            assert (definition.effect == "read") == (BUILTIN_EFFECTS[definition.name] == "read")
         async def invoke(name, arguments):
             return await registry.invoke(ToolCall("test", name, arguments))
         read = await invoke("read_file", {"path": "input.txt"})

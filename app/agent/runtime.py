@@ -10,6 +10,9 @@ from app.agent.step_models import StepExecutionReceipt
 from app.models.taskstate import TaskStatus
 
 
+# Shown with a completed answer whose usage carries unverified_changes (D-087); app.js has the same text.
+UNVERIFIED_NOTICE = '注意：这次改了文件，但最后一次修改之后没有通过的运行，结果未经验证。'
+
 # Why a task failed, for callers and for the user-facing message (D-033).
 FAILURE_MESSAGES = {
     'limit': '已达到工具调用次数或执行次数的上限，任务停止。',

@@ -25,6 +25,7 @@ class CurrentTimeTool:
                 },
                 "additionalProperties": False,
             },
+            effect="read",   # D-087
         )
 
     async def invoke(self, arguments: dict[str, Any]) -> ToolOutput:

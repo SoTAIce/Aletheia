@@ -14,7 +14,8 @@ from app.agent.run_meter import current_meter
 from app.agent.step_models import ToolDefinition
 from app.agent.step_runner import StepRunError
 from app.agent.team.diagnostics import failure_details, failure_types
-from app.agent.team.models import WORKER_ONLY_TOOLS, has_passing_run_after_last_write
+from app.agent.team.models import has_passing_run_after_last_write
+from app.agent.tool_effects import effect_of, effect_of_name, has_side_effect
 from app.tools.tool_registry import ToolRegistry
 
 RUNNER_ID = 'agent_team'
@@ -89,7 +90,7 @@ class _Observed:
         try:
             output = await self.tool.invoke(arguments)
         except BaseException:
-            if self.name == 'write_file':
+            if effect_of(self.definition) == 'write':   # write_file, edit_file (D-087)
                 self.log.append(_UnseenWrite(path=path))
             raise
         self.log.append(_Seen(self.name, bool(output.success), output.content or '', path))
@@ -102,10 +103,10 @@ def _evidence(seen):
     for result in seen:
         if not isinstance(result, _Seen):
             continue
-        if result.tool_name == 'write_file' and result.success:
+        if effect_of_name(result.tool_name) == 'write' and result.success:
             if isinstance(result.path, str) and result.path not in written:
                 written.append(result.path)
-        if result.tool_name in ('run_tests', 'run_python'):
+        if effect_of_name(result.tool_name) == 'run':
             last_run = {'tool': result.tool_name, 'summary': result.content.splitlines()[0][:200]
                         if result.content else ''}
     return written, last_run
@@ -171,7 +172,7 @@ class DelegatingLoopRunner:
         self.member = member            # RoleModel of the members (stage 4d-2); the lead keeps model
         available = frozenset(d.name for d in tool_registry.list_definitions())
         self.worker_tools = options.allowed_tools & available
-        self.review_tools = self.worker_tools - WORKER_ONLY_TOOLS
+        self.review_tools = frozenset(n for n in self.worker_tools if not has_side_effect(effect_of_name(n)))
         self.format_repair_count = 0
         # Control tools can never become grants, even with a custom parent registry.
         self.worker_tools -= {'ask_user', 'todo', 'delegate', 'review', 'review_decision'}
@@ -318,7 +319,7 @@ class DelegatingLoopRunner:
         finally:
             self.format_repair_count += runner.format_repair_count
         run.gate_results.extend(seen)
-        run.writes += sum(r.tool_name == 'write_file' and r.success for r in seen)
+        run.writes += sum(effect_of_name(r.tool_name) == 'write' and r.success for r in seen)
         run.budget['tool_calls'] += sum(isinstance(r, _Seen) for r in seen)
         written, last_run = _evidence(seen)
         if written:

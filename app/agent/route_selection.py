@@ -19,6 +19,7 @@ from app.agent.json_output import load_json, unwrap_json_fence
 from app.agent.step_models import ModelTurn, SystemMessage, UserMessage
 from app.agent.team.diagnostics import failure_details, failure_types
 from app.agent.team.models import WORKER_ONLY_TOOLS
+from app.agent.tool_effects import effect_of, effect_of_name, has_side_effect
 from app.tools.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -27,7 +28,9 @@ SINGLE, TEAM = 'single', 'team'
 FALLBACK_MODE = SINGLE
 DEFAULT_TIMEOUT_SECONDS = 20.0
 MAX_GOAL_CHARS = 4000
-READ_ONLY_HIDDEN = WORKER_ONLY_TOOLS      # write_file, run_tests, run_python
+# Built-in names hidden from read-only tasks, kept for older imports; the registry view hides every
+# tool whose effect is not read (D-087).
+READ_ONLY_HIDDEN = WORKER_ONLY_TOOLS      # write_file, edit_file, run_tests, run_python
 READ_ONLY_ONLY = frozenset({'run_python_code'})   # read-only workspace runs, for read-only tasks (D-028)
 
 _PROMPT = (
@@ -59,7 +62,7 @@ def allowed_modes(team_options) -> tuple[frozenset, str]:
     """Host rules: the team is only a candidate where it has evidence, i.e. code delivery in the sandbox."""
     if team_options is None:
         return frozenset({SINGLE}), 'team_unavailable'
-    if 'write_file' not in team_options.allowed_tools:
+    if not any(effect_of_name(name) == 'write' for name in team_options.allowed_tools):
         return frozenset({SINGLE}), 'read_only'
     if not team_options.require_passing_run:
         return frozenset({SINGLE}), 'no_sandbox'
@@ -110,8 +113,9 @@ def _without(registry: ToolRegistry, hidden) -> ToolRegistry:
 
 
 def read_only_registry(registry: ToolRegistry) -> ToolRegistry:
-    """A registry holding the same tool objects minus write_file and the read-write run tools."""
-    return _without(registry, READ_ONLY_HIDDEN)
+    """A registry holding the same tool objects minus every tool that writes, runs or is not known
+    to only read (D-087)."""
+    return _without(registry, {d.name for d in registry.list_definitions() if has_side_effect(effect_of(d))})
 
 
 def task_registry(registry: ToolRegistry, read_only: bool) -> ToolRegistry:

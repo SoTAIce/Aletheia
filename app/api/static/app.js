@@ -15,7 +15,7 @@ const TAG = {completed: ['done', '已完成'], blocked: ['ask', '等待你回答
 const OUTCOME = {succeeded: ['done', 'i-check', '完成'], failed: ['fail', 'i-x', '失败'],
                  timeout: ['fail', 'i-clock', '超时'], blocked: ['ask', 'i-question', '需要你回答']};
 // What a side-effect tool call is about to do, for the approval card (D-061).
-const APPROVAL_ACTIONS = {write_file: '写入文件', run_python: '运行 Python 代码', run_tests: '运行测试'};
+const APPROVAL_ACTIONS = {write_file: '写入文件', edit_file: '修改文件', run_python: '运行 Python 代码', run_tests: '运行测试'};
 const APPROVAL_RESULTS = {allow: '已允许', allow_all: '已允许（本次运行都允许）', deny: '已拒绝',
                           timeout: '没有及时回答，已拒绝'};
 
@@ -74,6 +74,10 @@ function appendApprovalPreview(card, event) {
   if (event.tool === 'write_file') {
     if (Object.hasOwn(preview, 'overwrite')) show('覆盖已有文件', preview.overwrite === true ? '是' : '否');
     if (Object.hasOwn(preview, 'content')) show('写入内容', preview.content);
+  } else if (event.tool === 'edit_file') {   // D-087
+    if (Object.hasOwn(preview, 'old')) show('替换前', preview.old);
+    if (Object.hasOwn(preview, 'new')) show('替换后', preview.new);
+    if (Object.hasOwn(preview, 'replace_all')) show('全部替换', preview.replace_all === true ? '是' : '否');
   } else if (event.tool === 'run_python') {
     if (Object.hasOwn(preview, 'args')) {
       const args = preview.args;
@@ -812,6 +816,10 @@ function agentPart(turn, extra = {}) {
     }
     if (turn.status === 'completed') foot.append(copyButton(() => turn.reply || '', '复制回复'));
     part.append(foot);
+    // D-087: the same text as UNVERIFIED_NOTICE in app/agent/runtime.py.
+    if (turn.status === 'completed' && usage && usage.unverified_changes === true) {
+      part.append(el('p', 'note', '注意：这次改了文件，但最后一次修改之后没有通过的运行，结果未经验证。'));
+    }
     // provider-state-001: host-authored text, only when the provider dropped content or named another model.
     if (usage && usage.provider && typeof usage.provider.notice === 'string') {
       part.append(el('p', 'note', usage.provider.notice));

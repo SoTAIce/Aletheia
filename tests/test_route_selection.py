@@ -226,9 +226,9 @@ async def test_contradictory_or_invalid_writes_fall_back_with_every_tool(turn):
 
 
 class FakeTool:
-    def __init__(self, name):
+    def __init__(self, name, effect=None):
         from app.agent.step_models import ToolDefinition
-        self.definition = ToolDefinition(name, f'{name} tool', {'type': 'object'})
+        self.definition = ToolDefinition(name, f'{name} tool', {'type': 'object'}, effect=effect)
 
     async def invoke(self, call):
         raise AssertionError('not called')
@@ -244,11 +244,13 @@ def _tools(*names):
 
 def test_the_read_only_registry_hides_write_and_run_tools_only():
     from app.agent.route_selection import read_only_registry
-    full = _tools('read_file', 'write_file', 'run_tests', 'run_python', 'list_dir')
+    full = _tools('read_file', 'write_file', 'edit_file', 'run_tests', 'run_python')
+    full.register(FakeTool('list_dir', effect='read'))
+    full.register(FakeTool('delete_file'))                            # undeclared and unknown (D-087)
     view = read_only_registry(full)
     assert [d.name for d in view.list_definitions()] == ['read_file', 'list_dir']
     assert view.get('read_file') is full.get('read_file')
-    assert len(full.list_definitions()) == 5                          # the shared registry is untouched
+    assert len(full.list_definitions()) == 7                          # the shared registry is untouched
 
 
 async def test_a_read_only_task_runs_without_write_tools(monkeypatch):

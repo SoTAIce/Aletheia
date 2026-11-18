@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     # The single loop's task deadline, enforced once by LoopRun (stage 5b). It replaced
     # AGENT_STEP_TIMEOUT_SECONDS, which the loop and the team always widened away; that name is no longer read.
     agent_task_timeout_seconds: float = Field(default=480.0, gt=0, allow_inf_nan=False)
+    # With the sandbox, the single loop is reminded once to run the tests when it answers after
+    # changing files without a passing run; the answer is then marked unverified (D-087).
+    agent_remind_to_run: bool = True
     # Optional prices for the usage report; unset means no cost estimate (D-034).
     model_input_price_per_million_tokens: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     model_output_price_per_million_tokens: float | None = Field(default=None, ge=0, allow_inf_nan=False)
@@ -104,7 +107,8 @@ class Settings(BaseSettings):
     web_access_token: str = ""
     web_allow_no_token: bool = False
     # Tools the web page asks the user to approve before each call (D-061); empty asks for none.
-    web_approval_tools: str = "write_file,run_python,run_tests"
+    # While the list is not empty, tools whose effect is unknown are asked about too (D-087).
+    web_approval_tools: str = "write_file,edit_file,run_python,run_tests"
     web_approval_timeout_seconds: float = Field(default=300.0, gt=0, le=3600, allow_inf_nan=False)
 
     @property

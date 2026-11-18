@@ -33,7 +33,8 @@ class ApprovalGate:
         self._allow_all = False
 
     async def check(self, event: dict) -> Decision:
-        if event.get('tool') not in self._tools or self._allow_all:
+        # The listed tools, and any tool whose effect is not known (D-087): it may act outside the workspace.
+        if (event.get('tool') not in self._tools and event.get('effect') != 'external') or self._allow_all:
             return ALLOW
         async with self._lock:
             if self._allow_all:

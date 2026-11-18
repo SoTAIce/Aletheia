@@ -17,6 +17,14 @@ def test_write_preview_is_bounded_and_counts_omitted_characters():
             'text': '字' * min(size, 20000), 'chars': size, 'omitted_chars': max(0, size - 20000)}}
 
 
+def test_edit_preview_shows_both_texts_bounded_and_nothing_else():
+    """D-087: the approval card shows what is replaced and by what."""
+    preview = hooks.preview_arguments('edit_file', {'path': 'a.py', 'old': 'x' * 20001, 'new': 'y',
+                                                    'replace_all': False, 'extra': 'private'})
+    assert preview == {'path': 'a.py', 'old': {'text': 'x' * 20000, 'chars': 20001, 'omitted_chars': 1},
+                       'new': {'text': 'y', 'chars': 1, 'omitted_chars': 0}, 'replace_all': False}
+
+
 def test_python_preview_limits_items_and_counts_all_dropped_characters():
     preview = hooks.preview_arguments('run_python', {'path': 'a.py', 'args': ['字' * 203] * 18})
     assert preview == {'path': 'a.py', 'args': {'items': ['字' * 200] * 16,

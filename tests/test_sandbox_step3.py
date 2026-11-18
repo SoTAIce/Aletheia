@@ -99,6 +99,9 @@ def _result(name, content='', success=True):
     ([_result('write_file'), _result('run_tests', 'timed out (limit reached, process killed); 30s')], False),
     ([_result('write_file'), _result('run_tests', 'exit code 0; 1s', success=False)], False),
     ([_result('write_file'), _result('run_tests', 'exit code 0; 1s'), _result('write_file', success=False)], True),
+    # edit_file is a write too (D-087)
+    ([_result('run_tests', 'exit code 0; 1s'), _result('edit_file')], False),
+    ([_result('edit_file'), _result('run_tests', 'exit code 0; 1s')], True),
 ])
 def test_passing_run_must_follow_last_write(results, expected):
     assert has_passing_run_after_last_write(results) is expected

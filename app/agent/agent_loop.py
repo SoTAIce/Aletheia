@@ -21,7 +21,7 @@ from app.agent.step_models import (
     ModelTurn, StepExecutionContext, StepOutcome, StepRunOutput, SystemMessage, ToolCall, ToolDefinition,
     ToolMessage, ToolResult, ToolsShownOnly, UserMessage, TOOL_LIST_SOURCE,
 )
-from app.agent.side_effects import SIDE_EFFECT_TOOLS
+from app.agent.side_effects import is_side_effect
 from app.agent.step_runner import (StepBudgetError, StepFormatError, StepModelError, StepRunError,
                                    StepRunnerContractError,
                                    StepTimeoutError, StepToolError, ToolRoundLimitError)
@@ -39,6 +39,17 @@ MAX_TODO_CHARS = 200
 MAX_QUESTION_CHARS = 1000
 _REPAIRS = 2          # bounded host repairs: tool arguments, unavailable tools, empty replies
 MAX_TOOL_RAISES = 3   # read-only tool calls that may raise in one loop; the last one ends it (D-085)
+REMIND_TO_RUN = ('HOST: you changed files in this task, but no run_tests or run_python passed after the last '
+                 'change. Run the relevant tests now. If you cannot run them, answer again and say that the '
+                 'change was not run.')
+
+
+def _changed_without_passing_run(results) -> bool:
+    """A write succeeded in this loop and no sandbox run passed after the last one (D-087)."""
+    from app.agent.team.models import has_passing_run_after_last_write
+    from app.agent.tool_effects import effect_of_name
+    wrote = any(r.success and effect_of_name(r.tool_name) == 'write' for r in results)
+    return wrote and not has_passing_run_after_last_write(results)
 
 # Context fields in the order sent: stable ones first, for the provider's prompt cache (D-057).
 # available_tools is left out: the same tools are sent as native tool definitions.
@@ -53,8 +64,13 @@ class LoopOptions:
     # The loop's deadline, enforced by whoever runs it: LoopRun for the task's loop, the delegation for
     # a member (stage 5b). The loop itself does not set a second one.
     timeout_seconds: float = 480.0
+    # Remind the model once to run the tests when it answers after changing files without a passing
+    # run (D-087). The assembler turns it on for the single loop with the sandbox.
+    remind_to_run: bool = False
 
     def __post_init__(self):
+        if type(self.remind_to_run) is not bool:
+            raise ValueError('remind_to_run must be a bool')
         for name in ('max_tool_rounds', 'max_tool_calls'):
             value = getattr(self, name)
             if type(value) is not int or value < 1:
@@ -224,6 +240,7 @@ class AgentLoopRunner:
         self.format_repair_count = 0
         self.todo: list[dict] = []
         self.resumed = False
+        self.unverified = False   # answered after changing files with no passing run since (D-087)
 
     async def _generate(self, messages, tools, refs):
         # Every model call checks the run's budget first, inside a step too, so a long step or a
@@ -281,6 +298,8 @@ class AgentLoopRunner:
             self._refuse(messages, paused.skipped, 'not executed: the user was asked first; call it again if needed')
         wrap_up_sent = False
         finish_rejected = False
+        reminded = False
+        self.unverified = False
         host_calls = 0
         while True:
             used = prior_calls + len(calls) + host_calls
@@ -329,6 +348,14 @@ class AgentLoopRunner:
                     messages.append(turn.to_assistant_message())
                     messages.append(SystemMessage('HOST: ' + decision.reason))
                     continue
+                if options.remind_to_run and _changed_without_passing_run(results):
+                    if not reminded and not spent:
+                        # Once: the second answer finishes, marked unverified (D-087).
+                        reminded = True
+                        messages.append(turn.to_assistant_message())
+                        messages.append(SystemMessage(REMIND_TO_RUN))
+                        continue
+                    self.unverified = True
                 return self._output(text, StepOutcome.SUCCEEDED, None, calls, results, refs)
 
             batch = set()
@@ -416,7 +443,7 @@ class AgentLoopRunner:
                     # Only the type name: exception text may carry host paths (D-033).
                     problem = f'Tool {call.tool_name} raised {type(exc).__name__}'
                     tool_raises += 1
-                    if (call.tool_name in SIDE_EFFECT_TOOLS or getattr(self._registry, 'uncertain', False)
+                    if (is_side_effect(self._registry, call.tool_name) or getattr(self._registry, 'uncertain', False)
                             or tool_raises >= MAX_TOOL_RAISES):
                         # A write or run may have taken effect (D-032); repeated raises mean a broken tool.
                         raise StepToolError(problem, tuple(refs)) from exc

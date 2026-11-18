@@ -840,3 +840,41 @@
   - 黄金对照文件没有变化。
   - 没有跑真实评测；k=3 的调参集评测（33 次）另请用户授权。
 - 记录：[方案](bench_stats_plan.md)；测试在 `tests/test_bench_report.py`、`tests/test_archive_default.py`、`tests/test_bench_qa.py`、`tests/test_bench_tasks.py`。
+
+## D-087 2026-11-18 工具自己声明属性；按原文替换的 edit_file；单一循环的完成提醒
+
+- 起因：设计审查（`docs/agent_design_review.md`，暂未入库）1.4、2.4 节和 6.2 节第一行。
+  - 工具是不是只读，靠分散在 8 个地方的名字名单判断，新工具不在名单上就被当成只读。
+  - 只能用 `write_file` 整文件覆盖；`FileAccess` 里原有的补丁版 `edit_file` 从没暴露、没测过，读和写的根目录还不一致。
+  - 单一循环改完代码可以不跑测试就交付。
+  - 用户 2026-11-18 选了方案的三个推荐值，由 Claude 实施。
+- 决策：
+  - **工具属性**：`ToolDefinition.effect` 取 `read`、`write`、`run`、`external`，只给宿主用，不发给服务商。`effect_of` 的判断顺序是：工具自己的声明；`app/agent/tool_effects.py` 里唯一的一张内置工具表；都没有就是 `external`，当作有副作用（和 D-080 一样，宁可错拦）。
+    - MCP 适配器只在 `readOnlyHint=True` 时声明 `read`；本项目三个服务都标了注解。
+    - 副作用监视、D-085 的“写入或运行类出错立即结束”、只读任务藏哪些工具、审查员拿不到哪些工具、团队选项去掉写入、“写入之后有通过的运行”，都改为按属性判断。
+    - 注册表里没有的名字不算副作用，因为根本不会执行。
+    - 旧的名字集合（`SIDE_EFFECT_TOOLS`、`WORKER_ONLY_TOOLS`、`RUN_TOOLS`、`READ_ONLY_HIDDEN`）从表里推出，留给旧的导入用。
+    - 网页确认名单不为空时，`external` 的工具也要确认。
+  - **`edit_file(path, old, new, replace_all=False)`**：
+    - 只改写根目录下已存在的 UTF-8 文件，保留 BOM；
+    - `old` 必须唯一，否则报错，让模型多带上下文或设 `replace_all`；
+    - 文件是 `\r\n` 换行而 `old` 只有 `\n` 时，两边换成 `\r\n` 再找；
+    - 原文件和结果都受写入上限约束，写回是原子替换（`_write_atomic`，和 `write_file` 共用）；
+    - 旧的补丁解析器删除；
+    - 网页确认名单默认值加上 `edit_file`，卡片显示替换前后的内容；团队的写入工具也加上它。
+  - **完成提醒**：
+    - 新配置 `AGENT_REMIND_TO_RUN`，默认开。只在单一模式、能写文件、开了沙箱时生效。
+    - 写过文件、最后一次写入之后没有通过的运行就交答案，宿主提醒一次；第二次交答案照常完成，标为未验证（运行日志 `unverified`、`usage['unverified_changes']`），命令行和网页各显示一句中文提示。
+    - 从不让任务失败。工具预算用完时不提醒，因为那时已经不能调工具了。
+- 被否方案：
+  - 保留补丁格式：模型写行号和行数容易错，这段代码也从没测过；
+  - 未验证就判失败：会丢掉已经写好的改动，用户也可能本来就没打算跑；
+  - 未声明属性的工具按只读处理：一旦判错，就会重放有副作用的调用；
+  - 调研成员的工具也改为按属性授予：授权属于权限决定，名单式更稳妥，留给“用户自带 MCP 服务”那项。
+- 约束：
+  - 现在声明的属性优先，因为只接本项目自己的服务。接用户自带的 MCP 服务时要区分来源，不能让别人的服务自称只读。
+  - 写入发生在 `ask_user` 阻塞之前、续跑后直接交答案时，不会提醒，因为续跑的循环不带之前的工具结果。
+  - 评测题面后的 `SANDBOX_HINT` 保留。
+  - 黄金对照文件没有变化。
+  - 没有用真实模型验证。
+- 记录：[方案](edit_file_plan.md)；测试在 `tests/test_tool_effects.py`、`tests/test_filesystem_edit.py`、`tests/test_remind_to_run.py`、`tests/test_hook_previews.py`、`tests/test_sandbox_step3.py`、`tests/tools/test_filesystem_server.py`。

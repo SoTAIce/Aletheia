@@ -171,6 +171,8 @@ def usage_fields(record):
         fields['failed_tool_calls'] = sum(1 for c in tools if c.get('success') is not True)
         # Reads of a saved tool result back from the archive (D-052, D-086).
         fields['artifact_reads'] = sum(1 for c in tools if c.get('tool') == 'read_context_artifact')
+        if any(isinstance(s, dict) and s.get('unverified') is True for s in steps):
+            fields['unverified'] = True   # answered after changing files with no passing run (D-087)
     return fields
 
 

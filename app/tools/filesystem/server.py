@@ -4,8 +4,13 @@ import argparse
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from app.tools.filesystem.file_access import FileAccess
+
+# What each tool does to the workspace, for the host (D-087).
+READ = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False)
 
 
 def create_server(
@@ -25,7 +30,7 @@ def create_server(
     )
     mcp = FastMCP("AletheiaFilesystem")
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ)
     def read_file(path: str, start_line: int | None = None, max_lines: int | None = None) -> str:
         """Read a text file relative to the configured READ root.
 
@@ -40,7 +45,7 @@ def create_server(
         """
         return file_access.read_file(path, start_line=start_line, max_lines=max_lines)
 
-    @mcp.tool()
+    @mcp.tool(annotations=READ)
     def search_files(pattern: str, path: str = ".", glob: str | None = None, regex: bool = False,
                      ignore_case: bool = False, max_results: int = 50) -> dict:
         """Find lines containing pattern in text files under path (a directory or one file)
@@ -60,24 +65,49 @@ def create_server(
         read_root = root.resolve(strict=True)
         output_root = write_root.resolve(strict=True)
 
-        @mcp.tool()
+        def readable(path):
+            destination = output_root / path
+            if destination.is_relative_to(read_root):
+                return destination.relative_to(read_root).as_posix()
+            return None
+
+        @mcp.tool(annotations=WRITE)
         def write_file(path: str, content: str, overwrite: bool = False) -> str:
             """Write UTF-8 text relative to the configured WRITE root.
 
-            The WRITE root may differ from the READ root. Parents must exist.
-            Existing files are protected unless overwrite=true. Empty content
-            is allowed. Links, traversal and oversized content are rejected.
+            Use it for new files and for rewriting a whole file; to change part of an
+            existing file, use edit_file. The WRITE root may differ from the READ root.
+            Parents must exist. Existing files are protected unless overwrite=true. Empty
+            content is allowed. Links, traversal and oversized content are rejected.
             This replaces content; it never appends. On success, a read_file
             path is returned when the destination is also within the READ root.
             """
             file_access.write_file(path=path, content=content, overwrite=overwrite)
-            destination = output_root / path
-            if destination.is_relative_to(read_root):
-                read_path = destination.relative_to(read_root).as_posix()
+            read_path = readable(path)
+            if read_path is not None:
                 return f"File written successfully. Read it with read_file(path={read_path!r})."
             return "File written successfully. The destination is outside the configured READ root."
 
-    @mcp.tool()
+        @mcp.tool(annotations=WRITE)
+        def edit_file(path: str, old: str, new: str, replace_all: bool = False) -> str:
+            """Change part of an existing UTF-8 file under the WRITE root by replacing text (D-087).
+
+            old is the exact text to replace, copied from read_file (without its line note);
+            it must appear exactly once, so include enough surrounding lines to make it
+            unique, or set replace_all=true to replace every occurrence. new replaces it
+            (it may be empty to delete). Prefer this to rewriting a whole file with
+            write_file. Line ends may be written as \\n in a file that uses \\r\\n.
+            """
+            done = file_access.edit_file(path=path, old=old, new=new, replace_all=replace_all)
+            text = (f"Edited {path}: replaced {done['replacements']} occurrence(s) starting at "
+                    f"line {done['line']}.")
+            read_path = readable(path)
+            if read_path is not None:
+                text += (f" Read it with read_file(path={read_path!r}, "
+                         f"start_line={max(1, done['line'] - 5)}, max_lines=40).")
+            return text
+
+    @mcp.tool(annotations=READ)
     def list_directory(path: str = ".", offset: int = 0, limit: int = 50) -> dict:
         """List files and directories under the configured READ root."""
         return file_access.list_directory(path=path, offset=offset, limit=limit)

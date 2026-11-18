@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from mcp.types import CallToolResult, ImageContent, Tool
+from mcp.types import CallToolResult, ImageContent, Tool, ToolAnnotations
 
 from app.agent.agent_loop import MAX_TOOL_RAISES, AgentLoopRunner, LoopOptions, LOOP_STEP
 from app.agent.delegation import MemberSpawner
@@ -114,7 +114,8 @@ async def test_a_non_text_mcp_result_is_a_read_failure_the_model_sees():
     """MCPToolAdapter raises TypeError for image blocks (text-only V1); the loop carries on."""
     client = SimpleNamespace(call_tool=AsyncMock(return_value=CallToolResult(
         content=[ImageContent(type='image', data='AA==', mimeType='image/png')])))
-    adapter = MCPToolAdapter(client, Tool(name='web_search', inputSchema={'type': 'object'}))
+    adapter = MCPToolAdapter(client, Tool(name='web_search', inputSchema={'type': 'object'},
+                                          annotations=ToolAnnotations(readOnlyHint=True)))   # D-087
     model = Scripted(call('s', 'web_search'), ModelTurn('answer without the image'))
     result = await run(model, adapter).run()
     assert result.status is TaskStatus.COMPLETED

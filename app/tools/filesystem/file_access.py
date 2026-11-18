@@ -343,149 +343,52 @@ class FileAccess:
         }
 
 
-    def edit_file(
-        self,
-        path: str,
-        patch: str,
-    ) -> None:
-        if not isinstance(patch, str):
-            raise TypeError("patch must be a string")
+    def edit_file(self, path: str, old: str, new: str, replace_all: bool = False) -> dict:
+        """Replace old with new in one existing file under the WRITE root (D-087).
 
-        if not patch.strip():
-            raise ValueError("patch must not be empty")
-
-        # 1. 璇诲彇鍘熸枃浠?
-        content = self.read_file(path)
-        original_lines = content.splitlines(keepends=True)
-
-        # 2. 瑙ｆ瀽 patch
-        patch_lines = patch.splitlines(keepends=True)
-
-        header_pattern = re.compile(
-            r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@"
-        )
-
-        result: list[str] = []
-        source_index = 0
-        index = 0
-
-        while index < len(patch_lines):
-            header = patch_lines[index].rstrip("\r\n")
-            match = header_pattern.fullmatch(header)
-
-            if match is None:
-                raise ValueError(
-                    f"expected patch hunk header, got: {header!r}"
-                )
-
-            old_start = int(match.group(1))
-            old_count = int(match.group(2) or 1)
-            new_count = int(match.group(4) or 1)
-
-            # diff 浠?1 寮€濮嬶紝Python list 浠?0 寮€濮?
-            hunk_start = old_start - 1
-
-            if hunk_start < source_index:
-                raise ValueError("patch hunks overlap or are out of order")
-
-            # 3. hunk 鍓嶉潰鐨勫師鏂囦欢鍐呭鍘熸牱淇濈暀
-            result.extend(
-                original_lines[source_index:hunk_start]
-            )
-
-            source_index = hunk_start
-
-            consumed_old = 0
-            produced_new = 0
-
-            index += 1
-
-            # 4. 澶勭悊褰撳墠 hunk 鐨?+ / - / 绌烘牸琛?
-            while (
-                index < len(patch_lines)
-                and not patch_lines[index].startswith("@@")
-            ):
-                patch_line = patch_lines[index]
-
-                if not patch_line:
-                    raise ValueError("invalid empty patch line")
-
-                marker = patch_line[0]
-                text = patch_line[1:]
-
-                # 涓婁笅鏂囪锛氬繀椤诲拰鍘熸枃浠朵竴鑷达紝鐒跺悗淇濈暀
-                if marker == " ":
-                    if source_index >= len(original_lines):
-                        raise ValueError(
-                            "patch context exceeds file length"
-                        )
-
-                    if original_lines[source_index] != text:
-                        raise ValueError(
-                            f"patch context mismatch at line "
-                            f"{source_index + 1}"
-                        )
-
-                    result.append(original_lines[source_index])
-
-                    source_index += 1
-                    consumed_old += 1
-                    produced_new += 1
-
-                # - 锛氬垹闄ゅ師鏂囦欢杩欎竴琛?
-                elif marker == "-":
-                    if source_index >= len(original_lines):
-                        raise ValueError(
-                            "patch deletion exceeds file length"
-                        )
-
-                    if original_lines[source_index] != text:
-                        raise ValueError(
-                            f"patch delete mismatch at line "
-                            f"{source_index + 1}"
-                        )
-
-                    # 涓?append锛岀浉褰撲簬鍒犻櫎
-                    source_index += 1
-                    consumed_old += 1
-
-                # + 锛氬姞鍏ユ柊鍐呭
-                elif marker == "+":
-                    result.append(text)
-                    produced_new += 1
-
-                else:
-                    raise ValueError(
-                        f"invalid patch marker: {marker!r}"
-                    )
-
-                index += 1
-
-            # 5. 妫€鏌?@@ 澹版槑鐨勮鏁版槸鍚︽纭?
-            if consumed_old != old_count:
-                raise ValueError(
-                    f"patch old line count mismatch: "
-                    f"expected {old_count}, got {consumed_old}"
-                )
-
-            if produced_new != new_count:
-                raise ValueError(
-                    f"patch new line count mismatch: "
-                    f"expected {new_count}, got {produced_new}"
-                )
-
-        # 6. 鏈€鍚庝竴涓慨鏀瑰潡涔嬪悗鐨勫唴瀹圭户缁繚鐣?
-        result.extend(original_lines[source_index:])
-
-        updated_content = "".join(result)
-
-        # 7. 浣跨敤浣犲凡鏈夌殑瀹夊叏瑕嗙洊閫昏緫鍐欏洖
-        self.write_file(
-            path=path,
-            content=updated_content,
-            overwrite=True,
-        )
-
+        old must appear exactly once unless replace_all is true. Only UTF-8 files are edited
+        (a BOM is kept); a file with CRLF line ends matches an old written with LF. The file
+        and the result stay within the write limit, and the result is written atomically.
+        Returns the number of replacements and the line where the first one starts.
+        """
+        for name, value in (("old", old), ("new", new)):
+            if not isinstance(value, str):
+                raise TypeError(f"{name} must be a string")
+        if not isinstance(replace_all, bool):
+            raise TypeError("replace_all must be a bool")
+        if not old:
+            raise ValueError("old must not be empty")
+        if old == new:
+            raise ValueError("old and new are the same; nothing to change")
+        resolved_path = self.resolve_write_path(path)
+        if not resolved_path.is_file():
+            raise FileNotFoundError("edit_file changes an existing file; create new files with write_file")
+        with resolved_path.open("rb") as file:
+            data = file.read(self._max_write_bytes + 1)
+        if len(data) > self._max_write_bytes:
+            raise ValueError(f"file exceeds the write limit of {self._max_write_bytes} bytes")
+        bom = data.startswith(codecs.BOM_UTF8)
+        try:
+            text = data[len(codecs.BOM_UTF8):].decode("utf-8") if bom else data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ValueError("edit_file only edits UTF-8 files; rewrite this file with write_file") from None
+        count = text.count(old)
+        if count == 0 and "\r\n" in text and "\n" in old and "\r" not in old:
+            # The model wrote LF; the file uses CRLF.
+            old, new = old.replace("\n", "\r\n"), new.replace("\n", "\r\n")
+            count = text.count(old)
+        if count == 0:
+            raise ValueError("old text not found; read the lines again with read_file and copy them exactly")
+        if count > 1 and not replace_all:
+            raise ValueError(f"old text appears {count} times; include more surrounding lines "
+                             "or set replace_all=true")
+        line = text.count("\n", 0, text.index(old)) + 1
+        updated = text.replace(old, new) if replace_all else text.replace(old, new, 1)
+        result = (codecs.BOM_UTF8 if bom else b"") + updated.encode("utf-8")
+        if len(result) > self._max_write_bytes:
+            raise ValueError(f"the edited file would exceed the write limit of {self._max_write_bytes} bytes")
+        self._write_atomic(resolved_path, result)
+        return {"replacements": count if replace_all else 1, "line": line}
 
     def resolve_write_path(self, path: str) -> Path:
         """Validate a destination against the configured write permissions.
@@ -581,6 +484,11 @@ class FileAccess:
                 file.write(data)
             return
 
+        self._write_atomic(resolved_path, data)
+
+    @staticmethod
+    def _write_atomic(resolved_path: Path, data: bytes) -> None:
+        """Write to a temporary file beside the destination, then replace it (write_file, edit_file)."""
         temporary_path: Path | None = None
 
         try:

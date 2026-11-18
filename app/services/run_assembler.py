@@ -8,9 +8,22 @@ lead loop. Plan mode and its planner went in stage 4c (D-076).
 def _without_writes(options):
     """Team options for a task whose writes are off: the same as starting without a write root (D-051)."""
     from dataclasses import replace
-    from app.agent.route_selection import READ_ONLY_HIDDEN
-    return replace(options, allowed_tools=options.allowed_tools - READ_ONLY_HIDDEN,
+    from app.agent.tool_effects import effect_of_name, has_side_effect
+    kept = frozenset(name for name in options.allowed_tools if not has_side_effect(effect_of_name(name)))
+    return replace(options, allowed_tools=kept,
                    require_passing_run=False)
+
+
+def _with_reminder(options, registry, read_only):
+    """The single loop's options, with the run reminder on when the task can write and run code in the
+    sandbox and AGENT_REMIND_TO_RUN is set (D-087)."""
+    from dataclasses import replace
+    from app.agent.tool_effects import effect_of
+    from app.config import config
+    if read_only or not config.agent_remind_to_run or options.remind_to_run:
+        return options
+    effects = {effect_of(d) for d in registry.list_definitions()}
+    return replace(options, remind_to_run=True) if {'write', 'run'} <= effects else options
 
 
 class RunAssembler:
@@ -67,16 +80,17 @@ class RunAssembler:
             else:
                 from app.agent.agent_loop import AgentLoopRunner, LoopResumeStore
                 store = LoopResumeStore()  # one per task run, retained by its factory on rebind
+                loop_options = _with_reminder(self._loop_options, registry, choice.read_only)
                 if self._delegate:
                     from app.agent.delegation import ExploreLoopRunner
                     tally = {'delegations': 0}   # per task, kept across rebinds
                     def factory(deps):
-                        return ExploreLoopRunner(deps.model, deps.tool_registry, self._loop_options,
+                        return ExploreLoopRunner(deps.model, deps.tool_registry, loop_options,
                                                  deps.context_manager, store, tally=tally,
                                                  member=deps.explorer)
                 else:
                     def factory(deps):
-                        return AgentLoopRunner(deps.model, deps.tool_registry, self._loop_options,
+                        return AgentLoopRunner(deps.model, deps.tool_registry, loop_options,
                                                deps.context_manager, store)
                 runner_timeout = self._loop_options.timeout_seconds
             # The runner's own time limit is the task deadline; LoopRun enforces it once (stage 5b).

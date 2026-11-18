@@ -10,10 +10,22 @@ import time
 
 from app.agent.step_models import ToolCall, ToolResult
 from app.agent.team.models import WORKER_ONLY_TOOLS
+from app.agent.tool_effects import effect_of, has_side_effect
 from app.tools.tool_registry import ToolRegistry
 
-# Tools that change the workspace or run code there. run_python_code mounts it read-only.
-SIDE_EFFECT_TOOLS = WORKER_ONLY_TOOLS      # write_file, run_tests, run_python
+# Built-in tools that change the workspace or run code there (run_python_code mounts it read-only).
+# Kept for older imports; the watch decides by each tool's effect (D-087).
+SIDE_EFFECT_TOOLS = WORKER_ONLY_TOOLS      # write_file, edit_file, run_tests, run_python
+
+
+def is_side_effect(registry, name) -> bool:
+    """True unless the registry's tool of that name declares or is known to only read (D-087).
+    A name the registry does not have runs nothing, so it is no side effect."""
+    try:
+        definition = registry.get(name).definition
+    except Exception:   # unknown or invalid name: the registry refuses the call
+        return False
+    return has_side_effect(effect_of(definition))
 
 
 class SideEffectWatch(ToolRegistry):
@@ -45,7 +57,7 @@ class SideEffectWatch(ToolRegistry):
         return self.inner.get(name)
 
     async def invoke(self, call: ToolCall) -> ToolResult:
-        side = isinstance(call, ToolCall) and call.tool_name in SIDE_EFFECT_TOOLS
+        side = isinstance(call, ToolCall) and is_side_effect(self.inner, call.tool_name)
         if side:
             self.touched = True
         known = {d.name for d in self.inner.list_definitions()}

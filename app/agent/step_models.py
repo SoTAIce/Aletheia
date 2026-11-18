@@ -45,6 +45,9 @@ class ToolDefinition:
     name: str
     description: str
     input_schema: dict[str, Any]
+    # read, write, run or external; None leaves it to app.agent.tool_effects (D-087). Host-only:
+    # it is never sent to the provider.
+    effect: str | None = None
 
 
 class ToolsShownOnly(tuple):

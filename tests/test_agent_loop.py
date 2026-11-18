@@ -29,7 +29,8 @@ def text(content):
 def setup(turns, *, options=None, invoke=None):
     model = AsyncMock()
     model.generate.side_effect = turns
-    read = SimpleNamespace(definition=ToolDefinition('read', 'read', {'type': 'object'}),
+    # Declared read-only (D-087): a tool name outside the built-in table would count as a side effect.
+    read = SimpleNamespace(definition=ToolDefinition('read', 'read', {'type': 'object'}, effect='read'),
                            invoke=AsyncMock(side_effect=invoke or (lambda args: ToolOutput(True, f'text of {args}'))))
     registry = ToolRegistry()
     registry.register(read)

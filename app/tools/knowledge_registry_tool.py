@@ -27,6 +27,7 @@ class KnowledgeRegistryTool:
             "empty results do not support factual claims.",
             {"type": "object", "properties": {"query": {"type": "string", "minLength": 1}},
              "required": ["query"], "additionalProperties": False},
+            effect="read",   # D-087
         )
 
     async def invoke(self, arguments: dict[str, Any]) -> ToolOutput:

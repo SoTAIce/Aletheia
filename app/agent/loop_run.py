@@ -507,6 +507,8 @@ class LoopRun:
                  'error': None if exc is None or outcome == 'blocked' else type(exc).__name__,
                  'runner': self._runner.runner_id,
                  'seconds': round(time.monotonic() - started, 3), 'tools': [dict(c) for c in self._watch.calls]}
+        if exc is None and getattr(self._runner.runner, 'unverified', False) is True:
+            entry['unverified'] = True   # answered after changing files with no passing run since (D-087)
         self._step_log.append(entry)
         tools = ', '.join(f"{c['tool']} {'ok' if c['success'] else 'failed'}" for c in entry['tools']) or 'none'
         logger.info('Step {} {} in {:.1f}s; tools: {}', entry['step'], outcome, entry['seconds'], tools)
@@ -520,6 +522,9 @@ class LoopRun:
         task = self.memory.task_state
         kind = failure_kind if task.status is TaskStatus.FAILED else None
         usage = self._meter.snapshot() if self._meter is not None else None
+        if (usage is not None and task.status is TaskStatus.COMPLETED and self._step_log
+                and self._step_log[-1].get('unverified')):
+            usage['unverified_changes'] = True   # host flag the CLI and the web page explain (D-087)
         result = AgentRunResult(task.task_id, task.status, content, tuple(self._steps),
                                 self._execution_count, self._replan_count, kind, usage, tuple(self._step_log))
         if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):

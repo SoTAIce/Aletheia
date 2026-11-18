@@ -20,9 +20,9 @@ from test_bench_graders import FIXED_INVENTORY
 def test_team_write_toggle_only_with_write_root():
     assert team_options_for('single', 'D:/w') is None
     assert team_options_for('team', None).allowed_tools == READ_TOOLS
-    assert team_options_for('team', 'D:/w').allowed_tools == READ_TOOLS | {'write_file'}
+    assert team_options_for('team', 'D:/w').allowed_tools == READ_TOOLS | {'write_file', 'edit_file'}
     assert 'write_file' not in READ_TOOLS
-    assert WORKER_ONLY_TOOLS == {'write_file', 'run_tests', 'run_python'}
+    assert WORKER_ONLY_TOOLS == {'write_file', 'edit_file', 'run_tests', 'run_python'}
 
 
 def _context():

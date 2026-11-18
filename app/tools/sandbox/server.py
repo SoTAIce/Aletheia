@@ -10,6 +10,7 @@ import argparse
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from app.tools.sandbox.executor import DockerSandbox, SandboxError
 
@@ -42,18 +43,19 @@ def create_server(workspace: Path, sandbox: DockerSandbox | None = None, denied=
     sandbox = sandbox or DockerSandbox(workspace, denied=denied)
     mcp = FastMCP('AletheiaSandbox')
 
-    @mcp.tool()
+    # Annotations tell the host what each tool does to the workspace (D-087).
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=False))
     def run_tests(path: str = '') -> str:
         """Run pytest in an isolated sandbox on the workspace (the WRITE root).
 
         path: optional test file or directory relative to the workspace; empty runs all tests.
-        Write code and test files with write_file first. The sandbox has no network,
+        Write code and test files with write_file or edit_file first. The sandbox has no network,
         Python 3.13 with pytest only, 30 seconds, 512MB memory, and sees only the workspace.
         Returns "exit code N; seconds" then pytest output (exit code 0 means all tests passed).
         """
         return run_tests_text(sandbox, path)
 
-    @mcp.tool()
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=False))
     def run_python(path: str, args: list[str] | None = None) -> str:
         """Run one .py file from the workspace in the same isolated sandbox.
 
@@ -62,7 +64,7 @@ def create_server(workspace: Path, sandbox: DockerSandbox | None = None, denied=
         """
         return run_python_text(sandbox, path, args)
 
-    @mcp.tool()
+    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False))
     def run_python_code(code: str) -> str:
         """Run a short Python snippet in the isolated sandbox to compute or check a value.
 

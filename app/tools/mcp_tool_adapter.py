@@ -35,6 +35,9 @@ class MCPToolAdapter:
             name=tool.name,
             description=tool.description or f"Invoke MCP tool {tool.name}.",
             input_schema=deepcopy(tool.inputSchema),
+            # The server's own annotation (D-087): read-only is declared; anything else is left to
+            # the built-in table, and unknown tools then count as side effects.
+            effect='read' if getattr(tool.annotations, 'readOnlyHint', None) is True else None,
         )
 
     @property

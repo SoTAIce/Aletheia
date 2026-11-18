@@ -69,6 +69,8 @@
 
 已知的粗糙之处：沙箱里 Docker 出问题时失败类型是 `tool`，会算成 `agent`。
 
+行里的 `unverified`（D-087）：单一循环写过文件、最后一次写入之后没有通过的运行就交了答案（提醒过一次之后）。评测题面后的 `SANDBOX_HINT` 仍然保留，前后评测可以比较。
+
 报告新增的统计：
 
 - `summary` 每格：`all_passed`（每次都过）、`provider_failures`、`grader_failures`。

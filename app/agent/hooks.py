@@ -47,7 +47,8 @@ GATE_TIMEOUT_SECONDS = 5.0
 # Argument values kept in a tool event when they are short scalars: locations and bounds, never
 # text the model wrote (contents, patterns, queries), which is reduced to its length.
 _SUMMARY_VALUE_KEYS = frozenset({'path', 'start_line', 'max_lines', 'offset', 'limit', 'max_results',
-                                 'glob', 'regex', 'ignore_case', 'overwrite', 'timeout_seconds'})
+                                 'glob', 'regex', 'ignore_case', 'overwrite', 'timeout_seconds',
+                                 'replace_all'})   # replace_all: edit_file (D-087)
 _SUMMARY_VALUE_CHARS = 200
 
 
@@ -354,6 +355,7 @@ def preview_arguments(tool_name, arguments) -> dict:
         return summary(key, value)
 
     keys = {'write_file': ('path', 'overwrite', 'content'),
+            'edit_file': ('path', 'old', 'new', 'replace_all'),     # D-087
             'run_python': ('path', 'args'), 'run_tests': ('path',)}
     preview = {}
     for key in keys.get(tool_name, arguments):
@@ -362,7 +364,8 @@ def preview_arguments(tool_name, arguments) -> dict:
         value = arguments[key]
         if key == 'path' and tool_name in keys:
             preview[key] = location(key, value)
-        elif tool_name == 'write_file' and key == 'content' and isinstance(value, str):
+        elif isinstance(value, str) and ((tool_name == 'write_file' and key == 'content')
+                                         or (tool_name == 'edit_file' and key in ('old', 'new'))):
             preview[key] = text(value, 20000)
         elif tool_name == 'run_python' and key == 'args' and type(value) in (list, tuple):
             items = [text(item, 200)['text'] if isinstance(item, str) else summary('', item)
@@ -405,9 +408,11 @@ class HookedTool:
             return ToolOutput(False, '', error=f'not executed: {reason}')
         if not hooks.observers and not hooks.gates:
             return await self._tool.invoke(arguments)
-        from app.agent.side_effects import SIDE_EFFECT_TOOLS
+        from app.agent.tool_effects import effect_of, has_side_effect
         name = self.definition.name
-        base = {'tool': name, 'call_id': current_call_id(), 'side_effect': name in SIDE_EFFECT_TOOLS,
+        effect = effect_of(self.definition)     # D-087
+        base = {'tool': name, 'call_id': current_call_id(), 'side_effect': has_side_effect(effect),
+                'effect': effect,
                 'span_id': new_span_id(), 'parent_id': _span.get()}
         hooks.emit({'type': BEFORE_TOOL, **base, 'args_summary': summarize_arguments(arguments)})
         # Gate-then-invoke relies on sequential tool calls; recheck gates if calls ever run in parallel.

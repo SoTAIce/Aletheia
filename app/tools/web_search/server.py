@@ -5,6 +5,7 @@ import os
 from dataclasses import asdict
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from app.tools.web_search.web_search_service import WebSearchService
 
@@ -16,7 +17,8 @@ def create_service(api_key: str | None = None) -> FastMCP:
     mcp = FastMCP("AletheiaWebSearch")
 
     # The adapter includes both text and structured content; emit JSON once.
-    @mcp.tool(structured_output=False)
+    @mcp.tool(structured_output=False,   # read-only, outside the workspace (D-087)
+              annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True))
     async def search_web(
         query: str,
         max_results: int = 5,

@@ -28,7 +28,7 @@ class ContextArchiveTool:
                 'ref':{'type':'string','minLength':1},
                 'offset':{'type':'integer','minimum':0},
                 'limit':{'type':'integer','minimum':1,'maximum':self._max_chars}},
-             'required':['ref'],'additionalProperties':False})
+             'required':['ref'],'additionalProperties':False}, effect='read')   # D-087
 
     async def invoke(self, arguments):
         if not isinstance(arguments,dict) or set(arguments)-{'ref','offset','limit'}:

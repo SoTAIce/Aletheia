@@ -54,7 +54,7 @@ def team_options_for(execution_mode, write_root, sandbox=False, timeout_seconds=
     if execution_mode == 'auto' and not (write_root and sandbox):
         return None   # the routing rules allow the team only for code delivery in the sandbox (D-026)
     from app.agent.delegation import DelegationOptions, READ_TOOLS
-    tools = READ_TOOLS | ({'write_file'} if write_root else set()) | (
+    tools = READ_TOOLS | ({'write_file', 'edit_file'} if write_root else set()) | (
         {'run_tests', 'run_python'} if sandbox else set())
     defaults = DelegationOptions()
     return DelegationOptions(allowed_tools=frozenset(tools), require_passing_run=bool(sandbox),
@@ -128,7 +128,11 @@ def report(result, write=print) -> None:
         # The first line stays the English diagnostic the bench parses; this explains it (D-033).
         write(f"\n说明：{result.user_message}")
     from app.agent.provider_state import notice
-    warning = notice((getattr(result, 'usage', None) or {}).get('provider'))
+    usage = getattr(result, 'usage', None) or {}
+    if usage.get('unverified_changes') is True:
+        from app.agent.runtime import UNVERIFIED_NOTICE
+        write(f"\n{UNVERIFIED_NOTICE}")   # D-087
+    warning = notice(usage.get('provider'))
     if warning:
         # Only when the provider counted less than was sent or named another model (provider-state-001).
         write(f"\n{warning}")

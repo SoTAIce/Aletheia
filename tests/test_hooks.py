@@ -72,7 +72,7 @@ async def test_events_come_in_order_and_carry_no_model_or_tool_text(tmp_path):
                                 'after_tool', 'before_model', 'after_model', 'step', 'task_end']
     by_type = {e['type']: e for e in recorder.events}
     assert untraced(by_type['before_tool']) == {'type': 'before_tool', 'tool': 'get_current_time', 'call_id': 'c1',
-                                      'side_effect': False, 'args_summary': {}}
+                                      'side_effect': False, 'effect': 'read', 'args_summary': {}}
     assert by_type['after_tool']['success'] is True and by_type['after_tool']['chars'] > 0
     calls = [e for e in recorder.events if not e['type'].startswith('scope_')]
     first_model = calls[2]
@@ -105,7 +105,7 @@ async def test_a_denied_tool_is_not_run_and_the_model_is_told(tmp_path):
     told = json.loads(model.generate.call_args_list[1].args[0][-1].content)
     assert told['success'] is False and told['error'] == 'not executed: not on this page'
     after = [e for e in recorder.events if e['type'] == 'after_tool']
-    assert [untraced(e) for e in after] == [{'type': 'after_tool', 'tool': 'get_current_time', 'call_id': 'c1', 'side_effect': False,
+    assert [untraced(e) for e in after] == [{'type': 'after_tool', 'tool': 'get_current_time', 'call_id': 'c1', 'side_effect': False, 'effect': 'read',
                       'success': False, 'chars': 0, 'seconds': 0.0, 'denied_by': 'deny-tool'}]
     assert result.step_log[0]['tools'][0]['success'] is False
 
