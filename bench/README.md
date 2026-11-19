@@ -52,6 +52,7 @@
 - `--tasks all` 默认只取调参集；留出集要显式加 `--split holdout`（或 `--split all`）。按 id 点名的任务不受划分限制。
 - `probe` 是按需委派的探针题（`probe_config_keys`、`probe_event_flow`，几十个文件分在子目录里），只用 `--split probe` 运行，`--split all` 不包含它。`--delegate` 让单一循环可以委派只读调研（docs/loop_delegate_plan.md），报告每行多出 `delegations`、`delegate_requests`、`delegate_calls`。
 - 每个任务还有 `category`（`qa`、`implement`、`fix`、`frontend`）。代码类任务带隐藏的参考解 `reference`，`tests/test_bench_tasks.py` 会检查参考解能通过全部检查、修复类的原始文件至少失败一项，且隐藏文件都不在 `files` 里。
+- 按用途（D-091）：每次调用的 `calls` 项带 `purpose`；行里有 `by_purpose`（主循环、路由、收尾、团队各角色的调用数、令牌、估算费用）和 `auxiliary`（查询改写、嵌入，不计入预算），以及结果文件里的 `auxiliary_outside_requests`（任务外的调用）。报告的 `by_purpose` 把所有行加起来，给出每个用途占总令牌和总估算费用的比例；标准错误里多一两行中文汇总。
 - 模型档案（D-084）：每次调用的 `calls` 项带 `profile`（档案名）；用到两个以上档案（例如 `models.toml` 让团队成员用便宜模型）时，行里加 `by_profile`，按档案分别给出调用数、令牌和费用。
 - 服务商状态（D-079，[方案](../docs/provider_state_plan.md)）：每行有 `provider_state`（第一次调用的档：`dropped` 报告的比发出的少、`plain` 相当、`padded` 加了少量内容、`heavy` 加了大量内容、`unknown`）、`provider_states`、逐次的 `provider_ratios`（报告值 ÷ 本机估算）和 `model_mismatch`；报告的 `by_provider_state` 按“档/模式”汇总通过数，`model_mismatch_runs` 是回答模型和请求不同的运行数。中转站的隐藏内容会改变结果，比较两次评测时只在同一档里比。
 - 报告的 `summary` 每格附 `ci95`（Wilson 95% 区间）；`by_split` 按“划分/模式”汇总全部运行的通过率和区间。不同任务难度不同，跨任务的区间只能粗略反映抽样误差；比较两个版本时用同一批任务、同样次数，区间重叠时不能断言谁更好。

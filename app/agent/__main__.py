@@ -112,11 +112,63 @@ def result_record(result) -> dict:
     """The machine-readable outcome written by --result-json (D-034).
 
     content is the model's answer (data, not instructions); everything else is host-authored.
+    Calls outside the agent model made outside the request (background summaries, memory writes)
+    are added as auxiliary_outside_requests when there were any (docs/cost_measurement_plan.md).
     """
-    return {'status': result.status.value, 'failure_kind': result.failure_kind,
-            'user_message': result.user_message, 'content': result.content,
-            'execution_count': result.execution_count, 'replan_count': result.replan_count,
-            'usage': result.usage, 'steps': list(result.step_log)}
+    record = {'status': result.status.value, 'failure_kind': result.failure_kind,
+              'user_message': result.user_message, 'content': result.content,
+              'execution_count': result.execution_count, 'replan_count': result.replan_count,
+              'usage': result.usage, 'steps': list(result.step_log)}
+    from app.agent.run_meter import LEDGER
+    outside = LEDGER.snapshot()
+    if outside:
+        record['auxiliary_outside_requests'] = outside
+    return record
+
+
+# Chinese names of the purposes a model call is booked under (docs/cost_measurement_plan.md).
+PURPOSE_NAMES = {'step': '主循环', 'route': '路由', 'wrap_up': '收尾', 'lead': '团队负责人',
+                 'member': '团队成员', 'reviewer': '审查员', 'explorer': '调研成员',
+                 'query_rewrite': '查询改写', 'embedding': '嵌入', 'summary': '历史摘要'}
+
+
+def _purpose_part(name, counts, calls_key) -> str:
+    text = f"{PURPOSE_NAMES.get(name, name)} {counts.get(calls_key, 0)} 次"
+    tokens = (counts.get('prompt_tokens') or 0) + (counts.get('completion_tokens') or 0)
+    if tokens:
+        text += f' {tokens:,} 令牌'
+    elif calls_key == 'calls':
+        text += '（没有报告用量）'
+    cost = counts.get('estimated_cost')
+    if isinstance(cost, (int, float)) and cost > 0:
+        text += f'（估算费用 {cost:.4f}）'
+    return text
+
+
+def purpose_lines(usage) -> list[str]:
+    """Where a task's tokens went: by purpose when there was more than one, and the calls outside
+    the agent model (never budgeted); nothing for a plain one-purpose task."""
+    usage = usage if isinstance(usage, dict) else {}
+    lines = []
+    by_purpose = usage.get('by_purpose') or {}
+    if len(by_purpose) > 1:
+        lines.append('按用途：' + '；'.join(_purpose_part(name, counts, 'model_calls')
+                                         for name, counts in by_purpose.items()))
+    auxiliary = usage.get('auxiliary') or {}
+    if auxiliary:
+        lines.append('其他调用（不计入预算）：' + '；'.join(_purpose_part(name, counts, 'calls')
+                                                for name, counts in auxiliary.items()))
+    return lines
+
+
+def outside_line() -> str | None:
+    """The process's calls outside any request, for the end of a run; None when there were none."""
+    from app.agent.run_meter import LEDGER
+    outside = LEDGER.snapshot()
+    if not outside:
+        return None
+    return '任务之外的调用（后台摘要、记忆写入等）：' + '；'.join(
+        _purpose_part(name, counts, 'calls') for name, counts in outside.items())
 
 
 def write_result(path, result) -> None:
@@ -141,6 +193,8 @@ def report(result, write=print) -> None:
     if warning:
         # Only when the provider counted less than was sent or named another model (provider-state-001).
         write(f"\n{warning}")
+    for line in purpose_lines(usage):
+        write(line)
     write(f"\nStatus: {result.status.value}; executions: {result.execution_count}; replans: {result.replan_count}")
 
 
@@ -448,7 +502,10 @@ async def main(args) -> int:
         if args.goal is None or getattr(args, 'interactive', False):
             if persona_id is not None:       # the first persona of this session (docs/persona_plan.md)
                 store.bind(args.user_id, args.session_id, persona_id)
-            return await interactive(service, args, memory=memory)
+            code = await interactive(service, args, memory=memory)
+            if outside_line():
+                print(outside_line())
+            return code
         meter = RunMeter(max_total_tokens=getattr(args, 'max_tokens', None),
                          timeout_seconds=getattr(args, 'max_seconds', None))
         try:

@@ -81,7 +81,18 @@ class DashScopeEmbeddings(Embeddings):
             return f"{api_key[:8]}...{api_key[-4:]}"
         return "***"
 
+    @staticmethod
+    def _book(response: Any) -> None:
+        """Book the call's tokens under 'embedding' (docs/cost_measurement_plan.md); never fails."""
+        try:
+            from app.agent.run_meter import record_auxiliary, usage_tokens
+            prompt, _ = usage_tokens(getattr(response, "usage", None))
+            record_auxiliary("embedding", prompt)
+        except Exception:
+            pass
+
     def _extract_embeddings(self, response: Any, expected_count: int) -> list[list[float]]:
+        self._book(response)
         embeddings = [list(item.embedding) for item in response.data]
         if len(embeddings) != expected_count:
             raise EmbeddingResponseError(

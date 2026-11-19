@@ -124,6 +124,10 @@ def usage_fields(record):
     fields = {}
     if isinstance(record.get('failure_kind'), str):
         fields['failure_kind'] = record['failure_kind']
+    outside = record.get('auxiliary_outside_requests')
+    if isinstance(outside, dict) and outside:
+        fields['auxiliary_outside_requests'] = {key: dict(counts) for key, counts in outside.items()
+                                                if isinstance(key, str) and isinstance(counts, dict)}
     usage = record.get('usage')
     if isinstance(usage, dict):
         for name in ('model_calls', 'prompt_tokens', 'completion_tokens', 'total_tokens', 'estimated_cost'):
@@ -133,8 +137,8 @@ def usage_fields(record):
         calls = [c for c in usage.get('calls') or () if isinstance(c, dict)]
         if calls:
             # Per provider call: tokens, and the tools the loop's model asked for in reply (loop-trial-001).
-            fields['calls'] = [{k: c[k] for k in ('prompt', 'completion', 'requested', 'member', 'profile') if k in c}
-                               for c in calls]
+            fields['calls'] = [{k: c[k] for k in ('prompt', 'completion', 'requested', 'member', 'profile', 'purpose')
+                                if k in c} for c in calls]
             tagged = [c['requested'] for c in calls if isinstance(c.get('requested'), list)]
             if tagged:
                 fields['todo_calls'] = sum(1 for names in tagged if 'todo' in names)
@@ -152,6 +156,12 @@ def usage_fields(record):
             # Usage per model profile when roles ran on different models (stage 4d-2).
             fields['by_profile'] = {name: dict(counts) for name, counts in by_profile.items()
                                     if isinstance(name, str) and isinstance(counts, dict)}
+        for name in ('by_purpose', 'auxiliary'):
+            # Where the run's tokens went (docs/cost_measurement_plan.md).
+            table = usage.get(name)
+            if isinstance(table, dict) and table:
+                fields[name] = {key: dict(counts) for key, counts in table.items()
+                                if isinstance(key, str) and isinstance(counts, dict)}
         provider = usage.get('provider')
         if isinstance(provider, dict):
             # What the provider did to the requests (provider-state-001): first call's band, all bands,
@@ -527,6 +537,69 @@ def summary(rows):
     return table
 
 
+def _number(value):
+    return value if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+
+def purpose_summary(rows):
+    """Every run's usage added up by purpose, with each purpose's share of the tokens and of the
+    estimated cost; calls outside the agent model separately (docs/cost_measurement_plan.md).
+    A purpose's cost is None when any of its calls had no price."""
+    model, other = {}, {}
+    for row in rows:
+        for name, counts in (row.get('by_purpose') or {}).items():
+            cell = model.setdefault(name, {'model_calls': 0, 'tokens': 0, 'cached_prompt_tokens': 0,
+                                           'estimated_cost': 0.0})
+            cell['model_calls'] += _number(counts.get('model_calls'))
+            cell['tokens'] += _number(counts.get('prompt_tokens')) + _number(counts.get('completion_tokens'))
+            cell['cached_prompt_tokens'] += _number(counts.get('cached_prompt_tokens'))
+            cost = counts.get('estimated_cost')
+            if cell['estimated_cost'] is not None:
+                cell['estimated_cost'] = (None if not isinstance(cost, (int, float)) or isinstance(cost, bool)
+                                          else cell['estimated_cost'] + cost)
+        for table in (row.get('auxiliary') or {}, row.get('auxiliary_outside_requests') or {}):
+            for name, counts in table.items():
+                cell = other.setdefault(name, {'calls': 0, 'calls_without_usage': 0, 'tokens': 0})
+                cell['calls'] += _number(counts.get('calls'))
+                cell['calls_without_usage'] += _number(counts.get('calls_without_usage'))
+                cell['tokens'] += _number(counts.get('prompt_tokens')) + _number(counts.get('completion_tokens'))
+    tokens = sum(cell['tokens'] for cell in model.values())
+    costs = [cell['estimated_cost'] for cell in model.values()]
+    cost = None if None in costs else sum(costs)
+    for cell in model.values():
+        cell['token_share'] = round(cell['tokens'] / tokens, 3) if tokens else None
+        cell['cost_share'] = (round(cell['estimated_cost'] / cost, 3)
+                              if cost and cell['estimated_cost'] is not None else None)
+        if cell['estimated_cost'] is not None:
+            cell['estimated_cost'] = round(cell['estimated_cost'], 6)
+    return {'model': model, 'other': other, 'tokens': tokens,
+            'estimated_cost': None if cost is None else round(cost, 6)}
+
+
+_PURPOSE_NAMES = {'step': '主循环', 'route': '路由', 'wrap_up': '收尾', 'lead': '团队负责人', 'member': '团队成员',
+                  'reviewer': '审查员', 'explorer': '调研成员', 'query_rewrite': '查询改写', 'embedding': '嵌入',
+                  'summary': '历史摘要'}
+
+
+def purpose_headline(table):
+    """One Chinese line per kind: the agent model's purposes by share, then the other calls."""
+    lines = []
+    if table['model']:
+        parts = []
+        for name, cell in sorted(table['model'].items(), key=lambda item: -item[1]['tokens']):
+            share = '?' if cell['token_share'] is None else _percent(cell['token_share'])
+            text = f"{_PURPOSE_NAMES.get(name, name)} {cell['model_calls']} 次，令牌 {share}"
+            if cell['cost_share'] is not None:
+                text += f"，费用 {_percent(cell['cost_share'])}"
+            parts.append(text)
+        lines.append('按用途（共 ' + f"{table['tokens']:,} 令牌）：" + '；'.join(parts))
+    if table['other']:
+        lines.append('其他调用：' + '；'.join(
+            f"{_PURPOSE_NAMES.get(name, name)} {cell['calls']} 次 {cell['tokens']:,} 令牌"
+            for name, cell in table['other'].items()))
+    return lines
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--tasks', nargs='+', default=['all'])
@@ -590,10 +663,11 @@ def main(argv=None):
     report = {'plan': plan, 'headline': headline(rows, by_split), 'rows': rows, 'summary': summary(rows),
               'by_split': by_split, 'by_provider_state': state_summary(rows),
               'provider_state_counts': provider_state_counts(rows),
-              'model_mismatch_runs': sum(1 for row in rows if row.get('model_mismatch'))}
+              'model_mismatch_runs': sum(1 for row in rows if row.get('model_mismatch')),
+              'by_purpose': purpose_summary(rows)}
     text = json.dumps(report, ensure_ascii=False, indent=2)
     print(text)
-    for line in report['headline']:
+    for line in report['headline'] + purpose_headline(report['by_purpose']):
         print(line, file=sys.stderr)
     if args.out:
         Path(args.out).write_text(text + '\n', encoding='utf-8')

@@ -40,10 +40,10 @@ def test_each_call_is_logged_in_order_and_reaches_the_snapshot():
     meter.record(None, 2.0)                           # no usage; an impossible share is dropped
     calls = meter.snapshot()['calls']
     assert calls == [
-        {'prompt': 10000, 'cached': 8000, 'completion': 200, 'shared_prefix': 0.97},
-        {'prompt': 12000, 'cached': None, 'completion': 300, 'shared_prefix': None},
-        {'prompt': 100, 'cached': 100, 'completion': 1, 'shared_prefix': None},
-        {'prompt': None, 'cached': None, 'completion': None, 'shared_prefix': None},
+        {'prompt': 10000, 'cached': 8000, 'completion': 200, 'shared_prefix': 0.97, 'purpose': 'step'},
+        {'prompt': 12000, 'cached': None, 'completion': 300, 'shared_prefix': None, 'purpose': 'step'},
+        {'prompt': 100, 'cached': 100, 'completion': 1, 'shared_prefix': None, 'purpose': 'step'},
+        {'prompt': None, 'cached': None, 'completion': None, 'shared_prefix': None, 'purpose': 'step'},
     ]
     assert meter.cached_prompt_tokens == 8100 and meter.calls_with_cache_report == 2
     assert call_text(calls[0]) == 'prompt 10000, cached 8000, previous request kept 97%'

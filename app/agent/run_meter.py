@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 import math
+import threading
 import time
 
 from app.config import config
@@ -71,6 +72,12 @@ class RunMeter:
     # prices. Calls of a model built without a profile are not booked here.
     profile_usage: dict = field(default_factory=dict)
     profile_objects: dict = field(default_factory=dict)
+    # Usage per purpose (docs/cost_measurement_plan.md): the label the call ran under (step, route,
+    # wrap_up, lead, member, reviewer, explorer) -> counts and the cost at that call's own prices.
+    purpose_usage: dict = field(default_factory=dict)
+    # Calls outside the agent model during this request (query rewrite, embeddings): purpose ->
+    # counts. They are reported only; they never count toward the token budget.
+    auxiliary: dict = field(default_factory=dict)
     started: float = field(default_factory=time.monotonic)
 
     def __post_init__(self):
@@ -87,10 +94,11 @@ class RunMeter:
 
     def record(self, usage, shared_prefix: float | None = None, model: str | None = None,
                host_estimate: int | None = None, requested_model: str | None = None,
-               profile=None) -> None:
+               profile=None, purpose: str | None = None) -> None:
         """Add one provider call; usage is the provider's usage object, or None; model is the
         model name the response reported; host_estimate and requested_model describe what the
-        host sent (provider-state-001); profile is the ModelProfile of the model (stage 4d-2)."""
+        host sent (provider-state-001); profile is the ModelProfile of the model (stage 4d-2);
+        purpose is the label the call ran under, by default the current one (cost-measurement)."""
         self.model_calls += 1
         name = getattr(profile, 'name', None)
         if not isinstance(name, str):
@@ -100,10 +108,13 @@ class RunMeter:
         cached = None if prompt is None and completion is None else _cached_tokens(usage)
         if cached is not None and prompt is not None:
             cached = min(cached, prompt)
+        purpose = _purpose_label(purpose)
+        self._book_purpose(purpose, prompt, completion, cached, profile if name is not None else None)
         if len(self.call_log) < MAX_CALL_LOG:
             share = shared_prefix if isinstance(shared_prefix, float) and 0 <= shared_prefix <= 1 else None
             self.call_log.append({'prompt': prompt, 'cached': cached, 'completion': completion,
-                                  'shared_prefix': None if share is None else round(share, 3)})
+                                  'shared_prefix': None if share is None else round(share, 3),
+                                  'purpose': purpose})
             if name is not None:
                 self.call_log[-1]['profile'] = name
             self.response_models.append(_model_name(model))
@@ -127,6 +138,26 @@ class RunMeter:
             booked['prompt_tokens'] += prompt or 0
             booked['completion_tokens'] += completion or 0
             booked['cached_prompt_tokens'] += cached or 0
+
+    def _book_purpose(self, purpose, prompt, completion, cached, profile) -> None:
+        booked = self.purpose_usage.setdefault(purpose, {
+            'model_calls': 0, 'prompt_tokens': 0, 'completion_tokens': 0, 'cached_prompt_tokens': 0,
+            'estimated_cost': 0.0})
+        booked['model_calls'] += 1
+        if prompt is None and completion is None:
+            return
+        booked['prompt_tokens'] += prompt or 0
+        booked['completion_tokens'] += completion or 0
+        booked['cached_prompt_tokens'] += cached or 0
+        if booked['estimated_cost'] is not None:
+            # This call at its own profile's prices; one unpriced call makes the purpose's cost unknown.
+            cost = (profile.estimated_cost(prompt or 0, completion or 0) if profile is not None
+                    else estimated_cost(prompt or 0, completion or 0))
+            booked['estimated_cost'] = None if cost is None else booked['estimated_cost'] + cost
+
+    def add_auxiliary(self, purpose, prompt=None, completion=None) -> None:
+        """One call outside the agent model made for this request; reported, never budgeted."""
+        _book_auxiliary(self.auxiliary, purpose, prompt, completion)
 
     def tag_calls_since(self, index: int, requested: list[str]) -> None:
         """Mark the calls logged from index on with the tool names the model asked for in
@@ -169,6 +200,10 @@ class RunMeter:
                     counts['prompt_tokens'], counts['completion_tokens'])}
                 for name, counts in self.profile_usage.items()}
         usage['provider'] = self.provider_summary()
+        if self.purpose_usage:
+            usage['by_purpose'] = _rounded(self.purpose_usage)
+        if self.auxiliary:
+            usage['auxiliary'] = _rounded(self.auxiliary)
         return usage
 
     def estimated_cost(self) -> float | None:
@@ -224,6 +259,57 @@ def estimated_cost(prompt_tokens: int, completion_tokens: int) -> float | None:
     return config.agent_model_profile.estimated_cost(prompt_tokens, completion_tokens)
 
 
+def _purpose_label(purpose) -> str:
+    if not isinstance(purpose, str) or not purpose:
+        from app.agent.hooks import current_purpose
+        purpose = current_purpose()
+    return purpose[:40]
+
+
+def _rounded(table: dict) -> dict:
+    with _AUX_LOCK:
+        return {name: {k: (round(v, 6) if isinstance(v, float) else v) for k, v in counts.items()}
+                for name, counts in table.items()}
+
+
+_AUX_LOCK = threading.Lock()
+
+
+def _book_auxiliary(table: dict, purpose, prompt, completion) -> None:
+    prompt, completion = _non_negative_int(prompt), _non_negative_int(completion)
+    with _AUX_LOCK:
+        booked = table.setdefault(str(purpose)[:40], {'calls': 0, 'calls_without_usage': 0,
+                                                      'prompt_tokens': 0, 'completion_tokens': 0})
+        booked['calls'] += 1
+        if prompt is None and completion is None:
+            booked['calls_without_usage'] += 1
+            return
+        booked['prompt_tokens'] += prompt or 0
+        booked['completion_tokens'] += completion or 0
+
+
+class AuxiliaryLedger:
+    """Calls outside the agent model made outside any request (background summaries, memory
+    writes): purpose -> counts, for the whole process. These models have no configured prices,
+    so only calls and tokens are kept (docs/cost_measurement_plan.md)."""
+
+    def __init__(self) -> None:
+        self._table: dict = {}
+
+    def add(self, purpose, prompt=None, completion=None) -> None:
+        _book_auxiliary(self._table, purpose, prompt, completion)
+
+    def snapshot(self) -> dict:
+        return _rounded(self._table)
+
+    def clear(self) -> None:
+        with _AUX_LOCK:
+            self._table.clear()
+
+
+LEDGER = AuxiliaryLedger()
+
+
 _current: ContextVar[RunMeter | None] = ContextVar('aletheia_run_meter', default=None)
 
 
@@ -238,6 +324,30 @@ def metering(meter: RunMeter):
         yield meter
     finally:
         _current.reset(token)
+
+
+def record_auxiliary(purpose: str, prompt=None, completion=None, *, in_request: bool = True) -> None:
+    """Book a call outside the agent model (query rewrite, embeddings, summaries): to the open
+    request's meter when there is one and in_request, else to the process ledger."""
+    meter = _current.get() if in_request else None
+    if meter is not None:
+        meter.add_auxiliary(purpose, prompt, completion)
+    else:
+        LEDGER.add(purpose, prompt, completion)
+
+
+def usage_tokens(usage) -> tuple:
+    """(prompt, completion) from an OpenAI-style or LangChain usage object or dict; None where
+    not reported. An embedding reports only prompt (or total) tokens."""
+    def read(*names):
+        for name in names:
+            value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+            if _non_negative_int(value) is not None:
+                return value
+        return None
+    if usage is None:
+        return None, None
+    return read('prompt_tokens', 'input_tokens', 'total_tokens'), read('completion_tokens', 'output_tokens')
 
 
 def record_model_call(usage, shared_prefix: float | None = None, model: str | None = None,

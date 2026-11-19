@@ -9,7 +9,9 @@ from dataclasses import dataclass, replace
 from app.agent.agent_loop import AgentLoopRunner, HostTool, HostToolResult, LoopOptions
 from app.agent.agent_loop import RUNNER_ID as LOOP_RUNNER_ID
 from app.agent.builtin_hooks import PassingRunGate
-from app.agent.hooks import HookSet, current_hooks, installed_hooks, pausable_deadline, trace_scope, using_hooks
+from app.agent.hooks import (
+    HookSet, current_hooks, installed_hooks, model_purpose, pausable_deadline, trace_scope, using_hooks,
+)
 from app.agent.run_meter import current_meter
 from app.agent.step_models import ToolDefinition
 from app.agent.step_runner import StepRunError
@@ -134,8 +136,9 @@ class MemberSpawner:
         return runner, seen
 
     @staticmethod
-    async def run(runner, context, name):
-        with trace_scope('member', member=name):
+    async def run(runner, context, name, purpose='member'):
+        # The member's model calls are booked under its role (docs/cost_measurement_plan.md).
+        with trace_scope('member', member=name), model_purpose(purpose):
             return await runner.run(context)
 
 
@@ -290,7 +293,8 @@ class DelegatingLoopRunner:
             # task; time waiting for the user's approval does not count (D-061).
             async with asyncio.timeout(o.member_timeout_seconds) as deadline:
                 with pausable_deadline(deadline):
-                    output = await spawner.run(runner, context, name)
+                    output = await spawner.run(runner, context, name,
+                                               'reviewer' if role == 'reviewer' else 'member')
         except TimeoutError:
             report = {'member': name, 'status': 'error', 'failure': 'TimeoutError',
                       'note': f'the member reached its {o.member_timeout_seconds:g}-second limit; '
@@ -385,7 +389,8 @@ class DelegatingLoopRunner:
         try:
             # The team deadline is LoopRun's task deadline (stage 5b); members have their own inside it.
             with using_hooks(hooks) if hooks is not None else nullcontext():
-                output = await lead.run(context)
+                with model_purpose('lead'):
+                    output = await lead.run(context)
             return replace(output, observation=json.dumps({'team': 'loop',
                 'delegations': run.budget['delegations'], 'members': [e['member'] for e in run.trace]}),
                 tool_calls=tuple(run.calls), tool_results=tuple(run.results), source_refs=tuple(run.refs))
@@ -524,7 +529,7 @@ class ExploreDelegation:
         try:
             async with asyncio.timeout(o.member_timeout_seconds) as deadline:
                 with pausable_deadline(deadline):      # an approval wait does not count (D-061)
-                    output = await self.spawner.run(runner, _member_context(context, task), name)
+                    output = await self.spawner.run(runner, _member_context(context, task), name, 'explorer')
         except (StepRunError, TimeoutError) as exc:
             # Exception type names only, never provider text or model output.
             report.update(status='error', failure=(failure_types(failure_details(exc))

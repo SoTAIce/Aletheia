@@ -4,8 +4,35 @@ import asyncio
 import json
 from typing import Any, Sequence
 
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from app.schemas.rag import QueryRewriteResult
+
+
+class _UsageCatcher(BaseCallbackHandler):
+    """Collects the rewrite call's token usage, which structured output does not return, and books
+    it under 'query_rewrite' (docs/cost_measurement_plan.md). Reading usage never fails the call."""
+
+    def __init__(self) -> None:
+        self.prompt = self.completion = None
+
+    def on_llm_end(self, response, **kwargs) -> None:
+        try:
+            from app.agent.run_meter import usage_tokens
+            usage = (getattr(response, "llm_output", None) or {}).get("token_usage")
+            if not usage:
+                message = getattr(response.generations[0][0], "message", None)
+                usage = getattr(message, "usage_metadata", None)
+            self.prompt, self.completion = usage_tokens(usage)
+        except Exception:
+            pass
+
+    def book(self) -> None:
+        try:
+            from app.agent.run_meter import record_auxiliary
+            record_auxiliary("query_rewrite", self.prompt, self.completion)
+        except Exception:
+            pass
 
 
 class QueryRewriteService:
@@ -106,11 +133,16 @@ class QueryRewriteService:
 
         history = self._history_text(chat_history)
         prompt = self.build_prompt(original, history)
+        usage = _UsageCatcher()
         try:
             structured_llm = self.llm.with_structured_output(QueryRewriteResult)
-            raw = await asyncio.wait_for(
-                structured_llm.ainvoke(prompt), timeout=self.timeout_seconds
-            )
+            try:
+                raw = await asyncio.wait_for(
+                    structured_llm.ainvoke(prompt, config={"callbacks": [usage]}),
+                    timeout=self.timeout_seconds,
+                )
+            finally:
+                usage.book()
             parsed = self._parse(raw)
             cleaned: list[str] = []
             for query in parsed.rewritten_queries:

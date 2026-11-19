@@ -56,7 +56,7 @@ def test_the_meter_reports_the_provider_state_beside_the_old_fields():
     meter.record(SimpleNamespace(prompt_tokens=20160, completion_tokens=50), None, 'gpt-6.1-sol', 2827, 'gpt-5.6-luna')
     meter.record(None, 1.0, None, 3000, 'gpt-5.6-luna')                  # failed call: no usage
     snap = meter.snapshot()
-    assert snap['calls'][0] == {'prompt': 20160, 'cached': None, 'completion': 50, 'shared_prefix': None}
+    assert snap['calls'][0] == {'prompt': 20160, 'cached': None, 'completion': 50, 'shared_prefix': None, 'purpose': 'step'}
     assert snap['provider']['ratios'] == [7.13, None]
     assert snap['provider']['states'] == ['heavy', 'unknown'] and snap['provider']['model_mismatch'] is True
     assert RunMeter().snapshot()['provider']['state'] == 'unknown'

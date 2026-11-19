@@ -262,6 +262,11 @@ def model_purpose(purpose: str):
         _purpose.reset(token)
 
 
+def current_purpose() -> str:
+    """The label of the model calls made here; the run meter books usage by it (cost-measurement)."""
+    return _purpose.get()
+
+
 _deadlines: ContextVar[tuple] = ContextVar('aletheia_pausable_deadlines', default=())
 
 
@@ -462,9 +467,14 @@ class HookedModel:
             reason = _not_installed_reason(f'model call for purpose {purpose!r}')
             logger.warning('%s', reason)
             raise PolicyDeniedError('hooks_not_installed', reason)
-        if not hooks.observers and not hooks.gates:
-            return await self._model.generate(messages, tools)
         purpose = 'wrap_up' if isinstance(tools, ToolsShownOnly) else _purpose.get()
+        # The call runs under its purpose, so the run meter books its usage there (cost-measurement).
+        with model_purpose(purpose):
+            if not hooks.observers and not hooks.gates:
+                return await self._model.generate(messages, tools)
+            return await self._observed(hooks, purpose, messages, tools)
+
+    async def _observed(self, hooks, purpose, messages, tools):
         callable_tools = 0 if isinstance(tools, ToolsShownOnly) else len(tools)
         span = {'span_id': new_span_id(), 'parent_id': _span.get()}
         before = {'type': BEFORE_MODEL, 'purpose': purpose, 'message_count': len(messages),

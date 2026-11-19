@@ -78,6 +78,10 @@ class LLMCompressor(ConversationCompressor):
             temperature=self._temperature,
             max_tokens=self._max_output_tokens,
         )
+        # Summaries run in the background, outside any request: booked to the process ledger
+        # (docs/cost_measurement_plan.md).
+        from app.agent.run_meter import record_auxiliary, usage_tokens
+        record_auxiliary("summary", *usage_tokens(getattr(response, "usage", None)), in_request=False)
 
         choices = getattr(response, "choices", None)
         if not choices or len(choices) != 1:
