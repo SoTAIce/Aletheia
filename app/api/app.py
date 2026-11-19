@@ -17,7 +17,7 @@ from typing import Literal
 from fastapi import Depends, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.runs import ApiError, RunManager, service_error
@@ -86,6 +86,25 @@ class ApprovalIn(BaseModel):
 class MemoryIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     content: str
+
+
+class PersonaIn(BaseModel):
+    """A persona to create or change (docs/persona_plan.md); in options null removes a default."""
+    model_config = ConfigDict(extra='forbid')
+    name: str | None = Field(default=None, max_length=200)
+    instructions: str | None = Field(default=None, max_length=20000)
+    options: dict[str, StrictBool | str | None] | None = None
+
+
+class BtwIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    text: str | None = Field(default=None, max_length=20000)
+    undo: StrictBool = False
+
+
+class SessionPersonaIn(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    persona_id: str
 
 
 def _check_id(name: str, value: str | None, *, required: bool = True) -> None:
@@ -163,6 +182,29 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
         if scheme.lower() != 'bearer' or not hmac.compare_digest(token.encode(), access_token.encode()):
             raise ApiError(401, 'unauthorized', '缺少或错误的访问令牌。')
 
+    def need_personas():
+        store = getattr(service, 'personas', None)
+        if store is None:
+            raise ApiError(404, 'personas_disabled', '个性化人设没有开启。')
+        return store
+
+    async def persona_call(function, *args, **kwargs):
+        """A persona store call off the event loop; its refusals become Chinese API errors."""
+        try:
+            return await asyncio.to_thread(function, *args, **kwargs)
+        except Exception as exc:
+            error = service_error(exc)
+            if error.code == 'internal_error':
+                logger.warning('Persona call failed: %s', type(exc).__name__)
+            raise error from None
+
+    def persona_options(session_id: str) -> dict:
+        """The defaults of the session's persona, or none when personas are off."""
+        store = getattr(service, 'personas', None)
+        if store is None:
+            return {}
+        return store.get(user_id, store.session_persona_id(user_id, session_id)).options
+
     def need_memory():
         if memory is None:
             raise ApiError(404, 'memory_disabled', '长期记忆没有开启。')
@@ -192,9 +234,21 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
                     'system_drive': system_drive(), 'folder_picker': folder_picker is not None}
                    if offered.get('workspace_available') else {})}
 
-    def resolve(requested: dict) -> dict:
-        """Fill omitted choices with the defaults; refuse ones this server cannot honour (D-051)."""
+    def resolve(requested: dict, persona: dict | None = None) -> dict:
+        """Fill omitted choices with the defaults; refuse ones this server cannot honour (D-051).
+        A choice the session's persona sets and the request omits stays None, so the service takes
+        it from the persona and reports it (docs/persona_plan.md); one it cannot honour is skipped."""
         offered = run_options()
+        persona = persona or {}
+        left = set()
+        if requested.get('mode') is None and persona.get('mode') in offered['modes']:
+            left.add('mode')
+        if requested.get('write') is None and 'write' in persona and (
+                not persona['write'] or offered['write_available']):
+            left.add('write')
+        if requested.get('memory') is None and 'use_memory' in persona and (
+                not persona['use_memory'] or offered['memory_available']):
+            left.add('memory')
         if requested.get('mode') is not None and requested['mode'] not in offered['modes']:
             raise ApiError(400, 'mode_unavailable', '服务启动时没有准备团队能力，只能使用普通模式。')
         if requested.get('runner') is not None and requested['runner'] not in offered['runners']:
@@ -213,14 +267,19 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
             if check.system_drive and not requested.get('workspace_confirmed'):
                 raise ApiError(409, 'workspace_confirmation_required', '这个目录在系统盘上，需要你确认后才能使用。')
             resolved_place = {'workspace': check.path, 'workspace_confirmed': bool(check.system_drive)}
-        return {**resolved_place, 'mode': requested.get('mode') or offered['default_mode'],
+        return {**resolved_place,
+                'mode': None if 'mode' in left else requested.get('mode') or offered['default_mode'],
                 'runner': requested.get('runner') or offered['default_runner'],
-                'write': offered['write_default'] if requested.get('write') is None else requested['write'],
-                'memory': offered['memory_default'] if requested.get('memory') is None else requested['memory']}
+                'write': None if 'write' in left else (
+                    offered['write_default'] if requested.get('write') is None else requested['write']),
+                'memory': None if 'memory' in left else (
+                    offered['memory_default'] if requested.get('memory') is None else requested['memory'])}
 
     @app.get('/api/health', dependencies=guarded)
     async def health():
+        # 'personas' only when they are on, so the answer of a server without them stays as it was.
         return {'status': 'ok', 'longterm_memory': memory is not None, 'write_enabled': write_enabled,
+                **({'personas': True} if getattr(service, 'personas', None) is not None else {}),
                 'active_runs': runs.active_count, 'options': run_options(),
                 'approval_tools': sorted(approval_tools)}
 
@@ -262,7 +321,9 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
         if attachments:
             requested['attachments'] = list(attachments)     # part of the request, for idempotency
         # A resumed task keeps the choices it started with, so the request's own are ignored (D-051).
-        options = resolve(requested) if body.resume_task_id is None else None
+        options = None
+        if body.resume_task_id is None:
+            options = resolve(requested, await persona_call(persona_options, session_id))
         run, created = runs.start(session_id, body.content, body.request_id,
                                   resume_task_id=body.resume_task_id, question_id=body.question_id,
                                   options=options, requested=requested, attachments=attachments)
@@ -333,6 +394,67 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
     @app.post('/api/runs/{run_id}/cancel', dependencies=guarded)
     async def cancel(run_id: str):
         return (await runs.cancel(run_id)).snapshot()
+
+    @app.get('/api/personas', dependencies=guarded)
+    async def personas(session_id: str | None = None):
+        store = need_personas()
+        _check_id('session_id', session_id, required=False)
+        listing = await persona_call(store.list_personas, user_id)
+        current = await persona_call(store.session_persona_id, user_id, session_id) if session_id else None
+        return {'personas': listing, 'current': current}
+
+    @app.get('/api/personas/{persona_id}', dependencies=guarded)
+    async def persona_detail(persona_id: str):
+        _check_id('persona_id', persona_id)
+        return (await persona_call(need_personas().get, user_id, persona_id)).view()
+
+    @app.post('/api/personas', status_code=201, dependencies=guarded)
+    async def persona_create(body: PersonaIn):
+        store = need_personas()
+        options = {k: v for k, v in (body.options or {}).items() if v is not None}
+        persona = await persona_call(store.create, user_id, body.name or '', body.instructions or '', options)
+        return persona.view()
+
+    @app.put('/api/personas/{persona_id}', dependencies=guarded)
+    async def persona_update(persona_id: str, body: PersonaIn):
+        store = need_personas()
+        _check_id('persona_id', persona_id)
+        changes = {}
+        if body.name is not None:
+            changes['name'] = body.name
+        if body.instructions is not None:
+            changes['instructions'] = body.instructions
+        if body.options is not None:
+            changes['options'] = body.options
+        return (await persona_call(store.update, user_id, persona_id, **changes)).view()
+
+    @app.delete('/api/personas/{persona_id}', dependencies=guarded)
+    async def persona_delete(persona_id: str):
+        _check_id('persona_id', persona_id)
+        await persona_call(need_personas().delete, user_id, persona_id)
+        return {'deleted': persona_id}
+
+    @app.post('/api/personas/{persona_id}/btw', dependencies=guarded)
+    async def persona_btw(persona_id: str, body: BtwIn):
+        store = need_personas()
+        _check_id('persona_id', persona_id)
+        if body.undo:
+            return (await persona_call(store.undo_btw, user_id, persona_id)).view()
+        return (await persona_call(store.btw, user_id, persona_id, body.text or '')).view()
+
+    @app.get('/api/sessions/{session_id}/persona', dependencies=guarded)
+    async def session_persona(session_id: str):
+        store = need_personas()
+        _check_id('session_id', session_id)
+        chosen = await persona_call(store.session_persona_id, user_id, session_id)
+        return (await persona_call(store.get, user_id, chosen)).view(text=False)
+
+    @app.put('/api/sessions/{session_id}/persona', dependencies=guarded)
+    async def bind_persona(session_id: str, body: SessionPersonaIn):
+        store = need_personas()
+        _check_id('session_id', session_id)
+        _check_id('persona_id', body.persona_id)
+        return (await persona_call(store.bind, user_id, session_id, body.persona_id)).view(text=False)
 
     @app.get('/api/memories', dependencies=guarded)
     async def memories(limit: int = 20, offset: int = 0):

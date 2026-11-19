@@ -99,6 +99,8 @@ class WorkspacePolicy:
         protected = [Path(PROJECT_ROOT) / 'data']
         if settings.conversation_storage_dir:
             protected.append(Path(settings.conversation_storage_dir))
+        if getattr(settings, 'personas_dir', ''):      # the user's personas (docs/persona_plan.md)
+            protected.append(Path(settings.personas_dir))
         trace_dir = os.environ.get('ALETHEIA_TRACE_DIR')
         if trace_dir:
             protected.append(Path(trace_dir))

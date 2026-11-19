@@ -90,6 +90,12 @@ D-087 之后的变化：
 - 新工具 `edit_file` 按原文替换已有文件的一部分，进网页确认名单。
 - 单一循环开了沙箱时，写过文件却没跑通过就交答案，会被提醒一次；第二次交答案照常完成，标为未验证，命令行和网页都会提示。
 
+D-088 个性化人设（[方案](persona_plan.md)，第一步，含默认选项）：
+- 存储在 `app/services/personas.py`：每个用户一个目录，每个人设一个 `.md` 文件（TOML 设置 + 指令正文），`state.json` 记会话绑定和最近一次 `/btw`。
+- 服务层 `query_result` 给新任务解析人设：指令作为一条 `constraints` 加进任务（开头是宿主写的英文），默认设置只填请求没选的项，用不了的跳过并在 `persona` 事件里报告；续跑的任务不变。
+- 命令行 `/persona`、`/btw`、`--persona` 在 `app/agent/persona_commands.py`；网页有 `/api/personas` 一组接口和“人设”面板，输入框里的 `/persona`、`/btw` 由页面拦下。
+- 记忆分区（方案第 7 节）还没做。
+
 具体分支以 `loop_run.py`、`agent_loop.py` 为准。
 
 ## 4. 工具、MCP 与 RAG

@@ -7,9 +7,11 @@ import json
 import os
 from pathlib import Path
 
+from app.agent.persona_commands import PERSONA_HELP, PERSONAS_OFF, persona_command, persona_notice
 from app.agent.run_meter import RunMeter, metering
 from app.config import config
 from app.models.taskstate import TaskStatus
+from app.services.personas import PersonaError
 from app.services.rag_agent_service import RagAgentService
 from app.tools.tool_loader import local_mcp_servers
 
@@ -142,7 +144,7 @@ def report(result, write=print) -> None:
 INTERACTIVE_HELP = ('直接输入目标开始一个任务；任务等待回答时，直接输入回答即可继续。'
                     '命令：/help 显示帮助，/new 放弃正在等待回答的任务，/exit 退出（Ctrl+D、Ctrl+Z 回车同样退出）；'
                     '/dir 查看工作目录，/dir 路径 更换工作目录；'
-                    '长期记忆：/remember 内容 记住一条，/memories 查看，/forget 编号 删除。')
+                    '长期记忆：/remember 内容 记住一条，/memories 查看，/forget 编号 删除。' + PERSONA_HELP)
 MEMORY_OFF = '长期记忆没有开启：在 .env 里设置 LONGTERM_MEMORY_DSN 后可用。'
 
 
@@ -174,6 +176,16 @@ async def memory_command(command, memory, user_id, write=print) -> None:
     except Exception as exc:
         # Type name only: store and index errors may carry connection details.
         write(f'长期记忆操作失败：{type(exc).__name__}')
+
+
+def _notice_to(write):
+    """An on_event that prints the task's persona line (docs/persona_plan.md); nothing else."""
+    def on_event(event):
+        if event.get('type') == 'persona':
+            line = persona_notice(event)
+            if line:
+                write(line)
+    return on_event
 
 
 async def _read_line(prompt):
@@ -250,6 +262,9 @@ async def interactive(service, args, read_line=None, write=print, memory=None) -
         if command.split(' ', 1)[0] in ('/remember', '/memories', '/forget'):
             await memory_command(command, memory, user_id, write)
             continue
+        if command.split(' ', 1)[0] in ('/persona', '/btw'):
+            await asyncio.to_thread(persona_command, command, service, user_id, args.session_id, write, waiting)
+            continue
         if command.startswith('/'):
             write(f'未知命令：{command}。' + INTERACTIVE_HELP)
             continue
@@ -260,7 +275,12 @@ async def interactive(service, args, read_line=None, write=print, memory=None) -
                 chosen = ({'workspace': place['workspace'], 'workspace_confirmed': place['confirmed']}
                           if place.get('workspace') and waiting is None else {})
                 result = await service.query_result(line, args.session_id, user_id=user_id,
-                                                    resume_task_id=waiting, **chosen)
+                                                    resume_task_id=waiting, on_event=_notice_to(write),
+                                                    **chosen)
+        except PersonaError as exc:
+            write('请求没有执行：' + exc.message)     # a persona file the user must fix
+            waiting = None
+            continue
         except Exception as exc:
             # Host-side refusals (for example no resumable task); never print provider text.
             write(f'请求没有执行：{type(exc).__name__}')
@@ -357,12 +377,29 @@ async def main(args) -> int:
             single_runner=getattr(args, 'single_runner', 'loop'),
             delegate=getattr(args, 'delegate', False),
         ))
+        persona_id, store = None, getattr(service, 'personas', None)
+        if getattr(args, 'persona', None):
+            if store is None:
+                print(PERSONAS_OFF)
+                return 2
+            try:
+                persona_id = store.find(args.user_id, args.persona).persona_id
+            except PersonaError as exc:
+                print(exc.message)
+                return 2
         if args.goal is None or getattr(args, 'interactive', False):
+            if persona_id is not None:       # the first persona of this session (docs/persona_plan.md)
+                store.bind(args.user_id, args.session_id, persona_id)
             return await interactive(service, args, memory=memory)
         meter = RunMeter(max_total_tokens=getattr(args, 'max_tokens', None),
                          timeout_seconds=getattr(args, 'max_seconds', None))
-        with metering(meter):
-            result = await service.query_result(args.goal, args.session_id, user_id=args.user_id)
+        try:
+            with metering(meter):
+                extra = {'persona': persona_id, 'on_event': _notice_to(print)} if store is not None else {}
+                result = await service.query_result(args.goal, args.session_id, user_id=args.user_id, **extra)
+        except PersonaError as exc:
+            print('PersonaError: ' + exc.message)
+            return 2
     if getattr(args, 'result_json', None):
         write_result(args.result_json, result)
     report(result)
@@ -413,6 +450,8 @@ def build_parser():
                         help='Stop between model calls once this many tokens were used (D-034)')
     parser.add_argument('--max-seconds', type=_positive(float), help='Total time budget for the task in seconds (D-034)')
     parser.add_argument('--result-json', help='Also write the outcome, usage and step log as JSON here')
+    parser.add_argument('--persona', help='Persona (name or id) for this task; in the interactive mode, '
+                                          "the session's persona from the start (docs/persona_plan.md)")
     parser.add_argument('--show-limits', action='store_true',
                         help='Print every limit and deadline this command line would use, then exit (no model call)')
     return parser

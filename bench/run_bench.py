@@ -243,7 +243,9 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
             shutil.copyfile(task['dir'] / name, root / name)
         env = dict(os.environ, TAVILY_API_KEY='', PYTHONDONTWRITEBYTECODE='1', PYTHONIOENCODING='utf-8',
                    ALETHEIA_TEAM_TRACE='1',
-                   CONVERSATION_STORAGE_DIR=str(archive_dir) if archive else '')
+                   CONVERSATION_STORAGE_DIR=str(archive_dir) if archive else '',
+                   # The user's own personas must not change a bench run (docs/persona_plan.md).
+                   PERSONAS_DIR='')
         env.pop('ALETHEIA_TRACE_DIR', None)
         env.pop('ALETHEIA_TRACE_NAME', None)
         if trace_dir is not None:

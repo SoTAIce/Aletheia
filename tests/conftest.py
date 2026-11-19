@@ -15,6 +15,8 @@ def _no_default_conversation_archive(monkeypatch):
     monkeypatch.setattr(config, 'conversation_storage_dir', '')
     # A personal models.toml in the repository must not change any test (stage 4d-2).
     monkeypatch.setattr(config, 'model_profiles_file', '')
+    # Personas are on by default (data/personas); tests that need them pass a directory.
+    monkeypatch.setattr(config, 'personas_dir', '')
 
 
 _ENVIRONMENT_AT_START = pytest.StashKey[frozenset[str]]()

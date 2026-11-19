@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     # Archived by default; an explicit empty value keeps the in-memory mode.
     # Relative paths are anchored at the project root, not the working directory.
     conversation_storage_dir: str = Field(default="data/conversations", validate_default=True)
+    # Personas (docs/persona_plan.md): one directory per user of named instructions and run
+    # defaults. Empty turns the feature off; relative paths are anchored like the archive.
+    personas_dir: str = Field(default="data/personas", validate_default=True)
     # Long-term memory (D-042): empty DSN keeps it off. PostgreSQL holds the records,
     # Milvus the vectors in a collection separate from the knowledge base.
     longterm_memory_dsn: str = ""
@@ -140,7 +143,7 @@ class Settings(BaseSettings):
     prometheus_base_url: str = "http://127.0.0.1:9090"
     prometheus_request_timeout: float = 10.0
 
-    @field_validator("conversation_storage_dir", mode="after")
+    @field_validator("conversation_storage_dir", "personas_dir", mode="after")
     @classmethod
     def anchor_conversation_storage_dir(cls, value: str) -> str:
         value = value.strip()

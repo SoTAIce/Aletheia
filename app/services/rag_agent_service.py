@@ -155,6 +155,7 @@ class RagAgentService:
         execution_mode: str = 'single', team_options=None, hooks=None,
         single_runner: str = 'loop', loop_options=None, delegate: bool = False,
         workspace_servers=None, workspace_policy=None, default_workspace: str | None = None,
+        personas_dir: str | None = None,
     ) -> None:
         self.streaming = streaming
         self.model = model
@@ -203,6 +204,13 @@ class RagAgentService:
         self._workspace_policy = workspace_policy or (WorkspacePolicy.from_config() if workspace_servers else None)
         self._default_workspace = str(Path(default_workspace).resolve()) if default_workspace else None
         self._session_workspaces: dict = {}     # conversation key -> directory of its last task
+        # Personas (docs/persona_plan.md): None reads PERSONAS_DIR, '' turns them off. A persona's
+        # working directory is checked with this service's policy, so only where /dir works.
+        from app.services.personas import PersonaStore
+        directory = config.personas_dir if personas_dir is None else personas_dir
+        self._personas = PersonaStore(
+            directory, workspace_policy=self._workspace_policy if workspace_servers else None,
+        ) if directory else None
         self._knowledge_search = knowledge_search
         self._include_knowledge = include_knowledge
         # The task deadline comes from the chosen runner's options (RunAssembler, stage 5b).
@@ -357,6 +365,53 @@ class RagAgentService:
             offered.update(workspace_available=True, default_workspace=self._default_workspace)
         return offered
 
+    @property
+    def personas(self):
+        """The persona store, or None when personas are off (PERSONAS_DIR empty)."""
+        return self._personas
+
+    def _resolve_persona(self, user_id, session_id, persona_id):
+        """The persona of a new task: the one named for this request, else the session's. An
+        unbound session is bound to the one it gets, so its first task fixes it."""
+        store = self._personas
+        if persona_id is not None:
+            return store.get(user_id, persona_id)
+        chosen = store.session_persona_id(user_id, session_id)
+        persona = store.get(user_id, chosen)
+        if not store.is_bound(user_id, session_id):
+            store.bind(user_id, session_id, chosen)
+        return persona
+
+    def persona_defaults(self, persona, execution_mode=None, allow_writes=None, use_memory=None, workspace=None):
+        """Fill the choices a request left open from the persona (the request's own win).
+        A default this service cannot honour is skipped and reported, never fatal.
+        Returns ((execution_mode, allow_writes, use_memory, workspace), used, skipped)."""
+        used, skipped = [], []
+        defaults = persona.options if persona is not None else {}
+        if execution_mode is None and 'mode' in defaults:
+            if defaults['mode'] in self.run_options()['modes']:
+                execution_mode = defaults['mode']
+                used.append('mode')
+            else:
+                skipped.append('mode')
+        if allow_writes is None and 'write' in defaults:
+            allow_writes = defaults['write']
+            used.append('write')
+        if use_memory is None and 'use_memory' in defaults:
+            if defaults['use_memory'] and self._longterm_memory is None:
+                skipped.append('use_memory')
+            else:
+                use_memory = defaults['use_memory']
+                used.append('use_memory')
+        if workspace is None and 'workspace' in defaults:
+            check = self._workspace_policy.check(defaults['workspace']) if self._workspace_servers else None
+            if check is None or check.problem is not None or check.system_drive:
+                skipped.append('workspace')
+            else:
+                workspace = check.path
+                used.append('workspace')
+        return (execution_mode, allow_writes, use_memory, workspace), used, skipped
+
     def check_workspace(self, path):
         """Whether a directory can be the working directory (workspace-001); nothing is listed."""
         if self._workspace_servers is None:
@@ -406,14 +461,20 @@ class RagAgentService:
         execution_mode: str | None = None, allow_writes: bool | None = None, use_memory: bool | None = None,
         single_runner: str | None = None,
         hooks=None, workspace: str | None = None, workspace_confirmed: bool = False,
-        attachments=None,
+        attachments=None, persona: str | None = None,
     ) -> AgentRunResult:
         """on_event, if given, receives host-authored progress records ('route',
         then LoopRun's 'plan' and 'step'); see LoopRun.run (D-045).
 
         execution_mode, single_runner, allow_writes and use_memory choose for this request only; None keeps the
         service default (D-051). allow_writes=False hides the write and run tools as for a read-only
-        task (D-027); use_memory=False skips long-term recall. A resumed task keeps its own choices."""
+        task (D-027); use_memory=False skips long-term recall. A resumed task keeps its own choices.
+
+        persona names the persona (its id) for this request only; None uses the session's. A new
+        task takes the persona's instructions as a constraint and its defaults for the choices left
+        open (docs/persona_plan.md); a resumed task keeps what it started with."""
+        if persona is not None and (self._personas is None or resume_task_id is not None):
+            raise ValueError('persona needs personas on and a new task')
         workspace, attachments = self._check_request(
             question, session_id, user_id, request_id, resume_task_id, question_id, execution_mode,
             allow_writes, use_memory, single_runner, hooks, workspace, workspace_confirmed, attachments)
@@ -426,6 +487,13 @@ class RagAgentService:
             replayed = await self._replay(conversation, turn_id, outcome_key, question, resume_task_id, question_id)
             if replayed is not None:
                 return replayed
+            chosen, note = None, None
+            if resume_task_id is None and self._personas is not None:
+                chosen = await asyncio.to_thread(self._resolve_persona, user_id, session_id, persona)
+                (execution_mode, allow_writes, use_memory, workspace), used, skipped = self.persona_defaults(
+                    chosen, execution_mode, allow_writes, use_memory, workspace)
+                note = {'type': 'persona', 'persona_id': chosen.persona_id, 'name': chosen.name,
+                        'chars': chosen.chars, 'used': used, 'skipped': skipped}
             runtime, memory, options, question_id = self._open_task(
                 key, user_id, session_id, question, resume_task_id, question_id,
                 execution_mode, single_runner, allow_writes, use_memory, workspace)
@@ -435,8 +503,11 @@ class RagAgentService:
             # Every external call is after the original input has been published.
             await self._publish_input(conversation, turn, turn_id, outcome_key)
             try:
+                if note is not None:
+                    _emit(on_event, note)
                 context_manager = await self._prepare_task(
-                    conversation, key, user_id, question, task, runtime, question_id, attachments, options)
+                    conversation, key, user_id, question, task, runtime, question_id, attachments, options,
+                    chosen)
                 result = await self._execute(
                     conversation, key, user_id, session_id, question, hooks, on_event, outcome_key,
                     task, memory, runtime, options, context_manager)
@@ -588,8 +659,9 @@ class RagAgentService:
             raise
 
     async def _prepare_task(self, conversation, key, user_id, question, task, runtime, question_id,
-                            attachments, options):
-        """The task's context manager, with the answer, attachments, workspace note, history and recall pinned."""
+                            attachments, options, persona=None):
+        """The task's context manager, with the answer, attachments, workspace note, history and recall
+        pinned, and a new task's persona instructions as a constraint (docs/persona_plan.md)."""
         main = config.model_profiles().role('main')      # the default profile without a file (4d-2)
         context_manager = ContextManager(
             window_tokens=main.context_tokens,
@@ -598,6 +670,9 @@ class RagAgentService:
         )
         if runtime is not None:
             task.resolve_question(question_id, question)
+        if runtime is None and persona is not None and persona.instructions:
+            from app.services.personas import PERSONA_PREAMBLE
+            task.add_constraint(PERSONA_PREAMBLE + '\n\n' + persona.instructions)
         if attachments:
             task.pin_content(await self._attachment_note(conversation, attachments), 'attachments')
         current = options.get('workspace') or self._default_workspace

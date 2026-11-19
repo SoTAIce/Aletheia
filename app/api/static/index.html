@@ -48,6 +48,7 @@
       <nav class="topnav">
         <span class="status"><span id="dot-write" class="dot"></span>写文件 <b id="status-write"></b></span>
         <span class="status"><span id="dot-memory" class="dot"></span>长期记忆 <b id="status-memory"></b></span>
+        <button id="toggle-persona" class="link-btn" type="button" hidden>人设</button>
         <button id="toggle-memory" class="link-btn" type="button" hidden>记忆</button>
       </nav>
       <button id="new-session" class="pill" type="button">新建会话 <svg><use href="#i-arrow"/></svg></button>
@@ -77,6 +78,10 @@
           <div id="drop-hint" class="drop-hint" hidden>松开鼠标，把文本文件附到这条消息</div>
           <div class="composer-bar">
             <div id="run-options" class="run-options" hidden>
+              <label class="opt-mode" id="persona-option" title="这个会话用的个性化人设" hidden>
+                <span class="sr-only">人设</span>
+                <select id="opt-persona" aria-label="人设"></select>
+              </label>
               <label class="opt-mode" title="普通：一个执行者按计划逐步完成；团队：负责人把任务委派给执行者；自动：每个新任务先判断用哪种">
                 <span class="sr-only">执行模式</span>
                 <select id="opt-mode">
@@ -110,6 +115,43 @@
       <h3>本会话</h3>
       <nav id="outline-list" class="outline-list"></nav>
       <div class="outline-status"><span id="dot-runs" class="dot"></span>运行中的任务 <b id="status-runs">0</b></div>
+    </aside>
+
+    <aside id="persona" class="drawer" hidden>
+      <div class="drawer-head">
+        <h2 class="display-sm">个性化人设</h2>
+        <button id="close-persona" class="icon-btn" type="button" aria-label="关闭"><svg><use href="#i-close"/></svg></button>
+      </div>
+      <p class="muted">每个会话用一个人设。它的指令会随每个新任务发给模型，默认设置会填进你没选的选项。在输入框里也可以用 /persona 和 /btw。</p>
+      <form id="persona-form" class="memory-form">
+        <label class="field">名字
+          <input id="persona-name" class="text-input" type="text" maxlength="40" autocomplete="off">
+        </label>
+        <label class="field">指令 <span id="persona-count" class="muted"></span>
+          <textarea id="persona-text" class="text-input" rows="8" maxlength="4000" placeholder="例如：先讲概念和设计上的取舍，再对照业界的做法"></textarea>
+        </label>
+        <div class="persona-grid">
+          <label class="field">执行模式
+            <select id="persona-mode"><option value="">不设</option><option value="single">普通模式</option><option value="team">团队模式</option><option value="auto">自动选择</option></select>
+          </label>
+          <label class="field">写文件
+            <select id="persona-write"><option value="">不设</option><option value="true">开</option><option value="false">关</option></select>
+          </label>
+          <label class="field">长期记忆
+            <select id="persona-memory"><option value="">不设</option><option value="true">开</option><option value="false">关</option></select>
+          </label>
+        </div>
+        <label class="field">工作目录
+          <input id="persona-workspace" class="text-input" type="text" autocomplete="off" spellcheck="false" placeholder="不设；例如 D:\practice">
+        </label>
+        <p id="persona-error" class="form-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button type="button" id="persona-delete" class="ghost-btn">删除</button>
+          <span class="spacer"></span>
+          <button type="button" id="persona-new" class="ghost-btn">新建人设</button>
+          <button type="submit" class="pill pill-sm">保存</button>
+        </div>
+      </form>
     </aside>
 
     <aside id="memory" class="drawer" hidden>

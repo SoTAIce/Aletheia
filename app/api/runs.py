@@ -31,6 +31,10 @@ def service_error(exc: Exception) -> ApiError:
     """Map the service's host-authored refusals to API codes; anything else is internal."""
     text = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else ''
     from app.services.workspace import WorkspaceConfirmationRequired, WorkspaceError
+    from app.services.personas import PersonaError
+    if isinstance(exc, PersonaError):
+        # Host-written Chinese; a persona file the user must fix, or a refused change.
+        return ApiError(404 if exc.code == 'not_found' else 400, 'persona_' + exc.code, exc.message)
     if isinstance(exc, WorkspaceConfirmationRequired):
         return ApiError(409, 'workspace_confirmation_required', exc.message)
     if isinstance(exc, WorkspaceError):

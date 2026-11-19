@@ -102,7 +102,8 @@ const EXAMPLES = [
 const $ = (id) => document.getElementById(id);
 const state = {token: '', session: null, sessions: [], turns: [], waiting: null, run: null,
                caps: null, options: null,    // caps: health.options; options: what the next run asks for
-               place: null, attachments: []}; // place: chosen working directory; attachments: uploaded files
+               place: null, attachments: [], // place: chosen working directory; attachments: uploaded files
+               personasOn: false, persona: null, personaList: []};   // docs/persona_plan.md
 
 // ---- small helpers --------------------------------------------------------------------
 
@@ -391,6 +392,9 @@ async function refreshHealth() {
   $('status-runs').textContent = String(health.active_runs);
   $('dot-runs').className = 'dot' + (health.active_runs ? ' busy' : '');
   $('toggle-memory').hidden = !health.longterm_memory;
+  state.personasOn = Boolean(health.personas);
+  $('toggle-persona').hidden = !state.personasOn;
+  $('persona-option').hidden = !state.personasOn;
   applyCaps(health.options);
   return health;
 }
@@ -453,6 +457,8 @@ function renderOptions() {
   $('attach-btn').disabled = answering || state.attachments.length >= MAX_ATTACHMENTS;
   $('attach-btn').title = answering ? '回答问题时不能附带文件' : '附加文本文件（也可以直接拖到输入框）';
   $('opt-mode').disabled = answering;
+  $('opt-persona').disabled = answering;
+  $('persona-option').title = answering ? '回答问题时沿用原任务的人设' : '这个会话用的个性化人设';
   $('opt-mode').parentElement.title = answering ? '回答问题时沿用原任务的设置'
     : '普通：一个执行者按计划逐步完成；团队：负责人把任务委派给执行者；自动：每个新任务先判断用哪种';
 }
@@ -499,6 +505,7 @@ async function openSession(sessionId) {
   toast('');
   renderSessions();
   await loadTurns();
+  await loadPersonas().catch((e) => toast(e.message));
   const runId = saved(RUN_KEY, {})[sessionId];
   setBusy(false);
   if (runId) resumeFollowing(runId);
@@ -517,7 +524,153 @@ function newSession() {
   renderSessions();
   renderTurns();
   setBusy(false);
+  loadPersonas().catch((e) => toast(e.message));
   $('input').focus();
+}
+
+// ---- personas (docs/persona_plan.md) ----------------------------------------------------
+
+const PERSONA_OPTION_NAMES = {mode: '执行模式', write: '写文件', use_memory: '长期记忆', workspace: '工作目录'};
+const SEPARATE_HINT = '前面的对话还在这个会话里；想完全分开，可以新建会话。';
+
+function personaNotice(event) {
+  const used = event.used || [], skipped = event.skipped || [];
+  if (event.persona_id === 'default' && !event.chars && !used.length && !skipped.length) return '';
+  let line = `人设：${event.name}（指令 ${event.chars || 0} 字）`;
+  if (used.length) line += '，用了它的默认设置：' + used.map((k) => PERSONA_OPTION_NAMES[k] || k).join('、');
+  if (skipped.length) line += '；这些默认设置这次用不了：' + skipped.map((k) => PERSONA_OPTION_NAMES[k] || k).join('、');
+  return line;
+}
+
+async function loadPersonas() {
+  if (!state.personasOn) return;
+  const query = state.session ? '?session_id=' + encodeURIComponent(state.session) : '';
+  const {personas, current} = await api('/api/personas' + query);
+  state.personaList = personas;
+  const chosen = personas.find((p) => p.persona_id === current && !p.problem)
+    || personas.find((p) => p.persona_id === 'default');
+  usePersona(chosen || null);
+}
+
+function usePersona(view) {
+  // The persona's defaults fill this page's choices; the user can still change them per message.
+  state.persona = view;
+  const opts = state.options, caps = state.caps, set = (view && view.options) || {};
+  if (opts && caps) {
+    if (set.mode && caps.modes.includes(set.mode)) opts.mode = set.mode;
+    if (typeof set.write === 'boolean') opts.write = caps.write_available ? set.write : false;
+    if (typeof set.use_memory === 'boolean') opts.memory = caps.memory_available ? set.use_memory : false;
+  }
+  renderPersonaSelect();
+  renderOptions();
+}
+
+function renderPersonaSelect() {
+  const select = $('opt-persona');
+  select.replaceChildren();
+  for (const p of state.personaList) {
+    const option = el('option', '', p.problem ? `（${p.persona_id}，文件有问题）` : p.name);
+    option.value = p.persona_id;
+    option.disabled = Boolean(p.problem);
+    select.append(option);
+  }
+  if (state.persona) select.value = state.persona.persona_id;
+}
+
+async function switchPersona(personaId) {
+  if (!state.session) state.session = newId('web-');
+  const view = await api(`/api/sessions/${encodeURIComponent(state.session)}/persona`,
+                         {method: 'PUT', body: {persona_id: personaId}});
+  await loadPersonas();
+  toast(`已切换到「${view.name}」，下个任务起生效。` + (state.waiting ? '等待回答的任务仍用原来的人设。' : '')
+        + (state.turns.length ? SEPARATE_HINT : ''));
+}
+
+async function createPersona(name) {
+  const view = await api('/api/personas', {method: 'POST', body: {name}});
+  await switchPersona(view.persona_id);
+  return view;
+}
+
+async function personaCommand(text) {
+  if (!state.personasOn) { toast('个性化人设没有开启。'); return; }
+  const head = text.split(/\s/, 1)[0];
+  const rest = text.slice(head.length).trim();
+  const done = () => { $('input').value = ''; autosize(); };
+  try {
+    if (head === '/btw') {
+      const id = state.persona ? state.persona.persona_id : 'default';
+      const undo = rest === 'undo';
+      const view = await api(`/api/personas/${encodeURIComponent(id)}/btw`,
+                             {method: 'POST', body: undo ? {undo: true} : {text: rest}});
+      done();
+      await loadPersonas();
+      toast(undo ? `已撤掉上一次 /btw，「${view.name}」的指令现在 ${view.chars} 字。`
+                 : `已加到「${view.name}」的指令里，共 ${view.chars} 字，下个任务起生效。`);
+      return;
+    }
+    const sub = rest.split(/\s/, 1)[0];
+    const arg = rest.slice(sub.length).trim();
+    if (!rest || ['show', 'set', 'rename', 'delete'].includes(sub)) {
+      done();
+      await openPersonaPanel();
+      if (!rest) toast('人设：' + state.personaList.filter((p) => !p.problem).map((p) => p.name).join('、'));
+      return;
+    }
+    if (sub === 'new') {
+      const view = await createPersona(arg);
+      done();
+      toast(`已新建人设「${view.name}」，这个会话下个任务起用它。用 /btw 加指令。`);
+      return;
+    }
+    const wanted = rest.toLowerCase();
+    const found = state.personaList.find((p) => !p.problem && (p.name.toLowerCase() === wanted || p.persona_id === rest));
+    if (!found) { toast(`没有叫「${rest}」的人设。输入 /persona 查看现有的人设。`); return; }
+    done();
+    if (state.persona && found.persona_id === state.persona.persona_id) { toast(`这个会话已经在用「${found.name}」。`); return; }
+    await switchPersona(found.persona_id);
+  } catch (e) { toast(e.message); }
+}
+
+async function openPersonaPanel() {
+  closePanels();
+  $('persona').hidden = false;
+  $('toggle-persona').classList.add('on');
+  if (narrow()) $('scrim').hidden = false;
+  await loadPersonas();
+  await fillPersonaForm();
+}
+
+async function fillPersonaForm() {
+  $('persona-error').hidden = true;
+  if (!state.persona) return;
+  const view = await api(`/api/personas/${encodeURIComponent(state.persona.persona_id)}`);
+  const isDefault = view.persona_id === 'default';
+  $('persona-name').value = view.name;
+  $('persona-name').disabled = isDefault;
+  $('persona-name').title = isDefault ? '“默认”人设不能改名' : '';
+  $('persona-text').value = view.instructions || '';
+  $('persona-count').textContent = `${(view.instructions || '').length}/4000 字`;
+  const o = view.options || {};
+  $('persona-mode').value = o.mode || '';
+  $('persona-write').value = typeof o.write === 'boolean' ? String(o.write) : '';
+  $('persona-memory').value = typeof o.use_memory === 'boolean' ? String(o.use_memory) : '';
+  $('persona-workspace').value = o.workspace || '';
+  $('persona-delete').disabled = isDefault;
+}
+
+function personaFormBody() {
+  const pick = (id) => { const v = $(id).value; return v === '' ? null : v === 'true' ? true : v === 'false' ? false : v; };
+  const body = {instructions: $('persona-text').value,
+                options: {mode: pick('persona-mode'), write: pick('persona-write'), use_memory: pick('persona-memory'),
+                          workspace: $('persona-workspace').value.trim() || null}};
+  if (!$('persona-name').disabled) body.name = $('persona-name').value;
+  return body;
+}
+
+function personaError(message) {
+  $('persona-error').textContent = message;
+  $('persona-error').hidden = !message;
 }
 
 // ---- working directory (workspace-001, D-074) ------------------------------------------
@@ -1017,13 +1170,15 @@ class LiveView {
     this.status = el('div', 'thinking');
     this.status.append(el('span', 'pulse'), el('span', '', '正在理解你的需求'));
     this.route = el('p', 'route');
+    this.persona = el('p', 'route');
+    this.persona.hidden = true;
     this.steps = el('ol', 'steps');
     this.steps.hidden = true;
     this.items = new Map();       // step_id -> step item
     this.approvals = new Map();   // approval_id -> card (D-061)
     this.runId = null;
     this.order = [];
-    this.part.append(this.status, this.route, this.steps);
+    this.part.append(this.status, this.persona, this.route, this.steps);
     turnBox.append(this.part);
   }
 
@@ -1049,6 +1204,11 @@ class LiveView {
 
   show(event) {
     switch (event.type) {
+      case 'persona': {
+        this.persona.textContent = personaNotice(event);
+        this.persona.hidden = !this.persona.textContent;
+        break;
+      }
       case 'route': {
         const loop = event.mode !== 'team' && event.options?.runner === 'loop';
         this.route.textContent = (event.mode === 'team' ? '团队模式'
@@ -1138,6 +1298,7 @@ class LiveView {
       trace = el('details', 'trace');
       const done = this.order.filter((li) => li.classList.contains('done')).length;
       trace.append(el('summary', '', `执行过程，${done}/${this.order.length} 步完成`));
+      if (this.persona.textContent) trace.append(this.persona);
       if (this.route.textContent) trace.append(this.route);
       trace.append(this.steps);
       for (const card of this.approvals.values()) trace.append(card);   // what the user decided (D-061)
@@ -1279,6 +1440,8 @@ function closePanels() {
   $('sessions').classList.remove('open');
   $('memory').hidden = true;
   $('toggle-memory').classList.remove('on');
+  $('persona').hidden = true;
+  $('toggle-persona').classList.remove('on');
   $('scrim').hidden = true;
 }
 $('open-sessions').addEventListener('click', () => {
@@ -1356,7 +1519,48 @@ document.addEventListener('keydown', (event) => {
 $('composer').addEventListener('submit', (event) => {
   event.preventDefault();
   const text = $('input').value.trim();
+  // /persona and /btw change the persona and are never sent as a task (docs/persona_plan.md).
+  if (/^\/(persona|btw)(\s|$)/.test(text)) { personaCommand(text); return; }
   if (text && !state.run) send(text);
+});
+$('toggle-persona').addEventListener('click', () => {
+  if (!$('persona').hidden) { closePanels(); return; }
+  openPersonaPanel().catch((e) => toast(e.message));
+});
+$('close-persona').addEventListener('click', closePanels);
+$('opt-persona').addEventListener('change', (event) => {
+  switchPersona(event.target.value).catch((e) => { toast(e.message); renderPersonaSelect(); });
+});
+$('persona-text').addEventListener('input', () => {
+  $('persona-count').textContent = `${$('persona-text').value.length}/4000 字`;
+});
+$('persona-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.persona) return;
+  try {
+    const view = await api(`/api/personas/${encodeURIComponent(state.persona.persona_id)}`,
+                           {method: 'PUT', body: personaFormBody()});
+    personaError('');
+    await loadPersonas();
+    await fillPersonaForm();
+    toast(`已保存「${view.name}」，下个任务起生效。`);
+  } catch (e) { personaError(e.message); }
+});
+$('persona-new').addEventListener('click', async () => {
+  const name = window.prompt('新人设的名字（最多 40 字）：');
+  if (!name || !name.trim()) return;
+  try { await createPersona(name.trim()); await fillPersonaForm(); personaError(''); }
+  catch (e) { personaError(e.message); }
+});
+$('persona-delete').addEventListener('click', async () => {
+  if (!state.persona || state.persona.persona_id === 'default') return;
+  if (!window.confirm(`删除人设「${state.persona.name}」？用它的会话会回到“默认”。`)) return;
+  try {
+    await api(`/api/personas/${encodeURIComponent(state.persona.persona_id)}`, {method: 'DELETE'});
+    await loadPersonas();
+    await fillPersonaForm();
+    personaError('');
+  } catch (e) { personaError(e.message); }
 });
 $('input').addEventListener('keydown', (event) => {
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
