@@ -196,6 +196,15 @@ class PersonaStore:
     def root(self) -> Path:
         return self._root
 
+    @property
+    def commands(self):
+        """Each persona's personal commands (docs/personal_commands_plan.md)."""
+        book = getattr(self, '_commands', None)
+        if book is None:
+            from app.services.personal_commands import CommandBook
+            book = self._commands = CommandBook(self)
+        return book
+
     # ---- files ----------------------------------------------------------------------------
 
     def _dir(self, user_id) -> Path:
@@ -397,7 +406,7 @@ class PersonaStore:
             return persona
 
     def delete(self, user_id, persona_id: str) -> None:
-        """Delete a persona; sessions that used it go back to the default one."""
+        """Delete a persona and its commands; sessions that used it go back to the default one."""
         if persona_id == DEFAULT_ID:
             raise PersonaError('default_fixed', '“默认”人设不能删除。')
         with self._lock:
@@ -405,6 +414,7 @@ class PersonaStore:
             if not path.exists():
                 raise PersonaError('not_found', '没有这个人设。')
             path.unlink()
+            self.commands.remove_persona(user_id, persona_id)
             state = self._state(user_id)
             state['sessions'] = {k: v for k, v in state['sessions'].items() if v != persona_id}
             state['last_btw'].pop(persona_id, None)

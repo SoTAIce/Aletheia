@@ -103,7 +103,8 @@ const $ = (id) => document.getElementById(id);
 const state = {token: '', session: null, sessions: [], turns: [], waiting: null, run: null,
                caps: null, options: null,    // caps: health.options; options: what the next run asks for
                place: null, attachments: [], // place: chosen working directory; attachments: uploaded files
-               personasOn: false, persona: null, personaList: []};   // docs/persona_plan.md
+               personasOn: false, persona: null, personaList: [],   // docs/persona_plan.md
+               commands: [], menuIndex: 0};                          // docs/personal_commands_plan.md
 
 // ---- small helpers --------------------------------------------------------------------
 
@@ -394,6 +395,7 @@ async function refreshHealth() {
   $('toggle-memory').hidden = !health.longterm_memory;
   state.personasOn = Boolean(health.personas);
   $('toggle-persona').hidden = !state.personasOn;
+  $('toggle-commands').hidden = !state.personasOn;
   $('persona-option').hidden = !state.personasOn;
   applyCaps(health.options);
   return health;
@@ -550,6 +552,7 @@ async function loadPersonas() {
   const chosen = personas.find((p) => p.persona_id === current && !p.problem)
     || personas.find((p) => p.persona_id === 'default');
   usePersona(chosen || null);
+  await loadCommands();
 }
 
 function usePersona(view) {
@@ -671,6 +674,143 @@ function personaFormBody() {
 function personaError(message) {
   $('persona-error').textContent = message;
   $('persona-error').hidden = !message;
+}
+
+// ---- personal commands (docs/personal_commands_plan.md) --------------------------------
+
+const COMMAND_SHAPE = /^\/([a-z][a-z0-9-]{0,19})(\s|$)/;
+
+function commandNotice(event) {
+  const parts = [];
+  if (event.write === false) parts.push('只读');
+  if (event.write === true) parts.push('会改文件');
+  if (event.mode === 'single') parts.push('普通模式');
+  if (event.mode === 'team') parts.push('团队模式');
+  return `命令 /${event.name}` + (parts.length ? '：' + parts.join('，') : '');
+}
+
+async function loadCommands() {
+  // The session's persona's commands, for the suggestions and the panel.
+  if (!state.personasOn || !state.persona) { state.commands = []; return; }
+  const {commands} = await api(`/api/personas/${encodeURIComponent(state.persona.persona_id)}/commands`);
+  state.commands = commands;
+  if (!$('commands').hidden) await renderCommandPanel();
+}
+
+function commandMatches() {
+  const text = $('input').value;
+  if (!state.personasOn || state.waiting || !/^\/[a-z0-9-]*$/.test(text)) return [];
+  const typed = text.slice(1);
+  return state.commands.filter((c) => !c.problem && c.name.startsWith(typed));
+}
+
+function renderCommandMenu() {
+  // No match: the menu stays closed, which is the hint that there is no such command.
+  const menu = $('command-menu'), matches = commandMatches();
+  menu.replaceChildren();
+  menu.hidden = !matches.length;
+  if (!matches.length) return;
+  state.menuIndex = Math.min(state.menuIndex, matches.length - 1);
+  matches.forEach((c, n) => {
+    const item = el('button', 'command-item' + (n === state.menuIndex ? ' on' : ''));
+    item.type = 'button';
+    item.setAttribute('role', 'option');
+    item.append(el('b', '', '/' + c.name), el('span', '', c.description));
+    item.title = c.usage;
+    item.addEventListener('mousedown', (event) => { event.preventDefault(); completeCommand(c); });
+    menu.append(item);
+  });
+}
+
+function completeCommand(command) {
+  $('input').value = '/' + command.name + (command.args === 'none' ? '' : ' ');
+  state.menuIndex = 0;
+  renderCommandMenu();
+  autosize();
+  $('input').focus();
+}
+
+function menuKey(event) {
+  // Arrows move, Tab completes, Enter completes a partly typed name; returns whether it was used.
+  const matches = commandMatches();
+  if ($('command-menu').hidden || !matches.length) return false;
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    const step = event.key === 'ArrowDown' ? 1 : -1;
+    state.menuIndex = (state.menuIndex + step + matches.length) % matches.length;
+    renderCommandMenu();
+    return true;
+  }
+  const chosen = matches[state.menuIndex];
+  if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && $('input').value !== '/' + chosen.name)) {
+    completeCommand(chosen);
+    return true;
+  }
+  if (event.key === 'Escape') { $('command-menu').hidden = true; return true; }
+  return false;
+}
+
+function commandPath(name) {
+  return `/api/personas/${encodeURIComponent(state.persona.persona_id)}/commands`
+    + (name ? '/' + encodeURIComponent(name) : '');
+}
+
+async function openCommandsPanel() {
+  closePanels();
+  $('commands').hidden = false;
+  $('toggle-commands').classList.add('on');
+  if (narrow()) $('scrim').hidden = false;
+  await loadPersonas();
+  await renderCommandPanel();
+}
+
+async function renderCommandPanel(wanted) {
+  commandError('');
+  const select = $('command-pick'), keep = wanted || select.value;
+  select.replaceChildren();
+  for (const c of state.commands) {
+    const option = el('option', '', c.problem ? `/${c.name}（文件有问题）` : `/${c.name}  ${c.description}`);
+    option.value = c.name;
+    select.append(option);
+  }
+  if (state.persona) $('commands-intro').textContent = `「${state.persona.name}」的命令。每个人设有自己的一套，在输入框里输入 / 可以看到并补全。`;
+  const empty = !state.commands.length;
+  if (empty) select.append(el('option', '', '（这个人设还没有命令）'));
+  for (const id of ['command-description', 'command-usage', 'command-args', 'command-mode', 'command-write',
+                    'command-template', 'command-delete', 'command-save']) $(id).disabled = empty;
+  if (empty) { $('command-reset').hidden = true; return; }
+  select.value = state.commands.some((c) => c.name === keep) ? keep : state.commands[0].name;
+  await fillCommandForm(select.value);
+}
+
+async function fillCommandForm(name) {
+  commandError('');
+  const entry = state.commands.find((c) => c.name === name);
+  $('command-reset').hidden = !(entry && entry.preset);
+  let view;
+  try { view = await api(commandPath(name)); } catch (e) {
+    for (const id of ['command-description', 'command-usage', 'command-template']) $(id).value = '';
+    commandError(e.message);
+    return;
+  }
+  $('command-description').value = view.description;
+  $('command-usage').value = view.own_usage || '';
+  $('command-args').value = view.args;
+  $('command-mode').value = view.mode || '';
+  $('command-write').value = typeof view.write === 'boolean' ? String(view.write) : '';
+  $('command-template').value = view.template;
+  $('command-count').textContent = `${view.template.length}/4000 字`;
+}
+
+function commandFormBody() {
+  const write = $('command-write').value;
+  return {description: $('command-description').value, usage: $('command-usage').value.trim() || null,
+          args: $('command-args').value, mode: $('command-mode').value || null,
+          write: write === '' ? null : write === 'true', template: $('command-template').value};
+}
+
+function commandError(message) {
+  $('command-error').textContent = message;
+  $('command-error').hidden = !message;
 }
 
 // ---- working directory (workspace-001, D-074) ------------------------------------------
@@ -1142,7 +1282,8 @@ function updateComposer() {
   $('composer').classList.toggle('waiting-on', Boolean(waiting));
   $('waiting-banner').hidden = !waiting;
   $('waiting-question').textContent = waiting ? waiting.question || '' : '';
-  $('input').placeholder = waiting ? '在这里回答上面的问题' : '描述你想完成的事情';
+  $('input').placeholder = waiting ? '在这里回答上面的问题'
+    : '描述你想完成的事情' + (state.personasOn ? '；输入 / 查看个人命令' : '');
   renderOptions();
 }
 
@@ -1172,13 +1313,15 @@ class LiveView {
     this.route = el('p', 'route');
     this.persona = el('p', 'route');
     this.persona.hidden = true;
+    this.command = el('p', 'route');
+    this.command.hidden = true;
     this.steps = el('ol', 'steps');
     this.steps.hidden = true;
     this.items = new Map();       // step_id -> step item
     this.approvals = new Map();   // approval_id -> card (D-061)
     this.runId = null;
     this.order = [];
-    this.part.append(this.status, this.persona, this.route, this.steps);
+    this.part.append(this.status, this.persona, this.command, this.route, this.steps);
     turnBox.append(this.part);
   }
 
@@ -1207,6 +1350,11 @@ class LiveView {
       case 'persona': {
         this.persona.textContent = personaNotice(event);
         this.persona.hidden = !this.persona.textContent;
+        break;
+      }
+      case 'command': {
+        this.command.textContent = commandNotice(event);
+        this.command.hidden = false;
         break;
       }
       case 'route': {
@@ -1299,6 +1447,7 @@ class LiveView {
       const done = this.order.filter((li) => li.classList.contains('done')).length;
       trace.append(el('summary', '', `执行过程，${done}/${this.order.length} 步完成`));
       if (this.persona.textContent) trace.append(this.persona);
+      if (this.command.textContent) trace.append(this.command);
       if (this.route.textContent) trace.append(this.route);
       trace.append(this.steps);
       for (const card of this.approvals.values()) trace.append(card);   // what the user decided (D-061)
@@ -1332,8 +1481,9 @@ function appendTurn(text) {
   return box;
 }
 
-async function send(text) {
+async function send(text, command) {
   const body = {content: text, request_id: newId('')};
+  if (command && !state.waiting) body.command = command;              // docs/personal_commands_plan.md
   if (state.waiting) body.resume_task_id = state.waiting.task_id;      // a resumed task keeps its options
   else if (state.caps && state.options) {
     body.options = {...state.options};
@@ -1442,6 +1592,8 @@ function closePanels() {
   $('toggle-memory').classList.remove('on');
   $('persona').hidden = true;
   $('toggle-persona').classList.remove('on');
+  $('commands').hidden = true;
+  $('toggle-commands').classList.remove('on');
   $('scrim').hidden = true;
 }
 $('open-sessions').addEventListener('click', () => {
@@ -1521,7 +1673,64 @@ $('composer').addEventListener('submit', (event) => {
   const text = $('input').value.trim();
   // /persona and /btw change the persona and are never sent as a task (docs/persona_plan.md).
   if (/^\/(persona|btw)(\s|$)/.test(text)) { personaCommand(text); return; }
-  if (text && !state.run) send(text);
+  // One of the persona's commands goes with its name; anything else is an ordinary message.
+  const shape = text.match(COMMAND_SHAPE);
+  const command = shape && state.commands.some((c) => c.name === shape[1]) ? shape[1] : null;
+  if (command && state.waiting) { toast('有任务在等你回答：先回答它，再运行命令。'); return; }
+  $('command-menu').hidden = true;
+  if (text && !state.run) send(text, command);
+});
+$('toggle-commands').addEventListener('click', () => {
+  if (!$('commands').hidden) { closePanels(); return; }
+  openCommandsPanel().catch((e) => toast(e.message));
+});
+$('close-commands').addEventListener('click', closePanels);
+$('command-pick').addEventListener('change', (event) => { fillCommandForm(event.target.value); });
+$('command-template').addEventListener('input', () => {
+  $('command-count').textContent = `${$('command-template').value.length}/4000 字`;
+});
+$('command-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const name = $('command-pick').value;
+  if (!state.persona || !state.commands.some((c) => c.name === name)) return;
+  try {
+    await api(commandPath(name), {method: 'PUT', body: commandFormBody()});
+    await loadCommands();
+    await renderCommandPanel(name);
+    toast(`已保存 /${name}，下次运行时生效。`);
+  } catch (e) { commandError(e.message); }
+});
+$('command-new').addEventListener('click', async () => {
+  if (!state.persona) return;
+  const typed = window.prompt('新命令的名字（小写字母开头，只能有小写字母、数字和 -）：');
+  const name = (typed || '').trim().replace(/^\//, '');
+  if (!name) return;
+  try {
+    await api(commandPath(), {method: 'POST', body: {name}});
+    await loadCommands();
+    await renderCommandPanel(name);
+  } catch (e) { commandError(e.message); }
+});
+$('command-delete').addEventListener('click', async () => {
+  const name = $('command-pick').value, entry = state.commands.find((c) => c.name === name);
+  if (!state.persona || !entry) return;
+  const lost = entry.preset ? '预置命令删了以后，新建一个同名命令再点“恢复预置”就能找回。' : '删了找不回来。';
+  if (!window.confirm(`删除「${state.persona.name}」的命令 /${name}？${lost}`)) return;
+  try {
+    await api(commandPath(name), {method: 'DELETE'});
+    await loadCommands();
+    await renderCommandPanel();
+  } catch (e) { commandError(e.message); }
+});
+$('command-reset').addEventListener('click', async () => {
+  const name = $('command-pick').value;
+  if (!state.persona || !window.confirm(`把 /${name} 恢复成预置的样子？你对它的修改会丢掉。`)) return;
+  try {
+    await api(commandPath(name) + '/reset', {method: 'POST'});
+    await loadCommands();
+    await renderCommandPanel(name);
+    toast(`已把 /${name} 恢复成预置的样子。`);
+  } catch (e) { commandError(e.message); }
 });
 $('toggle-persona').addEventListener('click', () => {
   if (!$('persona').hidden) { closePanels(); return; }
@@ -1554,11 +1763,14 @@ $('persona-new').addEventListener('click', async () => {
 });
 $('persona-delete').addEventListener('click', async () => {
   if (!state.persona || state.persona.persona_id === 'default') return;
-  let count = null;
+  let count = null, commands = 0;
   try {
-    count = (await api(`/api/personas/${encodeURIComponent(state.persona.persona_id)}`)).memories;
+    const detail = await api(`/api/personas/${encodeURIComponent(state.persona.persona_id)}`);
+    count = detail.memories;
+    commands = detail.commands || 0;
   } catch (e) { personaError(e.message); return; }
-  const lost = count ? `它的 ${count} 条记忆会一起删除，删了找不回来。` : '';
+  const gone = [count ? `${count} 条记忆` : '', commands ? `${commands} 个命令` : ''].filter(Boolean).join('和 ');
+  const lost = gone ? `它的 ${gone}会一起删除，删了找不回来。` : '';
   if (!window.confirm(`删除人设「${state.persona.name}」？${lost}用它的会话会回到“默认”。`)) return;
   try {
     await api(`/api/personas/${encodeURIComponent(state.persona.persona_id)}`, {method: 'DELETE'});
@@ -1568,12 +1780,14 @@ $('persona-delete').addEventListener('click', async () => {
   } catch (e) { personaError(e.message); }
 });
 $('input').addEventListener('keydown', (event) => {
+  if (!event.isComposing && menuKey(event)) { event.preventDefault(); event.stopPropagation(); return; }
   if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
     event.preventDefault();
     $('composer').requestSubmit();
   }
 });
-$('input').addEventListener('input', autosize);
+$('input').addEventListener('input', () => { autosize(); state.menuIndex = 0; renderCommandMenu(); });
+$('input').addEventListener('blur', () => { $('command-menu').hidden = true; });
 $('cancel').addEventListener('click', async () => {
   if (!state.run) return;
   $('cancel').disabled = true;

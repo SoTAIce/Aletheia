@@ -49,6 +49,7 @@
         <span class="status"><span id="dot-write" class="dot"></span>写文件 <b id="status-write"></b></span>
         <span class="status"><span id="dot-memory" class="dot"></span>长期记忆 <b id="status-memory"></b></span>
         <button id="toggle-persona" class="link-btn" type="button" hidden>人设</button>
+        <button id="toggle-commands" class="link-btn" type="button" hidden>命令</button>
         <button id="toggle-memory" class="link-btn" type="button" hidden>记忆</button>
       </nav>
       <button id="new-session" class="pill" type="button">新建会话 <svg><use href="#i-arrow"/></svg></button>
@@ -73,8 +74,9 @@
           <span id="waiting-question"></span>
         </div>
         <form id="composer" class="composer">
+          <div id="command-menu" class="command-menu" role="listbox" aria-label="个人命令" hidden></div>
           <div id="attachments" class="attachments" hidden></div>
-          <textarea id="input" rows="1" placeholder="描述你想完成的事情"></textarea>
+          <textarea id="input" rows="1" placeholder="描述你想完成的事情；输入 / 查看个人命令"></textarea>
           <div id="drop-hint" class="drop-hint" hidden>松开鼠标，把文本文件附到这条消息</div>
           <div class="composer-bar">
             <div id="run-options" class="run-options" hidden>
@@ -150,6 +152,48 @@
           <span class="spacer"></span>
           <button type="button" id="persona-new" class="ghost-btn">新建人设</button>
           <button type="submit" class="pill pill-sm">保存</button>
+        </div>
+      </form>
+    </aside>
+
+    <aside id="commands" class="drawer" hidden>
+      <div class="drawer-head">
+        <h2 class="display-sm">个人命令</h2>
+        <button id="close-commands" class="icon-btn" type="button" aria-label="关闭"><svg><use href="#i-close"/></svg></button>
+      </div>
+      <p id="commands-intro" class="muted">每个人设有自己的一套命令。在输入框里输入 / 可以看到并补全。</p>
+      <form id="command-form" class="memory-form">
+        <label class="field">命令
+          <select id="command-pick" class="text-input"></select>
+        </label>
+        <label class="field">说明
+          <input id="command-description" class="text-input" type="text" maxlength="60" autocomplete="off">
+        </label>
+        <label class="field">用法
+          <input id="command-usage" class="text-input" type="text" maxlength="100" autocomplete="off" placeholder="不写就是 /名字 参数">
+        </label>
+        <div class="persona-grid">
+          <label class="field">参数
+            <select id="command-args"><option value="required">必须给</option><option value="optional">可选</option><option value="none">不收</option></select>
+          </label>
+          <label class="field">执行模式
+            <select id="command-mode"><option value="">不固定</option><option value="single">普通模式</option><option value="team">团队模式</option></select>
+          </label>
+          <label class="field">读写
+            <select id="command-write"><option value="">不管</option><option value="false">只读</option><option value="true">会改文件</option></select>
+          </label>
+        </div>
+        <label class="field">模板 <span id="command-count" class="muted"></span>
+          <textarea id="command-template" class="text-input" rows="10" maxlength="4000"></textarea>
+        </label>
+        <p class="muted">模板里的 {{args}} 会换成命令后面写的内容。命令只能收紧读写：设成“会改文件”的命令，在只读时不会运行。</p>
+        <p id="command-error" class="form-error" role="alert" hidden></p>
+        <div class="dialog-actions">
+          <button type="button" id="command-delete" class="ghost-btn">删除</button>
+          <button type="button" id="command-reset" class="ghost-btn" hidden>恢复预置</button>
+          <span class="spacer"></span>
+          <button type="button" id="command-new" class="ghost-btn">新建命令</button>
+          <button type="submit" id="command-save" class="pill pill-sm">保存</button>
         </div>
       </form>
     </aside>

@@ -8,7 +8,8 @@ import os
 from pathlib import Path
 
 from app.agent.persona_commands import (
-    PERSONA_HELP, PERSONAS_OFF, memory_label, persona_command, persona_notice, persona_scope,
+    COMMANDS_HELP, PERSONA_HELP, PERSONAS_OFF, WAITING_HINT, command_notice, commands_command, memory_label,
+    persona_command, persona_notice, persona_scope,
 )
 from app.agent.run_meter import RunMeter, metering
 from app.config import config
@@ -147,7 +148,7 @@ INTERACTIVE_HELP = ('直接输入目标开始一个任务；任务等待回答�
                     '命令：/help 显示帮助，/new 放弃正在等待回答的任务，/exit 退出（Ctrl+D、Ctrl+Z 回车同样退出）；'
                     '/dir 查看工作目录，/dir 路径 更换工作目录；'
                     '长期记忆：/remember 内容 记住一条（记在当前人设下，加 --shared 记成公共的），'
-                    '/memories 查看，/forget 编号 删除。' + PERSONA_HELP)
+                    '/memories 查看，/forget 编号 删除。' + PERSONA_HELP + COMMANDS_HELP)
 MEMORY_OFF = '长期记忆没有开启：在 .env 里设置 LONGTERM_MEMORY_DSN 后可用。'
 
 
@@ -205,13 +206,30 @@ def _persona_store(service):
 
 
 def _notice_to(write):
-    """An on_event that prints the task's persona line (docs/persona_plan.md); nothing else."""
+    """An on_event that prints the task's persona line (docs/persona_plan.md) and its personal
+    command's line (docs/personal_commands_plan.md); nothing else."""
     def on_event(event):
         if event.get('type') == 'persona':
             line = persona_notice(event)
             if line:
                 write(line)
+        elif event.get('type') == 'command':
+            write(command_notice(event))
     return on_event
+
+
+def personal_command(store, user_id, session_id, line, persona_id=None):
+    """The name of the personal command a line runs, or None: the line starts with /name and the
+    persona (the given one, else the session's) has a command of that name."""
+    from app.services.personal_commands import split_line
+    parts = split_line(line)
+    if store is None or parts is None:
+        return None
+    try:
+        chosen = persona_id or store.session_persona_id(user_id, session_id)
+        return parts[0] if store.commands.has(user_id, chosen, parts[0]) else None
+    except (PersonaError, OSError):
+        return None
 
 
 async def _read_line(prompt):
@@ -293,15 +311,27 @@ async def interactive(service, args, read_line=None, write=print, memory=None) -
             await persona_command(command, service, user_id, args.session_id, write, waiting,
                                   memory=memory, read_line=read_line)
             continue
-        if command.startswith('/'):
-            write(f'未知命令：{command}。' + INTERACTIVE_HELP)
+        if command.split(' ', 1)[0] == '/commands':
+            await commands_command(command, _persona_store(service), user_id, args.session_id, write, read_line)
             continue
+        run_command = None
+        if command.startswith('/'):
+            run_command = await asyncio.to_thread(personal_command, _persona_store(service), user_id,
+                                                  args.session_id, command)
+            if run_command is None:
+                write(f'未知命令：{command}。' + INTERACTIVE_HELP)
+                continue
+            if waiting:
+                write(WAITING_HINT)
+                continue
         meter = RunMeter(max_total_tokens=getattr(args, 'max_tokens', None),
                          timeout_seconds=getattr(args, 'max_seconds', None))
         try:
             with metering(meter):
                 chosen = ({'workspace': place['workspace'], 'workspace_confirmed': place['confirmed']}
                           if place.get('workspace') and waiting is None else {})
+                if run_command is not None:
+                    chosen['command'] = run_command
                 result = await service.query_result(line, args.session_id, user_id=user_id,
                                                     resume_task_id=waiting, on_event=_notice_to(write),
                                                     **chosen)
@@ -424,6 +454,11 @@ async def main(args) -> int:
         try:
             with metering(meter):
                 extra = {'persona': persona_id, 'on_event': _notice_to(print)} if store is not None else {}
+                # A goal that names one of the persona's commands runs it (docs/personal_commands_plan.md).
+                run_command = personal_command(_persona_store(service), args.user_id, args.session_id,
+                                               args.goal, persona_id)
+                if run_command is not None:
+                    extra['command'] = run_command
                 result = await service.query_result(args.goal, args.session_id, user_id=args.user_id, **extra)
         except PersonaError as exc:
             print('PersonaError: ' + exc.message)

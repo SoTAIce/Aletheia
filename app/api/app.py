@@ -59,6 +59,7 @@ class MessageIn(BaseModel):
     question_id: str | None = None
     options: RunOptionsIn | None = None
     attachments: list[str] | None = None         # refs from POST .../attachments (workspace-001)
+    command: str | None = None                   # a personal command of the session's persona; content is the whole line
 
 
 class WorkspaceIn(BaseModel):
@@ -104,6 +105,23 @@ class BtwIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     text: str | None = Field(default=None, max_length=20000)
     undo: StrictBool = False
+
+
+class CommandIn(BaseModel):
+    """A personal command to create or change (docs/personal_commands_plan.md); null removes usage,
+    mode or write. Fields left out keep their value."""
+    model_config = ConfigDict(extra='forbid')
+    name: str | None = Field(default=None, max_length=40)
+    description: str | None = Field(default=None, max_length=200)
+    usage: str | None = Field(default=None, max_length=300)
+    args: Literal['required', 'optional', 'none'] | None = None
+    mode: Literal['single', 'team'] | None = None
+    write: StrictBool | None = None
+    template: str | None = Field(default=None, max_length=20000)
+
+    def fields(self) -> dict:
+        return {key: getattr(self, key) for key in ('description', 'usage', 'args', 'mode', 'write')
+                if key in self.model_fields_set}
 
 
 class SessionPersonaIn(BaseModel):
@@ -337,6 +355,15 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
             raise ApiError(400, 'invalid_input', '回答问题时不能附带文件，请在新消息里附带。')
         if attachments:
             requested['attachments'] = list(attachments)     # part of the request, for idempotency
+        if body.command is not None:
+            # A personal command (docs/personal_commands_plan.md): the service reads it from the
+            # task's persona; part of the request, for idempotency.
+            from app.services.personal_commands import split_line
+            parts = split_line(body.content)
+            if body.resume_task_id is not None or need_personas() is None or parts is None \
+                    or parts[0] != body.command:
+                raise ApiError(400, 'invalid_input', '命令要以 /命令名 开头，而且只能在新消息里用。')
+            requested['command'] = body.command
         # A resumed task keeps the choices it started with, so the request's own are ignored (D-051).
         options = None
         if body.resume_task_id is None:
@@ -427,6 +454,8 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
         # How many memories go with it if it is deleted; None when long-term memory is off.
         view['memories'] = (await call(memory.count_persona(user_id, persona_id))
                             if memory is not None and persona_id != 'default' else None)
+        # How many personal commands go with it (docs/personal_commands_plan.md).
+        view['commands'] = await persona_call(need_personas().commands.count, user_id, persona_id)
         return view
 
     @app.post('/api/personas', status_code=201, dependencies=guarded)
@@ -474,6 +503,58 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
         if body.undo:
             return (await persona_call(store.undo_btw, user_id, persona_id)).view()
         return (await persona_call(store.btw, user_id, persona_id, body.text or '')).view()
+
+    # ---- personal commands of one persona (docs/personal_commands_plan.md) ------------------
+
+    def need_command_name(name: str) -> str:
+        from app.services.personal_commands import check_name
+        try:
+            return check_name(name)
+        except Exception as exc:
+            raise service_error(exc) from None
+
+    @app.get('/api/personas/{persona_id}/commands', dependencies=guarded)
+    async def commands(persona_id: str):
+        _check_id('persona_id', persona_id)
+        book = need_personas().commands
+        return {'commands': await persona_call(book.list_commands, user_id, persona_id)}
+
+    @app.get('/api/personas/{persona_id}/commands/{name}', dependencies=guarded)
+    async def command_detail(persona_id: str, name: str):
+        _check_id('persona_id', persona_id)
+        book = need_personas().commands
+        return (await persona_call(book.get, user_id, persona_id, need_command_name(name))).view()
+
+    @app.post('/api/personas/{persona_id}/commands', status_code=201, dependencies=guarded)
+    async def command_create(persona_id: str, body: CommandIn):
+        _check_id('persona_id', persona_id)
+        book = need_personas().commands
+        created = await persona_call(book.create, user_id, persona_id, need_command_name(body.name or ''),
+                                     body.fields(), body.template)
+        return created.view()
+
+    @app.put('/api/personas/{persona_id}/commands/{name}', dependencies=guarded)
+    async def command_update(persona_id: str, name: str, body: CommandIn):
+        _check_id('persona_id', persona_id)
+        if body.name is not None and body.name != name:
+            raise ApiError(400, 'invalid_input', '命令不能改名：新建一个，再删掉旧的。')
+        book = need_personas().commands
+        changed = await persona_call(book.update, user_id, persona_id, need_command_name(name),
+                                     body.fields(), body.template)
+        return changed.view()
+
+    @app.delete('/api/personas/{persona_id}/commands/{name}', dependencies=guarded)
+    async def command_delete(persona_id: str, name: str):
+        _check_id('persona_id', persona_id)
+        book = need_personas().commands
+        await persona_call(book.delete, user_id, persona_id, need_command_name(name))
+        return {'deleted': name}
+
+    @app.post('/api/personas/{persona_id}/commands/{name}/reset', dependencies=guarded)
+    async def command_reset(persona_id: str, name: str):
+        _check_id('persona_id', persona_id)
+        book = need_personas().commands
+        return (await persona_call(book.reset, user_id, persona_id, need_command_name(name))).view()
 
     @app.get('/api/sessions/{session_id}/persona', dependencies=guarded)
     async def session_persona(session_id: str):

@@ -382,6 +382,35 @@ class RagAgentService:
             store.bind(user_id, session_id, chosen)
         return persona
 
+    async def _persona_choices(self, user_id, session_id, persona_id, command, question, choices):
+        """A new task's persona, its progress notes, its command's constraint text and the run
+        choices (execution_mode, allow_writes, use_memory, workspace) after both filled them.
+
+        The command comes first: its mode wins over the request's, and write=false forces a
+        read-only task. The persona's defaults then fill what is still open. A command that
+        writes refuses to start when writing ends up off (docs/personal_commands_plan.md)."""
+        execution_mode, allow_writes, use_memory, workspace = choices
+        chosen = await asyncio.to_thread(self._resolve_persona, user_id, session_id, persona_id)
+        found, command_text = None, None
+        if command is not None:
+            from app.services import personal_commands
+            found, command_text = await asyncio.to_thread(
+                personal_commands.for_task, self._personas.commands, user_id, chosen.persona_id,
+                command, question, self.run_options()['modes'])
+            if found.mode is not None:
+                execution_mode = found.mode
+            if found.write is False:
+                allow_writes = False
+        choices, used, skipped = self.persona_defaults(chosen, execution_mode, allow_writes, use_memory, workspace)
+        if found is not None and found.write is True and choices[1] is False:
+            raise personal_commands.needs_write(found)
+        notes = [{'type': 'persona', 'persona_id': chosen.persona_id, 'name': chosen.name,
+                  'chars': chosen.chars, 'used': used, 'skipped': skipped}]
+        if found is not None:
+            notes.append({'type': 'command', 'name': found.name, 'chars': found.chars,
+                          'fixed': found.fixed, 'mode': found.mode, 'write': found.write})
+        return chosen, notes, command_text, choices
+
     def persona_defaults(self, persona, execution_mode=None, allow_writes=None, use_memory=None, workspace=None):
         """Fill the choices a request left open from the persona (the request's own win).
         A default this service cannot honour is skipped and reported, never fatal.
@@ -461,7 +490,7 @@ class RagAgentService:
         execution_mode: str | None = None, allow_writes: bool | None = None, use_memory: bool | None = None,
         single_runner: str | None = None,
         hooks=None, workspace: str | None = None, workspace_confirmed: bool = False,
-        attachments=None, persona: str | None = None,
+        attachments=None, persona: str | None = None, command: str | None = None,
     ) -> AgentRunResult:
         """on_event, if given, receives host-authored progress records ('route',
         then LoopRun's 'plan' and 'step'); see LoopRun.run (D-045).
@@ -472,9 +501,14 @@ class RagAgentService:
 
         persona names the persona (its id) for this request only; None uses the session's. A new
         task takes the persona's instructions as a constraint and its defaults for the choices left
-        open (docs/persona_plan.md); a resumed task keeps what it started with."""
+        open (docs/persona_plan.md); a resumed task keeps what it started with.
+
+        command names a personal command of the task's persona, question being the whole line; see
+        _persona_choices (docs/personal_commands_plan.md)."""
         if persona is not None and (self._personas is None or resume_task_id is not None):
             raise ValueError('persona needs personas on and a new task')
+        if command is not None and (self._personas is None or resume_task_id is not None):
+            raise ValueError('command needs personas on and a new task')
         workspace, attachments = self._check_request(
             question, session_id, user_id, request_id, resume_task_id, question_id, execution_mode,
             allow_writes, use_memory, single_runner, hooks, workspace, workspace_confirmed, attachments)
@@ -487,13 +521,11 @@ class RagAgentService:
             replayed = await self._replay(conversation, turn_id, outcome_key, question, resume_task_id, question_id)
             if replayed is not None:
                 return replayed
-            chosen, note = None, None
+            chosen, notes, command_text = None, (), None
             if resume_task_id is None and self._personas is not None:
-                chosen = await asyncio.to_thread(self._resolve_persona, user_id, session_id, persona)
-                (execution_mode, allow_writes, use_memory, workspace), used, skipped = self.persona_defaults(
-                    chosen, execution_mode, allow_writes, use_memory, workspace)
-                note = {'type': 'persona', 'persona_id': chosen.persona_id, 'name': chosen.name,
-                        'chars': chosen.chars, 'used': used, 'skipped': skipped}
+                chosen, notes, command_text, (execution_mode, allow_writes, use_memory, workspace) = (
+                    await self._persona_choices(user_id, session_id, persona, command, question,
+                                                (execution_mode, allow_writes, use_memory, workspace)))
             runtime, memory, options, question_id = self._open_task(
                 key, user_id, session_id, question, resume_task_id, question_id,
                 execution_mode, single_runner, allow_writes, use_memory, workspace)
@@ -503,11 +535,11 @@ class RagAgentService:
             # Every external call is after the original input has been published.
             await self._publish_input(conversation, turn, turn_id, outcome_key)
             try:
-                if note is not None:
+                for note in notes:
                     _emit(on_event, note)
                 context_manager = await self._prepare_task(
                     conversation, key, user_id, question, task, runtime, question_id, attachments, options,
-                    chosen)
+                    chosen, command_text)
                 result = await self._execute(
                     conversation, key, user_id, session_id, question, hooks, on_event, outcome_key,
                     task, memory, runtime, options, context_manager)
@@ -659,9 +691,10 @@ class RagAgentService:
             raise
 
     async def _prepare_task(self, conversation, key, user_id, question, task, runtime, question_id,
-                            attachments, options, persona=None):
+                            attachments, options, persona=None, command_text=None):
         """The task's context manager, with the answer, attachments, workspace note, history and recall
-        pinned, and a new task's persona instructions as a constraint (docs/persona_plan.md)."""
+        pinned, and a new task's persona instructions as a constraint (docs/persona_plan.md), then
+        its personal command's expanded template (docs/personal_commands_plan.md)."""
         main = config.model_profiles().role('main')      # the default profile without a file (4d-2)
         context_manager = ContextManager(
             window_tokens=main.context_tokens,
@@ -673,6 +706,8 @@ class RagAgentService:
         if runtime is None and persona is not None and persona.instructions:
             from app.services.personas import PERSONA_PREAMBLE
             task.add_constraint(PERSONA_PREAMBLE + '\n\n' + persona.instructions)
+        if runtime is None and command_text:
+            task.add_constraint(command_text)
         if attachments:
             task.pin_content(await self._attachment_note(conversation, attachments), 'attachments')
         current = options.get('workspace') or self._default_workspace

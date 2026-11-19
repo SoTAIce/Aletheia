@@ -31,7 +31,11 @@ def service_error(exc: Exception) -> ApiError:
     """Map the service's host-authored refusals to API codes; anything else is internal."""
     text = str(exc) if isinstance(exc, (ValueError, RuntimeError)) else ''
     from app.services.workspace import WorkspaceConfirmationRequired, WorkspaceError
+    from app.services.personal_commands import CommandError
     from app.services.personas import PersonaError
+    if isinstance(exc, CommandError):
+        # Host-written Chinese: a command file to fix, arguments that do not fit, or writing off.
+        return ApiError(404 if exc.code == 'not_found' else 400, 'command_' + exc.code, exc.message)
     if isinstance(exc, PersonaError):
         # Host-written Chinese; a persona file the user must fix, or a refused change.
         return ApiError(404 if exc.code == 'not_found' else 400, 'persona_' + exc.code, exc.message)
@@ -189,6 +193,8 @@ class RunManager:
                                workspace_confirmed=bool(run.options.get('workspace_confirmed')))
         if run.attachments:
             choices['attachments'] = run.attachments
+        if run.resume_task_id is None and run.requested.get('command'):
+            choices['command'] = run.requested['command']      # docs/personal_commands_plan.md
         if self._approval_tools:
             # Side-effect tools wait for the person on the page (D-061).
             from app.agent.hooks import HookSet

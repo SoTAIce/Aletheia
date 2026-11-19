@@ -95,6 +95,7 @@ D-088 个性化人设（[方案](persona_plan.md)，第一步，含默认选项�
 - 服务层 `query_result` 给新任务解析人设：指令作为一条 `constraints` 加进任务（开头是宿主写的英文），默认设置只填请求没选的项，用不了的跳过并在 `persona` 事件里报告；续跑的任务不变。
 - 命令行 `/persona`、`/btw`、`--persona` 在 `app/agent/persona_commands.py`；网页有 `/api/personas` 一组接口和“人设”面板，输入框里的 `/persona`、`/btw` 由页面拦下。
 - 记忆分区（D-089，[方案](persona_memory_plan.md)）：每条长期记忆有归属，`persona_id` 为空是公共的。召回时只查公共的和当前人设的，“默认”人设只看公共的；过滤在 PostgreSQL 一侧做，Milvus 结构不变。`/remember` 记到当前人设下（`--shared` 记成公共的）；删除人设时它的记忆一起删，有记忆时先确认。
+- 个人命令（D-090，[方案](personal_commands_plan.md)）：每个人设一套任务模板，`/review app/api` 这样运行。命令文件在人设目录下的 `commands/<人设编号>/`，第一次用时复制六个预置命令（`app/services/command_presets/`）。对话里记用户输入的那一行，拼好的模板作为约束跟在人设指令后面；命令可以固定执行模式，`write = false` 强制只读，`write = true` 在只读时不开始，命令从不打开写入。命令行 `/commands`，网页输入 `/` 补全、顶栏“命令”面板。
 
 具体分支以 `loop_run.py`、`agent_loop.py` 为准。
 
