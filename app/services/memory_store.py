@@ -37,8 +37,25 @@ class MemoryStore(Protocol):
         user_id: str,
         query: str,
         limit: int = 5,
+        persona_scope=...,
     ) -> list[MemoryRecord]:
-        """按关键词查询相关记忆。"""
+        """按关键词查询相关记忆；persona_scope 见 longterm_memory.ALL_PERSONAS。"""
+        ...
+
+    async def count_by_persona(
+        self,
+        user_id: str,
+        persona_id: str,
+    ) -> int:
+        """某个人设名下有几条记忆。"""
+        ...
+
+    async def delete_by_persona(
+        self,
+        user_id: str,
+        persona_id: str,
+    ) -> list[str]:
+        """删除某个人设名下的全部记忆，返回删掉的编号。"""
         ...
 
     async def update(

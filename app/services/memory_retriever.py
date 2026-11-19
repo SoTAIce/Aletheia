@@ -3,7 +3,7 @@
 import asyncio
 from datetime import datetime, timezone
 
-from app.models.longterm_memory import MemoryHit
+from app.models.longterm_memory import ALL_PERSONAS, MemoryHit, check_scope, in_scope
 from app.services.memory_store import MemoryStore
 from app.services.memory_vector_index import MemoryVectorIndex
 
@@ -33,7 +33,12 @@ class MemoryRetriever:
         user_id: str,
         query: str,
         limit: int = 5,
+        persona_scope=ALL_PERSONAS,
     ) -> list[MemoryHit]:
+        """persona_scope (docs/persona_memory_plan.md): the keyword side filters in SQL; the vector
+        index knows no persona, so its candidates are filtered on the authoritative record, with a
+        larger candidate pool so other personas' memories do not crowd the visible ones out."""
+        check_scope(persona_scope)
         for name, value, max_bytes in (("user_id", user_id, 256), ("query", query, 8000)):
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{name} must be a nonempty string")
@@ -42,9 +47,12 @@ class MemoryRetriever:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
 
-        candidate_k = min(100, max(limit * 3, 10))
+        scoped = persona_scope is not ALL_PERSONAS
+        candidate_k = min(100, max(limit * 6, 20) if scoped else max(limit * 3, 10))
+        keyword = (self._store.search(user_id, query, limit=candidate_k, persona_scope=persona_scope)
+                   if scoped else self._store.search(user_id, query, limit=candidate_k))
         searches = [
-            asyncio.create_task(self._store.search(user_id, query, limit=candidate_k)),
+            asyncio.create_task(keyword),
             asyncio.create_task(self._vector_index.search(user_id, query, limit=candidate_k)),
         ]
         try:
@@ -74,6 +82,8 @@ class MemoryRetriever:
             # Never return indexed content or a possibly stale keyword snapshot.
             record = await self._store.get(user_id, memory_id)
             if record is None or record.user_id != user_id or record.memory_id != memory_id:
+                continue
+            if not in_scope(getattr(record, 'persona_id', None), persona_scope):
                 continue
             if record.expires_at is not None:
                 if not isinstance(record.expires_at, datetime) or record.expires_at.utcoffset() is None:

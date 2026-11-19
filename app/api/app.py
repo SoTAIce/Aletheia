@@ -86,6 +86,10 @@ class ApprovalIn(BaseModel):
 class MemoryIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     content: str
+    # With personas on, the memory belongs to this session's persona unless shared
+    # (docs/persona_memory_plan.md); without a session it is shared, as before.
+    session_id: str | None = None
+    shared: StrictBool = False
 
 
 class PersonaIn(BaseModel):
@@ -204,6 +208,19 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
         if store is None:
             return {}
         return store.get(user_id, store.session_persona_id(user_id, session_id)).options
+
+    def memory_view(record) -> dict:
+        """A memory for the page; with personas on, also whom it belongs to."""
+        view = _memory_view(record)
+        store = getattr(service, 'personas', None)
+        if store is not None:
+            from app.agent.persona_commands import memory_label
+            persona_id = getattr(record, 'persona_id', None)
+            view['persona_id'] = persona_id
+            view['persona_name'] = memory_label(store, user_id, persona_id) if persona_id else None
+            if view['persona_name'] == '已删除的人设':
+                view['persona_name'] = None
+        return view
 
     def need_memory():
         if memory is None:
@@ -406,7 +423,11 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
     @app.get('/api/personas/{persona_id}', dependencies=guarded)
     async def persona_detail(persona_id: str):
         _check_id('persona_id', persona_id)
-        return (await persona_call(need_personas().get, user_id, persona_id)).view()
+        view = (await persona_call(need_personas().get, user_id, persona_id)).view()
+        # How many memories go with it if it is deleted; None when long-term memory is off.
+        view['memories'] = (await call(memory.count_persona(user_id, persona_id))
+                            if memory is not None and persona_id != 'default' else None)
+        return view
 
     @app.post('/api/personas', status_code=201, dependencies=guarded)
     async def persona_create(body: PersonaIn):
@@ -430,9 +451,21 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
 
     @app.delete('/api/personas/{persona_id}', dependencies=guarded)
     async def persona_delete(persona_id: str):
+        """Delete a persona and its memories: the memories first, so a failure leaves both."""
+        store = need_personas()
         _check_id('persona_id', persona_id)
-        await persona_call(need_personas().delete, user_id, persona_id)
-        return {'deleted': persona_id}
+        await persona_call(store.get, user_id, persona_id)           # 404 before touching memories
+        if persona_id == 'default':
+            await persona_call(store.delete, user_id, persona_id)    # refused: the default stays
+        deleted = 0
+        if memory is not None:
+            try:
+                deleted = await memory.forget_persona(user_id, persona_id)
+            except Exception as exc:
+                logger.warning('Persona memories not deleted: %s', type(exc).__name__)
+                raise ApiError(500, 'persona_memories_failed', '删除这个人设的记忆失败，人设没有删除。') from None
+        await persona_call(store.delete, user_id, persona_id)
+        return {'deleted': persona_id, 'memories_deleted': deleted}
 
     @app.post('/api/personas/{persona_id}/btw', dependencies=guarded)
     async def persona_btw(persona_id: str, body: BtwIn):
@@ -459,14 +492,22 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
     @app.get('/api/memories', dependencies=guarded)
     async def memories(limit: int = 20, offset: int = 0):
         records = await call(need_memory().list_memories(user_id, limit=limit, offset=offset))
-        return {'memories': [_memory_view(r) for r in records]}
+        return {'memories': [memory_view(r) for r in records]}
 
     @app.post('/api/memories', status_code=201, dependencies=guarded)
     async def remember(body: MemoryIn):
         store = need_memory()
         if not body.content.strip():
             raise ApiError(400, 'invalid_input', '记忆内容不能为空。')
-        return _memory_view(await call(store.remember_explicit(user_id, body.content)))
+        _check_id('session_id', body.session_id, required=False)
+        personas = getattr(service, 'personas', None)
+        owner = {}
+        if personas is not None and body.session_id is not None and not body.shared:
+            from app.services.personas import DEFAULT_ID
+            chosen = await persona_call(personas.session_persona_id, user_id, body.session_id)
+            if chosen != DEFAULT_ID:          # the default persona's memories are shared
+                owner = {'persona_id': chosen}
+        return memory_view(await call(store.remember_explicit(user_id, body.content, **owner)))
 
     @app.delete('/api/memories/{memory_id}', dependencies=guarded)
     async def forget(memory_id: str):

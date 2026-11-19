@@ -94,7 +94,7 @@ D-088 个性化人设（[方案](persona_plan.md)，第一步，含默认选项�
 - 存储在 `app/services/personas.py`：每个用户一个目录，每个人设一个 `.md` 文件（TOML 设置 + 指令正文），`state.json` 记会话绑定和最近一次 `/btw`。
 - 服务层 `query_result` 给新任务解析人设：指令作为一条 `constraints` 加进任务（开头是宿主写的英文），默认设置只填请求没选的项，用不了的跳过并在 `persona` 事件里报告；续跑的任务不变。
 - 命令行 `/persona`、`/btw`、`--persona` 在 `app/agent/persona_commands.py`；网页有 `/api/personas` 一组接口和“人设”面板，输入框里的 `/persona`、`/btw` 由页面拦下。
-- 记忆分区（方案第 7 节）还没做。
+- 记忆分区（D-089，[方案](persona_memory_plan.md)）：每条长期记忆有归属，`persona_id` 为空是公共的。召回时只查公共的和当前人设的，“默认”人设只看公共的；过滤在 PostgreSQL 一侧做，Milvus 结构不变。`/remember` 记到当前人设下（`--shared` 记成公共的）；删除人设时它的记忆一起删，有记忆时先确认。
 
 具体分支以 `loop_run.py`、`agent_loop.py` 为准。
 

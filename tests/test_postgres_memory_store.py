@@ -67,7 +67,12 @@ async def test_lifecycle_is_idempotent_and_serializes_concurrent_initialization(
     store = PostgresMemoryStore(" postgresql://localhost/test ")
     await asyncio.gather(store.initialize(), store.initialize())
     factory.assert_awaited_once_with(dsn="postgresql://localhost/test", min_size=1, max_size=5)
-    assert conn.execute.await_count == 2
+    # Table, user index, then the persona column and index (persona-memory), all in one transaction.
+    statements = [" ".join(call.args[0].split()) for call in conn.execute.await_args_list]
+    assert len(statements) == 4
+    assert statements[2] == "ALTER TABLE memories ADD COLUMN IF NOT EXISTS persona_id TEXT"
+    assert statements[3] == ("CREATE INDEX IF NOT EXISTS idx_memories_user_persona "
+                             "ON memories(user_id, persona_id)")
     assert events == ["begin", "commit"]
     await asyncio.gather(store.close(), store.close())
     pool.close.assert_awaited_once()
@@ -129,10 +134,10 @@ async def test_add_preserves_record_and_binds_values_without_sql_interpolation()
     before = asdict(item)
     assert await store.add(item) is item
     sql, *values = conn.execute.call_args.args
-    assert "$1" in sql and "$10" in sql and item.content not in sql
+    assert "$1" in sql and "$11" in sql and item.content not in sql
     assert values == [item.memory_id, item.user_id, item.content, item.category.value,
                       item.source, item.source_id, item.version, item.created_at,
-                      item.updated_at, item.expires_at]
+                      item.updated_at, item.expires_at, item.persona_id]
     assert asdict(item) == before
 
 

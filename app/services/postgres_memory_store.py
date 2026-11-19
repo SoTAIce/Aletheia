@@ -5,7 +5,7 @@ from datetime import datetime
 
 import asyncpg
 
-from app.models.longterm_memory import MemoryCategory, MemoryRecord
+from app.models.longterm_memory import ALL_PERSONAS, MemoryCategory, MemoryRecord, check_scope
 
 
 class PostgresMemoryStore:
@@ -53,6 +53,19 @@ class PostgresMemoryStore:
                             ON memories(user_id)
                             """
                         )
+                        # Persona memories (docs/persona_memory_plan.md): both statements repeat
+                        # safely; existing rows keep NULL, which means shared.
+                        await conn.execute(
+                            """
+                            ALTER TABLE memories ADD COLUMN IF NOT EXISTS persona_id TEXT
+                            """
+                        )
+                        await conn.execute(
+                            """
+                            CREATE INDEX IF NOT EXISTS idx_memories_user_persona
+                            ON memories(user_id, persona_id)
+                            """
+                        )
             except BaseException:
                 # Termination is synchronous, so cancellation also releases the
                 # failed pool without a second await during error cleanup.
@@ -81,6 +94,9 @@ class PostgresMemoryStore:
             raise TypeError("category must be a MemoryCategory")
         if record.source_id is not None and not isinstance(record.source_id, str):
             raise TypeError("source_id must be a string or None")
+        if record.persona_id is not None and (not isinstance(record.persona_id, str)
+                                              or not record.persona_id.strip()):
+            raise ValueError("persona_id must be a non-empty string or None")
         if type(record.version) is not int or record.version != 1:
             raise ValueError("New memory version must be 1")
         for name in ("created_at", "updated_at", "expires_at"):
@@ -104,9 +120,9 @@ class PostgresMemoryStore:
                     INSERT INTO memories (
                         memory_id, user_id, content,
                         category, source, source_id,
-                        version, created_at, updated_at, expires_at
+                        version, created_at, updated_at, expires_at, persona_id
                     )
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                     """,
                     record.memory_id,
                     record.user_id,
@@ -118,6 +134,7 @@ class PostgresMemoryStore:
                     record.created_at,
                     record.updated_at,
                     record.expires_at,
+                    record.persona_id,
                 )
         except asyncpg.UniqueViolationError as exc:
             raise ValueError("Memory ID already exists") from exc
@@ -139,7 +156,7 @@ class PostgresMemoryStore:
             row = await conn.fetchrow(
                 """
                 SELECT memory_id, user_id, content, category, source, source_id,
-                       version, created_at, updated_at, expires_at
+                       version, created_at, updated_at, expires_at, persona_id
                 FROM memories
                 WHERE user_id = $1 AND memory_id = $2
                 """,
@@ -153,7 +170,7 @@ class PostgresMemoryStore:
 
     @staticmethod
     def _row_to_record(row: asyncpg.Record) -> MemoryRecord:
-        """将 PostgreSQL 查询结果转换为 MemoryRecord。"""
+        """将 PostgreSQL 查询结果转换为 MemoryRecord。没有 persona_id 列的行是公共记忆。"""
 
         return MemoryRecord(
             memory_id=row["memory_id"],
@@ -166,6 +183,7 @@ class PostgresMemoryStore:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             expires_at=row["expires_at"],
+            persona_id=row.get("persona_id") if hasattr(row, "get") else None,
         )
 
     async def list_by_user(
@@ -327,8 +345,10 @@ class PostgresMemoryStore:
         user_id: str,
         query: str,
         limit: int = 5,
+        persona_scope=ALL_PERSONAS,
     ) -> list[MemoryRecord]:
-        """根据关键词检索指定用户的有效长期记忆。"""
+        """根据关键词检索指定用户的有效长期记忆。persona_scope 见 longterm_memory.ALL_PERSONAS。"""
+        check_scope(persona_scope)
 
         # 1. 参数校验
         if not isinstance(user_id, str) or not user_id.strip():
@@ -345,20 +365,28 @@ class PostgresMemoryStore:
             raise RuntimeError("Database is not initialized")
 
         # 3. 查询数据库
+        if persona_scope is ALL_PERSONAS:
+            scope_sql, scope_args = "", ()
+        elif persona_scope is None:
+            scope_sql, scope_args = "AND persona_id IS NULL", ()
+        else:
+            scope_sql, scope_args = "AND (persona_id IS NULL OR persona_id = $4)", (persona_scope,)
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(
-                """
+                f"""
                 SELECT *
                 FROM memories
                 WHERE user_id = $1
                 AND STRPOS(LOWER(content), LOWER($2)) > 0
                 AND (expires_at IS NULL OR expires_at > NOW())
+                {scope_sql}
                 ORDER BY updated_at DESC, memory_id DESC
                 LIMIT $3
                 """,
                 user_id,
                 query.strip(),
                 limit,
+                *scope_args,
             )
 
         # 4. 转换为 MemoryRecord
@@ -366,3 +394,45 @@ class PostgresMemoryStore:
             self._row_to_record(row)
             for row in rows
         ]
+
+    @staticmethod
+    def _check_persona(user_id: str, persona_id: str) -> None:
+        for name, value in (("user_id", user_id), ("persona_id", persona_id)):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{name} must not be empty")
+
+    async def count_by_persona(self, user_id: str, persona_id: str) -> int:
+        """How many memories belong to one persona (told to the user before deleting it)."""
+        self._check_persona(user_id, persona_id)
+        if self._pool is None:
+            raise RuntimeError("Database is not initialized")
+        async with self._pool.acquire() as conn:
+            count = await conn.fetchval(
+                """
+                SELECT COUNT(*)
+                FROM memories
+                WHERE user_id = $1
+                AND persona_id = $2
+                """,
+                user_id,
+                persona_id,
+            )
+        return int(count or 0)
+
+    async def delete_by_persona(self, user_id: str, persona_id: str) -> list[str]:
+        """Delete every memory of one persona; returns the deleted ids (persona-memory)."""
+        self._check_persona(user_id, persona_id)
+        if self._pool is None:
+            raise RuntimeError("Database is not initialized")
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                DELETE FROM memories
+                WHERE user_id = $1
+                AND persona_id = $2
+                RETURNING memory_id
+                """,
+                user_id,
+                persona_id,
+            )
+        return [row["memory_id"] for row in rows]

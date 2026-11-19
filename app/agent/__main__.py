@@ -7,7 +7,9 @@ import json
 import os
 from pathlib import Path
 
-from app.agent.persona_commands import PERSONA_HELP, PERSONAS_OFF, persona_command, persona_notice
+from app.agent.persona_commands import (
+    PERSONA_HELP, PERSONAS_OFF, memory_label, persona_command, persona_notice, persona_scope,
+)
 from app.agent.run_meter import RunMeter, metering
 from app.config import config
 from app.models.taskstate import TaskStatus
@@ -144,12 +146,15 @@ def report(result, write=print) -> None:
 INTERACTIVE_HELP = ('直接输入目标开始一个任务；任务等待回答时，直接输入回答即可继续。'
                     '命令：/help 显示帮助，/new 放弃正在等待回答的任务，/exit 退出（Ctrl+D、Ctrl+Z 回车同样退出）；'
                     '/dir 查看工作目录，/dir 路径 更换工作目录；'
-                    '长期记忆：/remember 内容 记住一条，/memories 查看，/forget 编号 删除。' + PERSONA_HELP)
+                    '长期记忆：/remember 内容 记住一条（记在当前人设下，加 --shared 记成公共的），'
+                    '/memories 查看，/forget 编号 删除。' + PERSONA_HELP)
 MEMORY_OFF = '长期记忆没有开启：在 .env 里设置 LONGTERM_MEMORY_DSN 后可用。'
 
 
-async def memory_command(command, memory, user_id, write=print) -> None:
-    """/remember, /memories and /forget against the user's own long-term memory (D-042)."""
+async def memory_command(command, memory, user_id, write=print, *, store=None, session_id=None) -> None:
+    """/remember, /memories and /forget against the user's own long-term memory (D-042). With
+    personas on (store), /remember keeps the memory under the session's persona unless --shared,
+    and /memories names whom each belongs to (docs/persona_memory_plan.md)."""
     name, _, rest = command.partition(' ')
     rest = rest.strip()
     if memory is None:
@@ -157,17 +162,31 @@ async def memory_command(command, memory, user_id, write=print) -> None:
         return
     try:
         if name == '/remember':
+            shared = rest == '--shared' or rest.startswith('--shared ')
+            if shared:
+                rest = rest[len('--shared'):].strip()
             if not rest:
-                write('用法：/remember 要记住的内容')
+                write('用法：/remember 要记住的内容；/remember --shared 内容 记成所有人设共用的')
                 return
-            saved = await memory.remember_explicit(user_id, rest)
-            write(f'已记住，编号 {saved.memory_id}。')
+            persona_id, persona_name = (None, None)
+            if store is not None and not shared:
+                persona_id, persona_name = await asyncio.to_thread(persona_scope, store, user_id, session_id)
+            saved = await memory.remember_explicit(user_id, rest, **({'persona_id': persona_id} if persona_id else {}))
+            if store is None:
+                write(f'已记住，编号 {saved.memory_id}。')
+            else:
+                owner = f'属于「{persona_name}」' if persona_id else '公共的'
+                write(f'已记住（{owner}），编号 {saved.memory_id}。')
         elif name == '/memories':
             records = await memory.list_memories(user_id)
             if not records:
                 write('还没有长期记忆。')
             for record in records:
-                write(f'{record.memory_id}  [{record.category.value}]  {record.content}')
+                if store is None:
+                    write(f'{record.memory_id}  [{record.category.value}]  {record.content}')
+                else:
+                    label = memory_label(store, user_id, getattr(record, 'persona_id', None))
+                    write(f'{record.memory_id}  [{record.category.value}]  [{label}]  {record.content}')
         else:
             if not rest:
                 write('用法：/forget 编号（编号见 /memories）')
@@ -176,6 +195,13 @@ async def memory_command(command, memory, user_id, write=print) -> None:
     except Exception as exc:
         # Type name only: store and index errors may carry connection details.
         write(f'长期记忆操作失败：{type(exc).__name__}')
+
+
+def _persona_store(service):
+    """The service's persona store, or None when personas are off (or the service is a stand-in)."""
+    from app.services.personas import PersonaStore
+    store = getattr(service, 'personas', None)
+    return store if isinstance(store, PersonaStore) else None
 
 
 def _notice_to(write):
@@ -260,10 +286,12 @@ async def interactive(service, args, read_line=None, write=print, memory=None) -
             await dir_command(command, place, service, read_line, write, waiting)
             continue
         if command.split(' ', 1)[0] in ('/remember', '/memories', '/forget'):
-            await memory_command(command, memory, user_id, write)
+            await memory_command(command, memory, user_id, write,
+                                 store=_persona_store(service), session_id=args.session_id)
             continue
         if command.split(' ', 1)[0] in ('/persona', '/btw'):
-            await asyncio.to_thread(persona_command, command, service, user_id, args.session_id, write, waiting)
+            await persona_command(command, service, user_id, args.session_id, write, waiting,
+                                  memory=memory, read_line=read_line)
             continue
         if command.startswith('/'):
             write(f'未知命令：{command}。' + INTERACTIVE_HELP)

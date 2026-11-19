@@ -48,8 +48,64 @@ def _show(store, user_id, persona, write) -> None:
         write(f'{number:>3}  {line}')
 
 
-def persona_command(command: str, service, user_id, session_id: str, write=print, waiting=None) -> None:
-    """Run one /persona or /btw line against the session's persona."""
+def persona_scope(store, user_id, session_id):
+    """(memory persona id, persona name) of the session's persona: None for the default one,
+    whose memories are shared (docs/persona_memory_plan.md)."""
+    persona = store.get(user_id, store.session_persona_id(user_id, session_id))
+    return (None if persona.persona_id == DEFAULT_ID else persona.persona_id), persona.name
+
+
+def memory_label(store, user_id, persona_id) -> str:
+    """Whom a memory belongs to, for /memories and the web list."""
+    if persona_id is None:
+        return '公共'
+    try:
+        return store.get(user_id, persona_id).name
+    except PersonaError:
+        return '已删除的人设'
+
+
+async def _delete(store, user_id, arg, write, memory, read_line) -> None:
+    """/persona delete: its memories go with it, after a typed 'y' when it has any."""
+    persona = store.find(user_id, arg)
+    if persona.persona_id == DEFAULT_ID:
+        store.delete(user_id, persona.persona_id)        # raises: the default persona stays
+    deleted = 0
+    if memory is not None:
+        try:
+            count = await memory.count_persona(user_id or 'local', persona.persona_id)
+        except Exception as exc:
+            write(f'查不到这个人设的记忆：{type(exc).__name__}，人设没有删除。')
+            return
+        if count:
+            write(f'人设「{persona.name}」有 {count} 条记忆，会一起删除，删了找不回来。')
+            try:
+                answer = await (read_line or _no_answer)('输入 y 确认，其他任意输入取消：')
+            except EOFError:
+                answer = ''
+            if answer.strip().lower() != 'y':
+                write('已取消，人设和记忆都没有删除。')
+                return
+            try:
+                deleted = await memory.forget_persona(user_id or 'local', persona.persona_id)
+            except Exception as exc:
+                write(f'删除记忆失败：{type(exc).__name__}，人设没有删除。')
+                return
+    store.delete(user_id, persona.persona_id)
+    if deleted:
+        write(f'已删除人设「{persona.name}」和它的 {deleted} 条记忆，用它的会话回到“默认”。')
+    else:
+        write(f'已删除人设「{persona.name}」，用它的会话回到“默认”。')
+
+
+async def _no_answer(prompt):
+    raise EOFError
+
+
+async def persona_command(command: str, service, user_id, session_id: str, write=print, waiting=None,
+                          *, memory=None, read_line=None) -> None:
+    """Run one /persona or /btw line against the session's persona. memory, when on, is the
+    long-term memory service: deleting a persona deletes its memories (persona-memory)."""
     store = service.personas
     if store is None:
         write(PERSONAS_OFF)
@@ -97,9 +153,7 @@ def persona_command(command: str, service, user_id, session_id: str, write=print
             persona = store.update(user_id, current_id, name=arg)
             write(f'已改名为「{persona.name}」。')
         elif sub == 'delete':
-            persona = store.find(user_id, arg)
-            store.delete(user_id, persona.persona_id)
-            write(f'已删除人设「{persona.name}」，用它的会话回到“默认”。')
+            await _delete(store, user_id, arg, write, memory, read_line)
         else:
             persona = store.find(user_id, rest)
             if persona.persona_id == current_id:

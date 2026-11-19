@@ -381,8 +381,9 @@ class FakeService:
 
 
 def run_command(store, line, session='s', waiting=None):
+    import asyncio
     lines = []
-    persona_commands.persona_command(line, FakeService(store), None, session, lines.append, waiting)
+    asyncio.run(persona_commands.persona_command(line, FakeService(store), None, session, lines.append, waiting))
     return lines
 
 
@@ -409,8 +410,9 @@ def test_cli_commands(tmp_path):
 
 
 def test_cli_without_personas():
+    import asyncio
     lines = []
-    persona_commands.persona_command('/btw x', FakeService(None), None, 's', lines.append)
+    asyncio.run(persona_commands.persona_command('/btw x', FakeService(None), None, 's', lines.append))
     assert lines == [persona_commands.PERSONAS_OFF]
 
 
@@ -466,7 +468,8 @@ async def test_web_persona_endpoints(tmp_path):
         assert changed.json()['options'] == {}
         detail = (await web.client.get(f'/api/personas/{persona_id}')).json()
         assert detail['instructions'] == 'Rules.'
-        assert (await web.client.delete(f'/api/personas/{persona_id}')).json() == {'deleted': persona_id}
+        assert (await web.client.delete(f'/api/personas/{persona_id}')).json() == {
+            'deleted': persona_id, 'memories_deleted': 0}       # long-term memory is off here
 
 
 async def test_web_persona_errors(tmp_path):

@@ -1554,7 +1554,12 @@ $('persona-new').addEventListener('click', async () => {
 });
 $('persona-delete').addEventListener('click', async () => {
   if (!state.persona || state.persona.persona_id === 'default') return;
-  if (!window.confirm(`删除人设「${state.persona.name}」？用它的会话会回到“默认”。`)) return;
+  let count = null;
+  try {
+    count = (await api(`/api/personas/${encodeURIComponent(state.persona.persona_id)}`)).memories;
+  } catch (e) { personaError(e.message); return; }
+  const lost = count ? `它的 ${count} 条记忆会一起删除，删了找不回来。` : '';
+  if (!window.confirm(`删除人设「${state.persona.name}」？${lost}用它的会话会回到“默认”。`)) return;
   try {
     await api(`/api/personas/${encodeURIComponent(state.persona.persona_id)}`, {method: 'DELETE'});
     await loadPersonas();
@@ -1578,7 +1583,15 @@ $('cancel').addEventListener('click', async () => {
 
 // ---- long-term memory -----------------------------------------------------------------
 
+function renderMemoryOwner() {
+  // Only a persona other than the default one has memories of its own.
+  const own = state.personasOn && state.persona && state.persona.persona_id !== 'default';
+  $('memory-own-row').hidden = !own;
+  if (own) $('memory-own-text').textContent = `只给「${state.persona.name}」`;
+}
+
 async function loadMemories() {
+  renderMemoryOwner();
   const {memories} = await api('/api/memories?limit=100');
   const list = $('memory-list');
   list.replaceChildren();
@@ -1591,7 +1604,11 @@ async function loadMemories() {
       try { await api(`/api/memories/${encodeURIComponent(m.memory_id)}`, {method: 'DELETE'}); await loadMemories(); }
       catch (e) { toast(e.message); }
     });
-    meta.append(el('span', '', m.category === 'fact' ? '事实' : m.category), el('span', '', timeText(m.created_at)), remove);
+    meta.append(el('span', '', m.category === 'fact' ? '事实' : m.category));
+    if ('persona_id' in m) {   // personas on: whom it belongs to (docs/persona_memory_plan.md)
+      meta.append(el('span', '', m.persona_id ? (m.persona_name || '已删除的人设') : '公共'));
+    }
+    meta.append(el('span', '', timeText(m.created_at)), remove);
     item.append(el('p', '', m.content), meta);
     list.append(item);
   }
@@ -1603,8 +1620,13 @@ $('memory-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const content = $('memory-input').value.trim();
   if (!content) return;
+  const body = {content};
+  if (state.personasOn && state.session) {
+    body.session_id = state.session;
+    body.shared = !$('memory-own').checked;
+  }
   try {
-    await api('/api/memories', {method: 'POST', body: {content}});
+    await api('/api/memories', {method: 'POST', body});
     $('memory-input').value = '';
     await loadMemories();
   } catch (e) { toast(e.message); }

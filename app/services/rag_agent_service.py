@@ -686,9 +686,15 @@ class RagAgentService:
             task.pin_content(history, 'conversation_memory')
             if self._longterm_memory is not None and options['memory']:
                 try:
+                    # With personas on, recall the shared memories plus this persona's own; the
+                    # default persona sees the shared ones only (docs/persona_memory_plan.md).
+                    scope = {}
+                    if self._personas is not None and persona is not None:
+                        from app.services.personas import DEFAULT_ID
+                        scope = {'persona_scope': None if persona.persona_id == DEFAULT_ID else persona.persona_id}
                     async with asyncio.timeout(self._longterm_timeout_seconds):
                         hits = await self._longterm_memory.recall(
-                            user_id=user_id, query=question, limit=self._longterm_recall_limit)
+                            user_id=user_id, query=question, limit=self._longterm_recall_limit, **scope)
                     payload = context_manager.longterm_context(
                         hits=hits, user_id=user_id, token_budget=config.longterm_context_tokens)
                     if json.loads(payload)['entries']:

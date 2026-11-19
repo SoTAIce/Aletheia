@@ -327,6 +327,7 @@ kbd { font: 11.5px/1 var(--mono); padding: 3px 6px; border: 1px solid var(--rule
 .field { display: grid; gap: 6px; font-size: 14px; }
 .persona-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .persona-grid select { width: 100%; }
+.check-row { display: flex; align-items: center; gap: 6px; font-size: 14px; }
 #persona .dialog-actions { margin-top: 4px; }
 .drawer {
   position: fixed; top: 64px; right: 0; bottom: 0; width: 360px; z-index: 25;
