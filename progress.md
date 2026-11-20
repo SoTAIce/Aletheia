@@ -27,10 +27,10 @@
 
 | 编号 | 事情 | 状态 |
 |---|---|---|
-| 2.1 | 交接文件补齐：`feature_list.json` 和 `session-handoff.md` 缺 D-085～D-090（2026-11-18～19）的记录（`docs/PROJECT_HANDOVER.md` 有记录） | 未开始（本次只补了 D-091、D-092） |
-| 2.2 | `stage4d-001` 的 4d-4：第二个模型的真实对比。直连 `qwen3.8-flash` 已经能用（临时档案文件） | 未开始，真实调用要同意 |
-| 2.3 | `longterm-integration-001` 标着 `partial`，但 `backlog` 里 `longterm-acceptance` 写着已由 `longterm-memory-001` 交付；先核对再改状态 | 未开始 |
-| 2.4 | `loop-delegate-001`：调研委派已实现但默认关，状态 `partial`；定是开、关还是关闭待办 | 未开始，要用户定 |
+| 2.1 | 交接文件补齐：`feature_list.json` 和 `session-handoff.md` 缺 D-085～D-090（2026-11-18～19）的记录（`docs/PROJECT_HANDOVER.md` 有记录） | 已补（2026-11-20）：功能清单加 6 个条目，本文件加一条补记 |
+| 2.2 | `stage4d-001` 的 4d-4：第二个模型的真实对比。直连 `qwen3.8-flash` 已经能用（临时档案文件） | 第 1 项已跑（2026-11-20，用户选“成员开思考，跑 11 次”）：调参集团队 7/11（4c 是 10/11），4 次失败都是撞上团队 180 秒时限；令牌 513,819 对 1,807,939，时间 1,326 对 595 秒；记在 `docs/stage4d_plan.md` 第 12 节，提交 `73b235d`，未推送。放宽到 `--team-timeout 360` 重跑那 4 道（用户同意）：3 道通过，`semver_compare` 又超时（成员 120 秒时限也撞上了）；拼起来 10/11，和 4c 一样，但每题慢 2～4 倍；记在第 12.1 节。是否改日常配置和时限默认值要用户另定 |
+| 2.3 | `longterm-integration-001` 标着 `partial`，但 `backlog` 里 `longterm-acceptance` 写着已由 `longterm-memory-001` 交付；先核对再改状态 | 已核对（2026-11-20），不改：这一条的 `disposition` 已写明 2026-11-10 被 `longterm-memory-001`（done）取代、`e2e-live-001` 真实验证过，`partial` 是有意留作历史记录，不是进行中的任务 |
+| 2.4 | `loop-delegate-001`：调研委派已实现但默认关，状态 `partial`；定是开、关还是关闭待办 | 已定（2026-11-20，用户选“改成暂缓，功能保留”）：状态改 `deferred`，写明默认关、令牌验收没过；代码不动 |
 | 2.5 | `team-poc-001`（暂缓）、`sandbox-execution`（只剩镜像里的前端测试） | 先列出，不主动做 |
 
 ### 第三阶段：`docs/agent_feature_ideas.md`（用户自己的文件，未提交）里没做的新功能
@@ -74,6 +74,17 @@
 - **Verification**：`tests/test_model_profiles.py` 34 项；4 处故意改错各被抓到；Linux 全部测试 1908 通过、23 跳过、4 失败（Windows 专用）；黄金对照文件未改；云端用真实设置跑 `--show-limits`（无模型调用）。
 - **Commits**：`b1ee2db`、`2f99803`、`973ef0c`（用户同意后已推送到 `origin/main`）。
 - **Next**：4d-4 真实评测等真有第二个模型；检查点（任务状态写盘、重启后续跑）用户说以后再做。
+
+### 2026-11-18～19 — D-085～D-090（2026-11-20 补记）
+
+当时没有写进本文件；下面按 `docs/DECISIONS.md` 和 `docs/PROJECT_HANDOVER.md` 补记，提交都已推送。这几项都没有用真实模型验证。
+
+- **D-085 失败处理**（`c5b95ed`，方案 `docs/failure_handling_plan.md`）：只读工具出错交回模型，失败类型重新划分，重试按时间预算。黄金对照按方案重录 13 个，其余 54 个不变。
+- **D-086 评测统计**（`4496e4b`，`docs/bench_stats_plan.md`）：每次运行用临时归档，失败归因，k 次统计。
+- **D-087 工具属性**（`5cc15ce`，`docs/edit_file_plan.md`）：工具自己声明属性，新增 `edit_file`，单一循环的完成提醒。
+- **D-088 个性化人设**（`43e6a39`，`docs/persona_plan.md`）：多份指令和默认设置，`/persona`、`/btw`。
+- **D-089 人设的记忆分区**（`dbe951b`，`docs/persona_memory_plan.md`）：按人设召回，删除人设时连记忆一起删；只用替身测过。
+- **D-090 个人命令**（`210b3b8`，`docs/personal_commands_plan.md`）：每个人设一套任务模板，只能收紧读写。
 
 ### 2026-11-16 — deliverable-quality-001：交付质量（评分修正）
 
