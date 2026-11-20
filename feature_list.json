@@ -1699,6 +1699,32 @@
         "tests/test_bench_tasks.py PASS"
       ],
       "evidence": "2026-11-16 cloud Linux: 1874 passed, 23 skipped, 4 Windows-only failures. Rescored 4c holdout rerun answers: 13/13 (record only). Commits ae44392, f4f9208, 1050991 pushed. Tune-set run 2026-11-16 (authorized, single loop, 1 run each): 10/11; todo_html 20/20 with html_checks=browser; the only failure config_merge_qa top_keys answered hooks instead of hooks+ (agent reasoning, expected is right). Recorded in commit 66a9adf."
+    },
+    {
+      "id": "cost-measurement-001",
+      "name": "Cost measurement: every model call booked by purpose",
+      "description": "docs/cost_measurement_plan.md, D-091. usage.by_purpose per call purpose; query rewrites and embeddings in usage.auxiliary; background calls in a process ledger; bench by_purpose summary. First round: relay single 24 runs and a direct qwen3.8-flash comparison (sections 8.1-8.4). The auto + sandbox half (about 13 runs) waits for Docker.",
+      "status": "partial",
+      "dependencies": [],
+      "evidence": "Commit b2c503f pushed. Relay single 24 runs: 306,181 tokens, 11/24; direct 24 runs: 1,394,890 tokens, 8/24, all plain."
+    },
+    {
+      "id": "loop-stall-001",
+      "name": "Loop stall: reminder, early wrap-up, unchanged-read pointer",
+      "description": "docs/loop_stall_plan.md, D-092. app/agent/loop_stall.py StallWatch: stale rounds (repeats, reads of whole-read files, directory searches that could only see whole-read files, re-listing a fully listed directory); 3 stale rounds remind once, 3 more wrap up; unchanged whole re-reads get a pointer and the pointed-to output stays whole in the model view. LoopOptions.stall_rounds=3, stall_wrap_up=True.",
+      "status": "done",
+      "dependencies": [],
+      "evidence": "init.ps1 2167 passed, 26 skipped; goldens unchanged; tests/test_loop_stall.py 22 tests. Live direct qwen3.8-flash, 10 tasks x 3 runs with and without the rule: 680,275 vs 2,492,216 tokens, 0 vs 12 runs at the round cap, 8/30 vs 7/30 passed. Commit 13bea45 pushed. 2026-11-20 b1662d7: search_files counts skipped links and junctions (links_skipped), junctions no longer searched outside the root; wrap-up timing unchanged after replay (plan section 13)."
+    },
+    {
+      "id": "followups-2026-11-20-001",
+      "name": "Three-phase follow-up plan",
+      "description": "User 2026-11-20: fix what this session left first, then phases 1 to 3 in order. Phase 1: loop-stall wrap-up timing and symlinks, auto + sandbox cost half, thinking-on comparison. Phase 2: handoff records D-084 to D-090, stage4d 4d-4 live comparison, longterm-integration-001 status check, loop-delegate-001 decision. Phase 3: features from docs/agent_feature_ideas.md (structured output contract first). Full table in progress.md.",
+      "status": "in_progress",
+      "dependencies": [
+        "loop-stall-001",
+        "cost-measurement-001"
+      ]
     }
   ],
   "cleanup_2026_11_04": {
@@ -1709,8 +1735,8 @@
     "baseline": "1093 passed, 2 skipped before test removal"
   },
   "schema_version": 2,
-  "updated_at": "2026-11-16",
-  "active_feature": null,
+  "updated_at": "2026-11-20",
+  "active_feature": "followups-2026-11-20-001",
   "verification_context": {
     "tests_present": true,
     "last_full_regression": "2026-11-08 本轮 init.ps1：1629 passed、16 skipped；历史 1093/2 不作为本轮证据。",
