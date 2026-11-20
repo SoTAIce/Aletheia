@@ -1703,10 +1703,10 @@
     {
       "id": "cost-measurement-001",
       "name": "Cost measurement: every model call booked by purpose",
-      "description": "docs/cost_measurement_plan.md, D-091. usage.by_purpose per call purpose; query rewrites and embeddings in usage.auxiliary; background calls in a process ledger; bench by_purpose summary. First round: relay single 24 runs and a direct qwen3.8-flash comparison (sections 8.1-8.4). The auto + sandbox half (about 13 runs) waits for Docker.",
-      "status": "partial",
+      "description": "docs/cost_measurement_plan.md, D-091. usage.by_purpose per call purpose; query rewrites and embeddings in usage.auxiliary; background calls in a process ledger; bench by_purpose summary. First round: relay single 24 runs and a direct qwen3.8-flash comparison (sections 8.1-8.4). The auto + sandbox half (13 runs) ran 2026-11-20 (section 8.5).",
+      "status": "done",
       "dependencies": [],
-      "evidence": "Commit b2c503f pushed. Relay single 24 runs: 306,181 tokens, 11/24; direct 24 runs: 1,394,890 tokens, 8/24, all plain."
+      "evidence": "Commit b2c503f pushed. Relay single 24 runs: 306,181 tokens, 11/24; direct 24 runs: 1,394,890 tokens, 8/24, all plain. 2026-11-20 relay auto + sandbox 13 runs: all routed to team, 381,444 tokens (member 90.3%, lead 8.1%, route 1.6%), all plain, 12/13 passed (plan section 8.5). Round 2 (daily use) is optional and not run."
     },
     {
       "id": "loop-stall-001",

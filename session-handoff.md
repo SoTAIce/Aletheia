@@ -3,7 +3,7 @@
 ## 新会话从这里开始（2026-11-20）
 
 - `main` 最新：`b1662d7`（D-092 补充：搜索报出跳过的链接，修 Windows 联接越界），未推送；之前 `13bea45`（D-092 原地打转），已推送；之前 `b2c503f`（D-091 花费测量）。D-085～D-090 的记录在 `docs/PROJECT_HANDOVER.md` 和 `docs/DECISIONS.md`，本文件从 2026-11-16 到这里之间没有逐条补（第二阶段 2.1）。
-- 当前任务：用户 2026-11-20 定的**三阶段收尾计划**，全文在 `progress.md` 的同名一节。按第一阶段 → 第二阶段 → 第三阶段的顺序做；第一阶段的 1.1（打转收尾时机、符号链接）已实施（`docs/loop_stall_plan.md` 第 13 节，提交 `b1662d7`，未推送）；下一项是 1.2（auto 加沙箱的花费测量，要 Docker 和真实调用授权）。
+- 当前任务：用户 2026-11-20 定的**三阶段收尾计划**，全文在 `progress.md` 的同名一节。按第一阶段 → 第二阶段 → 第三阶段的顺序做；第一阶段的 1.1（打转收尾时机、符号链接）已实施（`docs/loop_stall_plan.md` 第 13 节，提交 `b1662d7`，未推送）；1.2（auto 加沙箱的花费测量）已跑完，记在 `docs/cost_measurement_plan.md` 8.5 节，提交 `c5ba369`，未推送。1.3（直连小模型开思考）已跑完，记在 `docs/loop_stall_plan.md` 第 14 节，提交 `c5ba369`，未推送。第一阶段剩下的 1.4（暂缓）、1.5（不做）不用动手，下一步进第二阶段 2.1（补齐交接记录 D-085～D-090）。
 - 用户自己的未提交差异不要动：`docs/DOCUMENT_INDEX.md`、删掉的 `scripts/benchmark_conversation_memory.py`、`docs/agent_design_review.md`、`docs/agent_feature_ideas.md`、`docs/modules/`。
 - 直连对照的做法：临时档案 TOML 把 `main` 角色换成 DashScope `qwen3.8-flash`（`api_key_env = "DASHSCOPE_API_KEY"`、`enable_thinking = false`），用 `MODEL_PROFILES_FILE` 指过去；`.env` 不改。
 
