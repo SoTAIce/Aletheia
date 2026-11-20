@@ -199,7 +199,8 @@ class FileAccess:
             raise ValueError(f"invalid regular expression: {exc.msg}") from None
 
         start = self.resolve_read_path(path) if (self._root / path).is_file() else self.resolve_directory_path(path)
-        files = [start] if start.is_file() else self._search_walk(start)
+        links = [0]
+        files = [start] if start.is_file() else self._search_walk(start, links)
         matches, searched, skipped, truncated = [], 0, 0, False
         for file in files:
             relative = file.relative_to(self._root).as_posix()
@@ -228,21 +229,36 @@ class FileAccess:
                                     "text": line.strip()[:self.SEARCH_LINE_CHARS]})
             if truncated:
                 break
-        return {"matches": matches, "files_searched": searched, "files_skipped": skipped,
-                "truncated": truncated}
+        result = {"matches": matches, "files_searched": searched, "files_skipped": skipped,
+                  "truncated": truncated}
+        if links[0]:
+            # Only when there were links, so results without them stay as they were (D-092).
+            result["links_skipped"] = links[0]
+        return result
 
-    def _search_walk(self, directory: Path):
+    def _search_walk(self, directory: Path, links: list[int] | None = None):
+        """Plain files under directory. Links are skipped; links[0] counts them (D-092), after
+        secret and closed paths, which are skipped silently so their existence is never shown."""
+        def is_link(path: Path) -> bool:
+            # A Windows junction is a directory link too: os.walk enters it, and it may lead outside
+            # the root, where read_file refuses to go (os.path.isjunction is Python 3.12+).
+            if not (path.is_symlink() or getattr(os.path, 'isjunction', lambda _: False)(path)):
+                return False
+            if links is not None:
+                links[0] += 1
+            return True
+
         for current, dirs, names in os.walk(directory, followlinks=False):
             base = Path(current)
             dirs[:] = sorted(d for d in dirs
                              if not d.startswith(".") and d not in self._SEARCH_SKIP_DIRS
-                             and not (base / d).is_symlink()
                              and not is_secret_path((base / d).relative_to(self._root).parts)
-                             and not self._is_denied(base / d))
+                             and not self._is_denied(base / d)
+                             and not is_link(base / d))
             for name in sorted(names):
                 file = base / name
-                if (file.is_symlink() or is_secret_path(file.relative_to(self._root).parts)
-                        or self._is_denied(file)):
+                if (is_secret_path(file.relative_to(self._root).parts) or self._is_denied(file)
+                        or is_link(file)):
                     continue
                 yield file
 

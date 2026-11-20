@@ -224,7 +224,7 @@ def test_members_get_the_rule_by_default_and_bad_options_are_refused():
 
 # Plan section 11: searches and listings over a directory.
 
-def tree(files, truncated=False, skipped=()):
+def tree(files, truncated=False, skipped=(), links=0):
     """search_files and list_directory shaped like the filesystem server's results, over a dict."""
     import fnmatch
     import posixpath
@@ -236,8 +236,8 @@ def tree(files, truncated=False, skipped=()):
                  and (pattern is None or fnmatch.fnmatch(posixpath.basename(n), pattern) or fnmatch.fnmatch(n, pattern))]
         matches = [{'path': n, 'line': i, 'text': line} for n in names
                    for i, line in enumerate(files[n].splitlines(), 1) if args['pattern'] in line]
-        return ToolOutput(True, json.dumps({'matches': matches, 'files_searched': len(names),
-                                            'files_skipped': 0, 'truncated': truncated}))
+        found = {'matches': matches, 'files_searched': len(names), 'files_skipped': 0, 'truncated': truncated}
+        return ToolOutput(True, json.dumps({**found, 'links_skipped': links} if links else found))
 
     def list_directory(args):
         offset, limit = args.get('offset', 0), args.get('limit', 50)
@@ -280,11 +280,14 @@ async def test_searching_a_directory_whose_files_are_all_read_is_stale_hit_or_mi
     assert isinstance(model.requests[-1][1], ToolsShownOnly)
 
 
-@pytest.mark.parametrize('case', ['unread file', 'truncated', 'hidden read', 'not json'])
+@pytest.mark.parametrize('case', ['unread file', 'truncated', 'hidden read', 'not json', 'skipped link'])
 async def test_a_directory_search_that_could_show_something_new_is_not_stale(case):
     files, kwargs, first = {**ONE, 'other.md': 'more\n'}, {}, read('r1', 'spec.md')
     if case == 'truncated':
         files, kwargs = dict(ONE), {'truncated': True}
+    if case == 'skipped link':
+        # The count matches the files read, but a link the search skipped may hide another file.
+        files, kwargs = dict(ONE), {'links': 1}
     if case == 'hidden read':
         # The search skips hidden folders, so its count says nothing about the file read there.
         files, kwargs, first = {'.cfg/a.md': 'a\n', 'b.md': 'b\n'}, {'skipped': ('.cfg/a.md',)}, read('r1', '.cfg/a.md')

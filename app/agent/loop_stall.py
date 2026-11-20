@@ -152,6 +152,7 @@ class StallWatch:
         pattern = call.arguments.get('glob') if isinstance(call.arguments, dict) else None
         if (found is None or found.get('truncated') is not False or not isinstance(found.get('matches'), list)
                 or type(found.get('files_searched')) is not int
+                or found.get('links_skipped', 0) != 0     # a skipped link may hide a file the model has not seen
                 or (pattern is not None and not isinstance(pattern, str))):
             return False
         for match in found['matches']:

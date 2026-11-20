@@ -84,3 +84,42 @@ async def test_the_mcp_server_offers_it_and_the_result_reaches_the_model_once(tm
     assert json.loads(text)['matches'][0]['line'] == 3
     # Over a transport FastMCP may add the same dict as structured content; the adapter drops it.
     assert _same_as_text(json.loads(text), text)
+
+
+def test_skipped_links_are_counted_only_when_there_are_some(tmp_path):
+    # D-092 (docs/loop_stall_plan.md 13.2): read_file follows a link, the search skips it, so the
+    # host must know a directory search did not see everything.
+    files = tree(tmp_path)
+    assert 'links_skipped' not in files.search_files('AgentRuntime')
+    outside = tmp_path.parent / f'{tmp_path.name}-outside'
+    (outside / 'sub').mkdir(parents=True)
+    (outside / 'f.py').write_bytes(b'AgentRuntime\n')
+    try:
+        (tmp_path / 'docs' / 'link.py').symlink_to(outside / 'f.py')
+        (tmp_path / 'docs' / 'linked').symlink_to(outside / 'sub', target_is_directory=True)
+        (tmp_path / '.env.local').symlink_to(outside / 'f.py')            # secret: skipped silently
+        (tmp_path / '.hidden' / 'link.py').symlink_to(outside / 'f.py')   # under a hidden folder
+    except OSError:
+        pytest.skip('symbolic links are not available here')
+    result = files.search_files('AgentRuntime')
+    assert result['links_skipped'] == 2
+    assert [m['path'] for m in result['matches']] == ['app/agent/runtime.py', 'docs/notes.md']
+    assert files.search_files('AgentRuntime', path='app')['matches'] and \
+        'links_skipped' not in files.search_files('AgentRuntime', path='app')
+
+
+def test_a_junction_is_skipped_and_counted_so_nothing_outside_the_root_is_searched(tmp_path):
+    # On Windows a junction needs no privilege; the walk used to enter it and show lines from files
+    # outside the root that read_file refuses.
+    winapi = pytest.importorskip('_winapi')
+    if not hasattr(winapi, 'CreateJunction'):
+        pytest.skip('junctions are not available here')
+    root, outside = tmp_path / 'root', tmp_path / 'outside'
+    (root / 'docs').mkdir(parents=True)
+    outside.mkdir()
+    (root / 'docs' / 'a.md').write_bytes(b'AgentRuntime\n')
+    (outside / 'b.md').write_bytes(b'AgentRuntime outside\n')
+    winapi.CreateJunction(str(outside), str(root / 'linked'))
+    result = FileAccess(root).search_files('AgentRuntime')
+    assert [m['path'] for m in result['matches']] == ['docs/a.md']
+    assert result['files_searched'] == 1 and result['links_skipped'] == 1
