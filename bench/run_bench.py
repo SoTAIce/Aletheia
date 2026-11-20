@@ -156,6 +156,10 @@ def usage_fields(record):
             # Usage per model profile when roles ran on different models (stage 4d-2).
             fields['by_profile'] = {name: dict(counts) for name, counts in by_profile.items()
                                     if isinstance(name, str) and isinstance(counts, dict)}
+        stall = usage.get('stall')
+        if isinstance(stall, dict) and stall:
+            # The loop going round in circles (D-092): reminder, wrap_up, unchanged_read counts.
+            fields['stall'] = {k: v for k, v in stall.items() if isinstance(k, str) and type(v) is int}
         for name in ('by_purpose', 'auxiliary'):
             # Where the run's tokens went (docs/cost_measurement_plan.md).
             table = usage.get(name)

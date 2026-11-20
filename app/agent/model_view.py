@@ -10,6 +10,7 @@ to the model; the caller's records and tool receipts are never modified.
 import json
 from dataclasses import replace
 
+from app.agent.loop_stall import pinned_outputs
 from app.agent.step_models import AssistantMessage, ToolMessage
 
 VIEW_COMPACT_SHARE = 0.6
@@ -70,6 +71,8 @@ def compact_model_view(messages, tools, manager, *, share=VIEW_COMPACT_SHARE, al
     tool_indexes = [i for i, m in enumerate(messages) if isinstance(m, ToolMessage)]
     keep = STRONG_KEEP_RECENT_OUTPUTS if all_but_last_write else KEEP_RECENT_OUTPUTS
     recent = set(tool_indexes[-keep:])
+    # An unchanged-read note points to an earlier output for the file's text (D-092): keep it whole.
+    pinned = pinned_outputs(messages)
     view = []
     for index, message in enumerate(messages):
         if isinstance(message, AssistantMessage) and message.tool_calls:
@@ -92,7 +95,7 @@ def compact_model_view(messages, tools, manager, *, share=VIEW_COMPACT_SHARE, al
                         call = replace(call, arguments={**call.arguments, **large})
                 calls.append(call)
             message = replace(message, tool_calls=tuple(calls))
-        elif isinstance(message, ToolMessage) and index not in recent:
+        elif isinstance(message, ToolMessage) and index not in recent and message.call_id not in pinned:
             message = shorten_output(message)
         view.append(message)
     return tuple(view)

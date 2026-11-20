@@ -10,7 +10,7 @@ Only host-authored fields are kept. The loop's todo items (model text) are reduc
 
 from __future__ import annotations
 
-KINDS = ('task', 'route', 'plan', 'step', 'member', 'model', 'tool', 'todo')
+KINDS = ('task', 'route', 'plan', 'step', 'member', 'model', 'tool', 'todo', 'stall')
 _MODEL_ATTRS = ('message_count', 'tool_count', 'callable_tools', 'provider_calls', 'prompt_tokens',
                 'completion_tokens', 'cached_tokens', 'tool_calls', 'response_model', 'host_estimate',
                 'provider_ratio', 'provider_state', 'profile', 'denied_by', 'error')
@@ -133,6 +133,11 @@ def build_trace(records: list[dict]) -> dict:
         elif kind == 'todo':
             span = add(_span(f'todo-{next(numbers)}', parent, 'todo', 'todo', t, **_todo_attrs(event)))
             span['seconds'], span['status'] = 0.0, 'ok'
+        elif kind == 'loop_stall' and event.get('kind') in _STALL_TEXT:
+            # The loop going round in circles (D-092): a kind and a round number only.
+            span = add(_span(f'stall-{next(numbers)}', parent, 'stall', event['kind'], t,
+                             round=_number(event.get('round'))))
+            span['seconds'], span['status'] = 0.0, 'ok'
         elif kind == 'step':
             # The progress record of a step attempt, emitted right after its scope ended.
             match = next((s for s in reversed(order) if s['kind'] == 'step'
@@ -187,7 +192,9 @@ def build_trace(records: list[dict]) -> dict:
 
 
 _KIND_TEXT = {'task': '任务', 'route': '路由', 'plan': '规划', 'step': '步骤', 'member': '成员',
-              'model': '模型', 'tool': '工具', 'todo': '清单'}
+              'model': '模型', 'tool': '工具', 'todo': '清单', 'stall': '打转'}
+_STALL_TEXT = {'reminder': '原地打转，提醒一次', 'wrap_up': '原地打转，提前收尾',
+               'unchanged_read': '重读未变的文件，只回指向前一次结果的说明'}
 _PROVIDER_TEXT = {'dropped': '内容可能被丢弃', 'plain': '与发出的相当', 'padded': '服务商加了少量内容',
                   'heavy': '服务商加了大量内容', 'unknown': '未知'}
 _STATUS_TEXT = {'failed': '失败', 'error': '出错', 'denied': '被拒绝', 'unfinished': '未结束', 'blocked': '等待回答'}
@@ -214,6 +221,9 @@ def _line(span: dict) -> str:
         head = '路由'
     elif kind == 'todo':
         return f"清单 {attrs.get('items', 0)} 项（完成 {attrs.get('done', 0)}）"
+    elif kind == 'stall':
+        where = f"（第 {attrs['round']} 轮）" if attrs.get('round') is not None else ''
+        return _STALL_TEXT.get(span['label'], span['label']) + where
     else:
         head = f"{_KIND_TEXT.get(kind, kind)} {span['label']}"
     parts = [head]

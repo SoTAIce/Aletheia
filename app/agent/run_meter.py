@@ -78,6 +78,9 @@ class RunMeter:
     # Calls outside the agent model during this request (query rewrite, embeddings): purpose ->
     # counts. They are reported only; they never count toward the token budget.
     auxiliary: dict = field(default_factory=dict)
+    # What the loops did about going round in circles (D-092): kind (reminder, wrap_up,
+    # unchanged_read) -> count, for every loop of the run, members included.
+    stall: dict = field(default_factory=dict)
     started: float = field(default_factory=time.monotonic)
 
     def __post_init__(self):
@@ -159,6 +162,9 @@ class RunMeter:
         """One call outside the agent model made for this request; reported, never budgeted."""
         _book_auxiliary(self.auxiliary, purpose, prompt, completion)
 
+    def count_stall(self, kind: str) -> None:
+        self.stall[kind] = self.stall.get(kind, 0) + 1
+
     def tag_calls_since(self, index: int, requested: list[str]) -> None:
         """Mark the calls logged from index on with the tool names the model asked for in
         reply (host-checked names only, loop-trial-001), to see where calls go."""
@@ -204,6 +210,8 @@ class RunMeter:
             usage['by_purpose'] = _rounded(self.purpose_usage)
         if self.auxiliary:
             usage['auxiliary'] = _rounded(self.auxiliary)
+        if self.stall:
+            usage['stall'] = dict(self.stall)
         return usage
 
     def estimated_cost(self) -> float | None:

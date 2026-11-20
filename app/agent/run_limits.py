@@ -67,6 +67,7 @@ class RunLimits:
         rows = [
             ('任务', '单一循环任务时限（AGENT_TASK_TIMEOUT_SECONDS）', seconds(loop.timeout_seconds)),
             ('任务', '单一循环工具轮数 / 调用次数', f'{loop.max_tool_rounds} / {loop.max_tool_calls}'),
+            ('任务', '原地打转：连续几轮后提醒，再几轮后收尾', stall_text(loop)),
             ('任务', '一个任务最多执行次数（含阻塞后续跑）', str(self.max_executions)),
             ('任务', '令牌预算（--max-tokens）', '不限' if self.max_total_tokens is None else str(self.max_total_tokens)),
             ('任务', '时间预算（--max-seconds）', seconds(self.max_seconds)),
@@ -93,6 +94,15 @@ class RunLimits:
         lines = ['等待人工确认的时间不计入任何时限。']
         lines += [f'{layer}\t{name}\t{value}' for layer, name, value in self.rows()]
         return '\n'.join(lines)
+
+
+def stall_text(loop) -> str:
+    """The loop's going-round-in-circles rule (D-092); members of a team and --delegate use the same."""
+    rounds = getattr(loop, 'stall_rounds', 0)
+    if not rounds:
+        return '关闭'
+    after = f'再 {rounds} 轮后提前收尾' if getattr(loop, 'stall_wrap_up', False) else '不提前收尾'
+    return f'{rounds} 轮后提醒一次，{after}'
 
 
 def retry_policy() -> str:

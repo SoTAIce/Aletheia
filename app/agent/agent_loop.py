@@ -21,6 +21,7 @@ from app.agent.step_models import (
     ModelTurn, StepExecutionContext, StepOutcome, StepRunOutput, SystemMessage, ToolCall, ToolDefinition,
     ToolMessage, ToolResult, ToolsShownOnly, UserMessage, TOOL_LIST_SOURCE,
 )
+from app.agent.loop_stall import STALL_REMINDER, STALL_WRAP_UP, UNCHANGED_FIELD, StallWatch, unchanged_note
 from app.agent.side_effects import is_side_effect
 from app.agent.step_runner import (StepBudgetError, StepFormatError, StepModelError, StepRunError,
                                    StepRunnerContractError,
@@ -67,10 +68,18 @@ class LoopOptions:
     # Remind the model once to run the tests when it answers after changing files without a passing
     # run (D-087). The assembler turns it on for the single loop with the sandbox.
     remind_to_run: bool = False
+    # Going round in circles (D-092): after this many stale rounds in a row (only re-reading or
+    # searching what the model already has) remind it once; after as many more, wrap up when
+    # stall_wrap_up. 0 turns all of it off, the unchanged-read note included.
+    stall_rounds: int = 3
+    stall_wrap_up: bool = True
 
     def __post_init__(self):
-        if type(self.remind_to_run) is not bool:
-            raise ValueError('remind_to_run must be a bool')
+        for name in ('remind_to_run', 'stall_wrap_up'):
+            if type(getattr(self, name)) is not bool:
+                raise ValueError(f'{name} must be a bool')
+        if type(self.stall_rounds) is not int or self.stall_rounds < 0:
+            raise ValueError('stall_rounds must be a non-negative integer')
         for name in ('max_tool_rounds', 'max_tool_calls'):
             value = getattr(self, name)
             if type(value) is not int or value < 1:
@@ -261,6 +270,23 @@ class AgentLoopRunner:
             raise StepModelError('Model generation failed: ' + failure_types(failure_details(exc)),
                                  tuple(refs)) from exc
 
+    def _effect(self, name) -> str:
+        from app.agent.tool_effects import effect_of
+        try:
+            return effect_of(self._registry.get(name).definition)
+        except Exception:      # unknown name: treated as having side effects, like D-087
+            return 'external'
+
+    @staticmethod
+    def _stall_event(kind, round_number):
+        """Count and trace one stall action (D-092): numbers and a kind only."""
+        from app.agent.hooks import current_hooks, current_span
+        meter = current_meter()
+        if meter is not None:
+            meter.count_stall(kind)
+        current_hooks().emit({'type': 'loop_stall', 'kind': kind, 'round': round_number,
+                              'parent_id': current_span()})
+
     def _emit_todo(self):
         from app.agent.hooks import current_hooks, current_span
         current_hooks().emit({'type': 'todo', 'items': [dict(item) for item in self.todo],
@@ -301,9 +327,10 @@ class AgentLoopRunner:
         reminded = False
         self.unverified = False
         host_calls = 0
+        watch = StallWatch(options.stall_rounds, options.stall_wrap_up, self._effect)
         while True:
             used = prior_calls + len(calls) + host_calls
-            spent = rounds >= options.max_tool_rounds or used >= options.max_tool_calls
+            spent = rounds >= options.max_tool_rounds or used >= options.max_tool_calls or watch.stalled
             if gated:
                 # Host rules decide per request which host tools the model sees (loop-delegate-001).
                 shown = [t for t in self._host_tools.values() if t.offer is None or t.offer(rounds, options)]
@@ -406,6 +433,7 @@ class AgentLoopRunner:
                 continue
 
             rounds += 1
+            watch.start_round()
             for call in turn.tool_calls:
                 if call.tool_name == TODO:
                     items, problem = _todo_items(call.arguments)
@@ -423,6 +451,7 @@ class AgentLoopRunner:
                     continue
                 if call.tool_name in self._host_tools:
                     host_calls += 1
+                    watch.other()
                     reply = await self._host_tools[call.tool_name].invoke(call.arguments)
                     if not isinstance(reply, HostToolResult):
                         raise StepRunnerContractError('host tool must return HostToolResult')
@@ -459,7 +488,22 @@ class AgentLoopRunner:
                         'source_refs': result.source_refs}
                 if self._manager is not None:
                     view = await self._manager.project_tool_result(result)
+                whole = (isinstance(view, dict) and not view.get('storage_ref')
+                         and view.get('content') == result.content)
+                earlier = watch.unchanged(call, result) if whole else None
+                if earlier is not None:
+                    # The same text is already in an earlier result, which the model view keeps whole.
+                    view = {**view, 'content': unchanged_note(earlier), UNCHANGED_FIELD: earlier}
+                    self._stall_event('unchanged_read', rounds)
+                watch.note(call, result, whole, earlier is not None)
                 messages.append(ToolMessage(result.call_id, json.dumps(view, ensure_ascii=False)))
+            stall = watch.end_round()
+            if stall == 'reminder':
+                messages.append(SystemMessage(STALL_REMINDER.format(rounds=options.stall_rounds)))
+            elif stall == 'wrap_up':
+                messages.append(SystemMessage(STALL_WRAP_UP))
+            if stall is not None:
+                self._stall_event(stall, rounds)
 
     async def _before_finish(self, context):
         from app.agent.hooks import ALLOW, BEFORE_FINISH, HookSet, current_hooks, current_span
