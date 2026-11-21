@@ -1766,6 +1766,14 @@
       "evidence": "init.ps1 2167 passed, 26 skipped; goldens unchanged; tests/test_loop_stall.py 22 tests. Live direct qwen3.8-flash, 10 tasks x 3 runs with and without the rule: 680,275 vs 2,492,216 tokens, 0 vs 12 runs at the round cap, 8/30 vs 7/30 passed. Commit 13bea45 pushed. 2026-11-20 b1662d7: search_files counts skipped links and junctions (links_skipped), junctions no longer searched outside the root; wrap-up timing unchanged after replay (plan section 13)."
     },
     {
+      "id": "output-contract-001",
+      "name": "Structured output contract: the host checks the final answer against a JSON Schema",
+      "description": "docs/output_contract_plan.md, D-093. A caller-given JSON Schema (Draft 2020-12, at most 8,000 chars, no remote refs) is added to a new task as a constraint; the single loop checks the final answer, repairs once without tools, then fails with kind 'contract'. Parsed document in AgentRunResult.output. Single loop only: auto picks single, team is refused. Entry points: query_result(output_schema=), CLI --output-schema, API options.output_schema.",
+      "status": "done",
+      "dependencies": [],
+      "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in two places by Claude. init.ps1 2192 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
+    },
+    {
       "id": "followups-2026-11-20-001",
       "name": "Three-phase follow-up plan",
       "description": "User 2026-11-20: fix what this session left first, then phases 1 to 3 in order. Phase 1: loop-stall wrap-up timing and symlinks, auto + sandbox cost half, thinking-on comparison. Phase 2: handoff records D-084 to D-090, stage4d 4d-4 live comparison, longterm-integration-001 status check, loop-delegate-001 decision. Phase 3: features from docs/agent_feature_ideas.md (structured output contract first). Full table in progress.md.",
