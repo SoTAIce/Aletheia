@@ -81,6 +81,8 @@ class RunMeter:
     # What the loops did about going round in circles (D-092): kind (reminder, wrap_up,
     # unchanged_read) -> count, for every loop of the run, members included.
     stall: dict = field(default_factory=dict)
+    # Output schema contract repairs (D-093): None when no contract was active, else >= 0.
+    contract_repairs: int | None = None
     started: float = field(default_factory=time.monotonic)
 
     def __post_init__(self):
@@ -165,6 +167,12 @@ class RunMeter:
     def count_stall(self, kind: str) -> None:
         self.stall[kind] = self.stall.get(kind, 0) + 1
 
+    def record_contract(self, *, repaired: bool = False) -> None:
+        if self.contract_repairs is None:
+            self.contract_repairs = 0
+        if repaired:
+            self.contract_repairs += 1
+
     def tag_calls_since(self, index: int, requested: list[str]) -> None:
         """Mark the calls logged from index on with the tool names the model asked for in
         reply (host-checked names only, loop-trial-001), to see where calls go."""
@@ -212,6 +220,8 @@ class RunMeter:
             usage['auxiliary'] = _rounded(self.auxiliary)
         if self.stall:
             usage['stall'] = dict(self.stall)
+        if self.contract_repairs is not None:
+            usage['contract'] = {'repairs': self.contract_repairs}
         return usage
 
     def estimated_cost(self) -> float | None:

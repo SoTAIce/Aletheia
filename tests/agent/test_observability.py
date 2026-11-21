@@ -213,3 +213,34 @@ def test_configure_logging_routes_both_libraries_through_one_level(capsys, resto
     assert configure_logging('warning') == 'WARNING'
     logging.getLogger('app.x').info('quiet now')
     assert 'quiet now' not in capsys.readouterr().err
+
+
+def test_cli_output_schema_and_result_record_output_field(tmp_path):
+    from app.agent.__main__ import load_output_schema, parse_args, result_record, write_result
+    schema_path = tmp_path / 'schema.json'
+    schema = {'type': 'object', 'properties': {'name': {'type': 'string'}}, 'required': ['name']}
+    schema_path.write_text(json.dumps(schema), encoding='utf-8')
+    assert load_output_schema(str(schema_path)) == schema
+    args = parse_args(['extract', '--output-schema', str(schema_path)])
+    assert args.output_schema == str(schema_path)
+    for bad_argv in (['--output-schema', str(schema_path)], ['-i', 'goal', '--output-schema', str(schema_path)]):
+        with pytest.raises(SystemExit):
+            parse_args(bad_argv)
+    bad_schema = tmp_path / 'bad.json'
+    bad_schema.write_text('{"$ref": "https://example.com/x.json"}', encoding='utf-8')
+    with pytest.raises(ValueError):
+        load_output_schema(str(bad_schema))
+
+    plain = SimpleNamespace(status=TaskStatus.COMPLETED, failure_kind=None, user_message=None,
+                            content='hi', execution_count=1, replan_count=0,
+                            usage={'model_calls': 1}, step_log=(), output=None)
+    assert list(result_record(plain)) == ['status', 'failure_kind', 'user_message', 'content',
+                                          'execution_count', 'replan_count', 'usage', 'steps']
+    with_out = SimpleNamespace(status=TaskStatus.COMPLETED, failure_kind=None, user_message=None,
+                               content='{"name": "A"}', execution_count=1, replan_count=0,
+                               usage={'model_calls': 1, 'contract': {'repairs': 0}}, step_log=(),
+                               output={'name': 'A'})
+    out_path = tmp_path / 'result.json'
+    write_result(out_path, with_out)
+    written = json.loads(out_path.read_text(encoding='utf-8'))
+    assert written['output'] == {'name': 'A'}

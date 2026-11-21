@@ -23,7 +23,7 @@ from app.agent.step_models import (
 )
 from app.agent.loop_stall import STALL_REMINDER, STALL_WRAP_UP, UNCHANGED_FIELD, StallWatch, unchanged_note
 from app.agent.side_effects import is_side_effect
-from app.agent.step_runner import (StepBudgetError, StepFormatError, StepModelError, StepRunError,
+from app.agent.step_runner import (StepBudgetError, StepContractError, StepFormatError, StepModelError, StepRunError,
                                    StepRunnerContractError,
                                    StepTimeoutError, StepToolError, ToolRoundLimitError)
 from app.agent.team.diagnostics import failure_details, failure_types
@@ -228,7 +228,7 @@ class AgentLoopRunner:
     def __init__(self, model, tool_registry: ToolRegistry, options: LoopOptions | None = None,
                  context_manager=None, resume_store: LoopResumeStore | None = None, *,
                  host_tools=(), allow_ask_user=True, instructions=None, finish_state=None,
-                 finish_hooks=True, finish_gates=()):
+                 finish_hooks=True, finish_gates=(), output_contract=None):
         if not callable(getattr(model, 'generate', None)):
             raise TypeError('model must provide generate()')
         if not isinstance(tool_registry, ToolRegistry):
@@ -246,6 +246,7 @@ class AgentLoopRunner:
         # Gates the caller owns, checked at finish even when no run hooks are installed (the team's
         # completion gate must not depend on installation; hooks-hardening H-1).
         self._finish_gates = tuple(finish_gates)
+        self._output_contract = output_contract
         self.format_repair_count = 0
         self.todo: list[dict] = []
         self.resumed = False
@@ -287,6 +288,16 @@ class AgentLoopRunner:
         current_hooks().emit({'type': 'loop_stall', 'kind': kind, 'round': round_number,
                               'parent_id': current_span()})
 
+    @staticmethod
+    def _contract_event(result: str, errors: int) -> None:
+        """Count and trace one output contract check (D-093): result and error count only."""
+        from app.agent.hooks import current_hooks, current_span
+        meter = current_meter()
+        if meter is not None:
+            meter.record_contract(repaired=(result == 'repair'))
+        current_hooks().emit({'type': 'output_contract', 'result': result, 'errors': errors,
+                              'parent_id': current_span()})
+
     def _emit_todo(self):
         from app.agent.hooks import current_hooks, current_span
         current_hooks().emit({'type': 'todo', 'items': [dict(item) for item in self.todo],
@@ -325,6 +336,7 @@ class AgentLoopRunner:
         wrap_up_sent = False
         finish_rejected = False
         reminded = False
+        contract_repaired = False
         self.unverified = False
         host_calls = 0
         watch = StallWatch(options.stall_rounds, options.stall_wrap_up, self._effect)
@@ -336,12 +348,18 @@ class AgentLoopRunner:
                 shown = [t for t in self._host_tools.values() if t.offer is None or t.offer(rounds, options)]
                 tools = offered + controls + tuple(t.definition for t in shown)
                 names = {d.name for d in offered} | {t.definition.name for t in shown}
-            request_tools = ToolsShownOnly(tools) if spent else tools
+            request_tools = ToolsShownOnly(tools) if (spent or contract_repaired) else tools
             meter = current_meter()
             logged = len(meter.call_log) if meter is not None else 0
             try:
                 turn = await self._generate(messages, request_tools, refs)
             except StepModelError as exc:
+                if contract_repaired and isinstance(exc.__cause__, ModelToolArgumentsError):
+                    # A tool call in the repair turn, even a malformed one, ends the one repair (D-093);
+                    # any other model failure keeps its own kind.
+                    self._contract_event('fail', 1)
+                    raise StepContractError('Model attempted a tool call during output contract repair',
+                                            tuple(refs)) from exc
                 if not isinstance(exc.__cause__, ModelToolArgumentsError) or arg_repairs >= _REPAIRS:
                     raise
                 arg_repairs += 1
@@ -360,6 +378,9 @@ class AgentLoopRunner:
             if not turn.tool_calls:
                 text = (turn.content or '').strip()
                 if not text:
+                    if contract_repaired:
+                        self._contract_event('fail', 1)
+                        raise StepContractError('Model returned no answer during output contract repair', tuple(refs))
                     if empty_replies >= _REPAIRS:
                         raise StepFormatError('The model returned no answer', tuple(refs))
                     empty_replies += 1
@@ -376,14 +397,31 @@ class AgentLoopRunner:
                     messages.append(SystemMessage('HOST: ' + decision.reason))
                     continue
                 if options.remind_to_run and _changed_without_passing_run(results):
-                    if not reminded and not spent:
+                    if not reminded and not spent and not contract_repaired:
                         # Once: the second answer finishes, marked unverified (D-087).
                         reminded = True
                         messages.append(turn.to_assistant_message())
                         messages.append(SystemMessage(REMIND_TO_RUN))
                         continue
                     self.unverified = True
-                return self._output(text, StepOutcome.SUCCEEDED, None, calls, results, refs)
+                parsed_output = None
+                if self._output_contract is not None:
+                    checked = self._output_contract.check(text)
+                    if checked.ok:
+                        self._contract_event('pass', 0)
+                        text = checked.text
+                        parsed_output = checked.value
+                    elif not contract_repaired:
+                        contract_repaired = True
+                        self.format_repair_count += 1
+                        self._contract_event('repair', len(checked.errors))
+                        messages.append(turn.to_assistant_message())
+                        messages.append(SystemMessage(self._output_contract.repair_instruction(checked.errors)))
+                        continue
+                    else:
+                        self._contract_event('fail', len(checked.errors))
+                        raise StepContractError('Final answer did not conform to the output schema', tuple(refs))
+                return self._output(text, StepOutcome.SUCCEEDED, None, calls, results, refs, output=parsed_output)
 
             batch = set()
             for call in turn.tool_calls:
@@ -394,6 +432,12 @@ class AgentLoopRunner:
                 batch.add(call.call_id)
             seen |= batch
             messages.append(turn.to_assistant_message())
+
+            if contract_repaired:
+                # One repair chance only: never execute tools during contract repair (D-093).
+                self._refuse(messages, turn.tool_calls, 'not executed: output contract repair does not allow tools')
+                self._contract_event('fail', 1)
+                raise StepContractError('Model called tools during output contract repair', tuple(refs))
 
             if spent:
                 if wrap_up_sent:
@@ -529,9 +573,10 @@ class AgentLoopRunner:
             messages.append(ToolMessage(call.call_id, json.dumps(
                 {'success': False, 'content': '', 'error': error, 'source_refs': []}, ensure_ascii=False)))
 
-    def _output(self, content, outcome, reason, calls, results, refs):
+    def _output(self, content, outcome, reason, calls, results, refs, *, output=None):
         return StepRunOutput(content=content, observation=None, source_refs=tuple(refs),
-                             tool_calls=tuple(calls), tool_results=tuple(results), outcome=outcome, reason=reason)
+                             tool_calls=tuple(calls), tool_results=tuple(results), outcome=outcome,
+                             reason=reason, output=output)
 
 # The one step a loop or team task runs; LoopRun reports it in the 'plan' and 'step' events (stage 4c).
 LOOP_STEP = 'Deliver the active goal in one agent loop.'

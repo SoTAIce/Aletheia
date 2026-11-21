@@ -154,6 +154,7 @@ class StepRunOutput:
     tool_results: tuple[ToolResult, ...] = ()
     outcome: StepOutcome = StepOutcome.SUCCEEDED
     reason: str | None = None
+    output: Any = None
 
 @dataclass(frozen = True, slots = True)
 class StepExecutionReceipt:

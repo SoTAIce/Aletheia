@@ -49,6 +49,7 @@ class RunOptionsIn(BaseModel):
     memory: StrictBool | None = None
     workspace: str | None = None                 # workspace-001: the working directory for this task
     workspace_confirmed: StrictBool | None = None  # the user confirmed a directory on the system drive
+    output_schema: dict | None = None            # D-093: JSON Schema for the final answer
 
 
 class MessageIn(BaseModel):
@@ -292,6 +293,16 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
             raise ApiError(400, 'write_unavailable', '服务启动时没有指定写入目录，不能写文件。')
         if requested.get('memory') and not offered['memory_available']:
             raise ApiError(400, 'memory_unavailable', '长期记忆没有开启，不能使用。')
+        if requested.get('output_schema') is not None:
+            from app.agent.output_contract import OutputContract
+            try:
+                OutputContract(requested['output_schema'])
+            except ValueError:
+                raise ApiError(400, 'invalid_input', '输出格式要求（output_schema）不合法。') from None
+            effective_mode = requested.get('mode') if requested.get('mode') is not None else (
+                persona.get('mode') if 'mode' in left else offered['default_mode'])
+            if effective_mode == 'team':
+                raise ApiError(400, 'invalid_input', '团队模式暂不支持输出格式要求（output_schema）。')
         resolved_place = {}
         if requested.get('workspace') is not None:
             if not offered.get('workspace_available'):
@@ -348,6 +359,8 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
         if body.question_id is not None and body.resume_task_id is None:
             raise ApiError(400, 'invalid_input', '回答问题时需要同时给出任务编号。')
         requested = body.options.model_dump(exclude_none=True) if body.options is not None else {}
+        if body.resume_task_id is not None and requested.get('output_schema') is not None:
+            raise ApiError(400, 'invalid_input', '回答问题时不能再指定输出格式要求（output_schema）。')
         attachments = tuple(body.attachments or ())
         if len(attachments) > 5 or not all(isinstance(r, str) and 0 < len(r) <= 200 for r in attachments):
             raise ApiError(400, 'invalid_input', '一条消息最多附带 5 个文件。')

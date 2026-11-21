@@ -42,7 +42,7 @@ class RunStateSnapshot:
 class RunState:
     """Mutable loop aggregate with externally read-only state."""
 
-    def __init__(self, user_id: str, active_goal: str) -> None:
+    def __init__(self, user_id: str, active_goal: str, *, output_schema: dict | None = None) -> None:
         if not isinstance(user_id, str) or not user_id.strip():
             raise ValueError("user_id must not be empty")
         if not isinstance(active_goal, str) or not active_goal.strip():
@@ -61,6 +61,7 @@ class RunState:
         self._pinned_contexts: tuple[PinnedContext, ...] = ()
         self._constraints: tuple[Constraint, ...] = ()
         self._active_step_id: str | None = None
+        self._output_schema: dict | None = output_schema
 
     def _check_planning_change(self) -> None:
         if self._active_step_id is not None:
@@ -281,6 +282,10 @@ class RunState:
     @property
     def active_step_id(self) -> str | None:
         return self._active_step_id
+
+    @property
+    def output_schema(self) -> dict | None:
+        return self._output_schema
 
 
 class RunMemory:

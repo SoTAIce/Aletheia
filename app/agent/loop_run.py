@@ -18,8 +18,8 @@ from loguru import logger
 from app.agent.runtime import AgentRunResult, FAILURE_MESSAGES, _context_overflow, _policy_denial, _int_or_none
 from app.agent.run_meter import RunMeter, cache_text as _cache_text, call_text as _call_text, current_meter, metering
 from app.agent.side_effects import SideEffectWatch
-from app.agent.step_runner import (RunnerDependencies, StepBlockedError, StepBudgetError, StepRunError,
-    StepBusinessError, StepFormatError, StepModelError, StepToolError, StepRunner, ToolRoundLimitError)
+from app.agent.step_runner import (RunnerDependencies, StepBlockedError, StepBudgetError, StepContractError,
+    StepRunError, StepBusinessError, StepFormatError, StepModelError, StepToolError, StepRunner, ToolRoundLimitError)
 from app.agent.step_models import (StepExecutionContext, StepExecutionReceipt, StepRunOutput,
     StepOutcome, ToolCall, ToolResult)
 from app.models.run_state import RunMemory, StaleExecutionError
@@ -113,6 +113,7 @@ class LoopRun:
         self._step_log = []
         self._meter = None
         self._final = None
+        self._output = None
         self._lock = asyncio.Lock()
         self._on_event = None
 
@@ -287,6 +288,7 @@ class LoopRun:
         task = self.memory.task_state
         self._execution_count += 1
         self._watch.reset()
+        self._output = None
         started = time.monotonic()
         try:
             try:
@@ -315,7 +317,8 @@ class LoopRun:
             if denied is not None:
                 return self._fail(f'Model call denied by {denied.hook}: {denied.reason}',
                                   'hooks' if denied.hook == 'hooks_not_installed' else 'policy')
-            kind = ('format' if isinstance(exc, StepFormatError)
+            kind = ('contract' if isinstance(exc, StepContractError)
+                    else 'format' if isinstance(exc, StepFormatError)
                     else 'context' if _context_overflow(exc) else 'model')
             return self._fail(f"{type(exc).__name__}: {exc.message}", kind)
         except StepToolError as exc:
@@ -411,6 +414,7 @@ class LoopRun:
         if not current():
             raise StaleExecutionError('Execution is no longer current')
         self._check_resource_context()
+        self._output = output.output
         return StepExecutionReceipt(
             task_id=task.task_id, step_id=step.step_id, goal_revision=task.goal_revision,
             plan_revision=self._plan_revision, state_version=task.state_version, result_id=str(uuid4()),
@@ -526,7 +530,8 @@ class LoopRun:
                 and self._step_log[-1].get('unverified')):
             usage['unverified_changes'] = True   # host flag the CLI and the web page explain (D-087)
         result = AgentRunResult(task.task_id, task.status, content, tuple(self._steps),
-                                self._execution_count, self._replan_count, kind, usage, tuple(self._step_log))
+                                self._execution_count, self._replan_count, kind, usage, tuple(self._step_log),
+                                output=self._output if task.status is TaskStatus.COMPLETED else None)
         if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
             self._final = result
         return result

@@ -109,8 +109,13 @@ class Run:
 
 def terminal_event(result) -> tuple[str, dict]:
     if result.status is TaskStatus.COMPLETED:
-        return 'completed', {'type': 'completed', 'task_id': result.task_id, 'content': result.content,
-                             'usage': result.usage}
+        event = {'type': 'completed', 'task_id': result.task_id, 'content': result.content,
+                 'usage': result.usage}
+        output = getattr(result, 'output', None)
+        has_contract = isinstance(result.usage, dict) and 'contract' in result.usage
+        if output is not None or has_contract:
+            event['output'] = output
+        return 'completed', event
     if result.status is TaskStatus.BLOCKED:
         return 'blocked', {'type': 'blocked', 'task_id': result.task_id, 'question': result.content}
     return 'failed', {'type': 'failed', 'task_id': result.task_id, 'code': 'task_failed',
@@ -195,6 +200,8 @@ class RunManager:
             choices['attachments'] = run.attachments
         if run.resume_task_id is None and run.requested.get('command'):
             choices['command'] = run.requested['command']      # docs/personal_commands_plan.md
+        if run.resume_task_id is None and run.requested.get('output_schema') is not None:
+            choices['output_schema'] = run.requested['output_schema']  # D-093
         if self._approval_tools:
             # Side-effect tools wait for the person on the page (D-061).
             from app.agent.hooks import HookSet

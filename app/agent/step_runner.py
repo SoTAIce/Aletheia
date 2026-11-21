@@ -52,6 +52,10 @@ class StepFormatError(StepRunError):
     """Output formatting/validation failed; replanning cannot repair serialization."""
 
 
+class StepContractError(StepFormatError):
+    """Final answer failed the output schema contract after repair."""
+
+
 class StepToolError(StepRunError):
     """A tool raised before producing a usable result."""
 

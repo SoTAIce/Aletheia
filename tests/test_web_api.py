@@ -345,3 +345,33 @@ def test_svg_from_the_model_is_shown_only_as_an_image():
     for parser in ('DOMParser', 'importNode', 'adoptNode', 'insertAdjacent', 'createContextualFragment'):
         assert parser not in script, parser
     assert "img-src 'self' data:" in SECURITY_HEADERS['Content-Security-Policy']
+
+
+async def test_web_api_output_schema_option_validation_and_delivery(tmp_path):
+    schema = {'type': 'object', 'properties': {'ok': {'type': 'boolean'}}, 'required': ['ok']}
+    turns = [ModelTurn('{"ok": true}')]
+    async with api(service_for(tmp_path, turns=turns)) as web:
+        # Valid schema completes and includes parsed output in the completed event.
+        response = await web.send('s1', 'check', 'r1', options={'output_schema': schema})
+        assert response.status_code == 202
+        events = await web.events('r1')
+        assert events[-1]['type'] == 'completed'
+        assert events[-1]['output'] == {'ok': True}
+        assert events[-1]['usage']['contract'] == {'repairs': 0}
+
+        # Non-dict, invalid schema, and remote $ref are rejected with 400.
+        for idx, bad in enumerate((
+            'not-a-dict',
+            {'type': 'nope'},
+            {'$ref': 'https://example.com/x.json'},
+        ), 2):
+            resp = await web.send('s1', 'check', f'r{idx}', options={'output_schema': bad})
+            assert resp.status_code == 400 and resp.json()['code'] == 'invalid_input'
+
+        # Team mode with output_schema is rejected with 400.
+        resp_team = await web.send('s1', 'check', 'r9', options={'mode': 'team', 'output_schema': schema})
+        assert resp_team.status_code == 400
+
+        # Resume with output_schema is rejected with 400.
+        resp_resume = await web.send('s1', 'yes', 'r10', resume_task_id='t1', options={'output_schema': schema})
+        assert resp_resume.status_code == 400 and resp_resume.json()['code'] == 'invalid_input'

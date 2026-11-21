@@ -5,6 +5,7 @@ that coordinator were removed (D-076) and every task now runs in app/agent/loop_
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 from app.agent.step_models import StepExecutionReceipt
 from app.models.taskstate import TaskStatus
@@ -19,6 +20,7 @@ FAILURE_MESSAGES = {
     'tool': '工具调用反复出错或不可用，任务停止。可以检查工具服务（文件系统、联网搜索、沙箱）是否正常。',
     'context': '这次任务需要的上下文超过了模型窗口，重试也放不下，任务停止。可以缩小任务范围，或者换一个窗口更大的模型档案。',
     'format': '模型多次没有按要求的格式给出步骤结果，任务停止。',
+    'contract': '答案多次不符合要求的输出格式（Schema），任务停止。',
     'model': '调用模型失败（服务出错或请求超时），任务停止，可以稍后重试。',
     'side_effect': '一个会修改文件或运行代码的操作没有正常结束，结果不确定。为避免重复执行，任务已停止，请先检查工作区。',
     'timeout': '执行超时，任务停止。已完成的修改不会重复执行。',
@@ -73,6 +75,7 @@ class AgentRunResult:
     failure_kind: str | None = None    # a FAILURE_MESSAGES key when status is FAILED
     usage: dict | None = None          # model calls, tokens and seconds of this run (D-034)
     step_log: tuple[dict, ...] = ()    # host-authored record of every step attempt (D-034)
+    output: Any = None                 # parsed JSON document when an output contract passed (D-093)
 
     @property
     def user_message(self) -> str | None:

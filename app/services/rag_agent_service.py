@@ -491,6 +491,7 @@ class RagAgentService:
         single_runner: str | None = None,
         hooks=None, workspace: str | None = None, workspace_confirmed: bool = False,
         attachments=None, persona: str | None = None, command: str | None = None,
+        output_schema: dict | None = None,
     ) -> AgentRunResult:
         """on_event, if given, receives host-authored progress records ('route',
         then LoopRun's 'plan' and 'step'); see LoopRun.run (D-045).
@@ -509,9 +510,12 @@ class RagAgentService:
             raise ValueError('persona needs personas on and a new task')
         if command is not None and (self._personas is None or resume_task_id is not None):
             raise ValueError('command needs personas on and a new task')
-        workspace, attachments = self._check_request(
+        if output_schema is not None and resume_task_id is not None:
+            raise ValueError('output_schema is for a new task, not a resume')
+        workspace, attachments, output_contract = self._check_request(
             question, session_id, user_id, request_id, resume_task_id, question_id, execution_mode,
-            allow_writes, use_memory, single_runner, hooks, workspace, workspace_confirmed, attachments)
+            allow_writes, use_memory, single_runner, hooks, workspace, workspace_confirmed, attachments,
+            output_schema)
         stamp = datetime.now(timezone.utc)
         key = self._session_key(user_id, session_id)
         async with self._locks.setdefault(key, asyncio.Lock()):
@@ -528,7 +532,8 @@ class RagAgentService:
                                                 (execution_mode, allow_writes, use_memory, workspace)))
             runtime, memory, options, question_id = self._open_task(
                 key, user_id, session_id, question, resume_task_id, question_id,
-                execution_mode, single_runner, allow_writes, use_memory, workspace)
+                execution_mode, single_runner, allow_writes, use_memory, workspace,
+                output_contract=output_contract)
             task = memory.task_state
             turn = ConversationTurn([ConversationMessage(MessageRole.USER, question, stamp)], turn_id, stamp,
                                     task_id=task.task_id, status=TurnStatus.RECEIVED, question_id=question_id)
@@ -539,10 +544,10 @@ class RagAgentService:
                     _emit(on_event, note)
                 context_manager = await self._prepare_task(
                     conversation, key, user_id, question, task, runtime, question_id, attachments, options,
-                    chosen, command_text)
+                    chosen, command_text, output_contract=output_contract)
                 result = await self._execute(
                     conversation, key, user_id, session_id, question, hooks, on_event, outcome_key,
-                    task, memory, runtime, options, context_manager)
+                    task, memory, runtime, options, context_manager, output_contract=output_contract)
             except StaleExecutionError:
                 await self._settle_stale(conversation, outcome_key)
                 raise
@@ -554,14 +559,21 @@ class RagAgentService:
 
     def _check_request(self, question, session_id, user_id, request_id, resume_task_id, question_id,
                        execution_mode, allow_writes, use_memory, single_runner, hooks, workspace,
-                       workspace_confirmed, attachments):
-        """Validate one request before any lock or I/O; returns the checked workspace and attachments."""
+                       workspace_confirmed, attachments, output_schema=None):
+        """Validate one request before any lock or I/O; returns workspace, attachments and contract."""
         if self._closed:
             raise RuntimeError('service is closed')
         self._validate_input(question, session_id)
         self._validate_identity(user_id)
         if execution_mode is not None and execution_mode not in self.run_options()['modes']:
             raise ValueError('execution mode is not available')
+        output_contract = None
+        if output_schema is not None:
+            from app.agent.output_contract import OutputContract
+            output_contract = OutputContract(output_schema)
+            if execution_mode == 'team' or (
+                    execution_mode is None and self._execution_mode == 'team' and self._personas is None):
+                raise ValueError('output_schema is not supported in team mode')
         if single_runner is not None:
             _check_runner(single_runner)
         _check_choice('allow_writes', allow_writes)
@@ -588,7 +600,7 @@ class RagAgentService:
         from app.agent.hooks import HookSet
         if hooks is not None and not isinstance(hooks, HookSet):
             raise TypeError('hooks must be a HookSet')
-        return workspace, attachments
+        return workspace, attachments, output_contract
 
     async def _session_conversation(self, key, user_id, session_id):
         """The session's conversation, loaded (and its archive restored) on first use."""
@@ -634,7 +646,8 @@ class RagAgentService:
         raise RuntimeError(f'request already {existing.status.value}; automatic execution replay is unsafe')
 
     def _open_task(self, key, user_id, session_id, question, resume_task_id, question_id,
-                   execution_mode, single_runner, allow_writes, use_memory, workspace):
+                   execution_mode, single_runner, allow_writes, use_memory, workspace,
+                   output_contract=None):
         """The blocked task to resume (and its question) or a new task, with its run options."""
         runtime = None
         if resume_task_id is not None:
@@ -662,8 +675,11 @@ class RagAgentService:
                        'memory': (self._longterm_memory is not None) if use_memory is None else use_memory}
             if self._workspace_servers is not None:
                 options['workspace'] = workspace       # None: the startup directory and its servers
+        if runtime is None and output_contract is not None and options['mode'] == 'team':
+            raise ValueError('output_schema is not supported in team mode')
         if memory is None:
-            memory = RunMemory(RunState(user_id or session_id, question))
+            schema = output_contract.schema if output_contract is not None else None
+            memory = RunMemory(RunState(user_id or session_id, question, output_schema=schema))
         return runtime, memory, options, question_id
 
     async def _publish_input(self, conversation, turn, turn_id, outcome_key):
@@ -691,7 +707,7 @@ class RagAgentService:
             raise
 
     async def _prepare_task(self, conversation, key, user_id, question, task, runtime, question_id,
-                            attachments, options, persona=None, command_text=None):
+                            attachments, options, persona=None, command_text=None, output_contract=None):
         """The task's context manager, with the answer, attachments, workspace note, history and recall
         pinned, and a new task's persona instructions as a constraint (docs/persona_plan.md), then
         its personal command's expanded template (docs/personal_commands_plan.md)."""
@@ -708,6 +724,8 @@ class RagAgentService:
             task.add_constraint(PERSONA_PREAMBLE + '\n\n' + persona.instructions)
         if runtime is None and command_text:
             task.add_constraint(command_text)
+        if runtime is None and output_contract is not None:
+            task.add_constraint(output_contract.constraint_text())
         if attachments:
             task.pin_content(await self._attachment_note(conversation, attachments), 'attachments')
         current = options.get('workspace') or self._default_workspace
@@ -739,7 +757,7 @@ class RagAgentService:
         return context_manager
 
     async def _execute(self, conversation, key, user_id, session_id, question, hooks, on_event, outcome_key,
-                       task, memory, runtime, options, context_manager):
+                       task, memory, runtime, options, context_manager, output_contract=None):
         """Open the models and tools, run the task through the assembler and record its outcome."""
         cache_key = self._prompt_cache_key(self._archive_label(user_id, session_id))
         run_hooks, audit = await self._run_hooks(key, conversation, hooks)
@@ -759,6 +777,7 @@ class RagAgentService:
                     loop_run_factory=LoopRun, route_model=models.route,
                     member=self._member_role(models, 'member', conversation),
                     explorer=self._member_role(models, 'explorer', conversation),
+                    output_contract=output_contract,
                 )
                 if key in self._spent_tokens:
                     self._spent_tokens[key] += _total_tokens(result.usage)

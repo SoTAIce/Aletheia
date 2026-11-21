@@ -108,6 +108,20 @@ def show_limits(args) -> str:
     return table + chr(10) + (f'ModelProfileError: {problem}' if problem else profile_lines())
 
 
+def load_output_schema(path: str) -> dict:
+    """Read and validate a UTF-8 JSON Schema file for --output-schema (D-093)."""
+    from app.agent.output_contract import OutputContract
+    try:
+        raw = Path(path).read_text(encoding='utf-8')
+    except OSError as exc:
+        raise ValueError(f'cannot read output schema file: {type(exc).__name__}') from exc
+    try:
+        schema = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError('output schema file is not valid JSON') from exc
+    return OutputContract(schema).schema
+
+
 def result_record(result) -> dict:
     """The machine-readable outcome written by --result-json (D-034).
 
@@ -119,6 +133,10 @@ def result_record(result) -> dict:
               'user_message': result.user_message, 'content': result.content,
               'execution_count': result.execution_count, 'replan_count': result.replan_count,
               'usage': result.usage, 'steps': list(result.step_log)}
+    output = getattr(result, 'output', None)
+    has_contract = isinstance(result.usage, dict) and 'contract' in result.usage
+    if output is not None or (has_contract and result.status is TaskStatus.COMPLETED):
+        record['output'] = output
     from app.agent.run_meter import LEDGER
     outside = LEDGER.snapshot()
     if outside:
@@ -429,6 +447,15 @@ async def main(args) -> int:
     if getattr(args, 'show_limits', False):
         print(show_limits(args))
         return 0
+    output_schema = None
+    if getattr(args, 'output_schema', None):
+        try:
+            output_schema = load_output_schema(args.output_schema)
+            if getattr(args, 'execution_mode', 'single') == 'team':
+                raise ValueError('output_schema is not supported in team mode')
+        except ValueError as exc:
+            print(f'OutputSchemaError: {exc}')
+            return 2
     async with AsyncExitStack() as stack:
         compressor = None
         if getattr(args, 'compress_history', False):
@@ -516,6 +543,8 @@ async def main(args) -> int:
                                                args.goal, persona_id)
                 if run_command is not None:
                     extra['command'] = run_command
+                if output_schema is not None:
+                    extra['output_schema'] = output_schema
                 result = await service.query_result(args.goal, args.session_id, user_id=args.user_id, **extra)
         except PersonaError as exc:
             print('PersonaError: ' + exc.message)
@@ -570,6 +599,7 @@ def build_parser():
                         help='Stop between model calls once this many tokens were used (D-034)')
     parser.add_argument('--max-seconds', type=_positive(float), help='Total time budget for the task in seconds (D-034)')
     parser.add_argument('--result-json', help='Also write the outcome, usage and step log as JSON here')
+    parser.add_argument('--output-schema', help='UTF-8 JSON Schema file that the final answer must match (D-093)')
     parser.add_argument('--persona', help='Persona (name or id) for this task; in the interactive mode, '
                                           "the session's persona from the start (docs/persona_plan.md)")
     parser.add_argument('--show-limits', action='store_true',
@@ -582,6 +612,8 @@ def parse_args(argv=None):
     args = parser.parse_args(argv)
     if (args.goal is None or args.interactive) and args.result_json:
         parser.error('--result-json needs a single goal, not the interactive mode')
+    if (args.goal is None or args.interactive) and args.output_schema:
+        parser.error('--output-schema needs a single goal, not the interactive mode')
     return args
 
 

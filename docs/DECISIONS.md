@@ -996,3 +996,26 @@
   - 黄金对照文件没有变化。
 - 来源：用户 2026-11-19 选“写方案”，第 8 节四条“按推荐定”，然后“开始实施”。由 Claude 实施。
 - 记录：[方案](loop_stall_plan.md)；代码在 `app/agent/loop_stall.py`；测试在 `tests/test_loop_stall.py`。
+
+## D-093 2026-11-20 结构化输出契约：宿主按 JSON Schema 检查最终答案，修一次，不合格就失败
+
+- 起因：批处理、定时任务、对外 MCP 服务的接收方都是程序，要能指望拿到格式对的结果。想法出自用户的 `docs/agent_feature_ideas.md` 5.1 节，是三阶段收尾计划的 3.1。详见 [方案](output_contract_plan.md)。
+- 决策：
+  - 调用方给一份 JSON Schema（Draft 2020-12，序列化后最多 8,000 字符）。Schema 不合法、太大、有远程或解析不了的 `$ref`，请求阶段就拒绝，不调用模型。
+  - 新任务加一条宿主写的英文约束，附 Schema 原文；系统提示不变，续跑时保留。
+  - 单一循环在空回答、完成门控、完成提醒之后检查答案：去掉 ```json 围栏，严格解析（拒绝重复字段、非有限数），再按 Schema 校验。
+  - 第一次不合格，追加最多 5 条错误（位置和原因），只给看不能调的工具清单，再要一次。修复不执行任何工具，工具预算用完也能修。第二次不合格，或修复时还要调用工具，失败类型就是 `contract`。修复时服务商出错，保持原来的失败类型。
+  - 通过时交付去掉围栏的 JSON 文本，解析出的文档放进 `AgentRunResult.output`。
+  - 只走单一循环（含 `--delegate`）：`auto` 加契约直接选 single，不调用路由模型；明确要团队的拒绝。调研成员不受影响。
+  - 入口：`query_result(output_schema=)`，续跑不接受新的；命令行 `--output-schema 文件`，只用于单次目标，`--result-json` 多 `output`；网页接口 `RunOptionsIn.output_schema`，`completed` 事件带 `output`；网页界面不加输入框。
+  - 记录：观察者事件 `output_contract` 只带结果（`pass`、`repair`、`fail`）和错误条数；`usage.contract = {'repairs': n}`，只在有契约时出现；轨迹查看器显示一行；评测行带 `contract`。
+  - 依赖：`pyproject.toml` 写明 `jsonschema==4.26.0`。环境里已经有这个版本，是锁定的 `mcp==1.26.0` 带进来的。
+- 被否方案：
+  - 做成完成门控：门控事件按 D-059 拿不到答案原文；
+  - 自己写一个 Schema 子集：只能认一部分 Schema；
+  - 这次就支持团队：团队有自动完成，答案是宿主拼的，模型改不了（方案第 7 节留作以后）。
+- 约束：
+  - 没有用真实模型验证；评测（方案第 5 节）要用户另外同意。
+  - 黄金对照文件没有变化。
+- 来源：用户 2026-11-20 定三阶段收尾计划；方案第 8 节四条按推荐定，并要求交给 Gemini 实施。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对并改了两处（方案第 9 节）。
+- 记录：[方案](output_contract_plan.md)；代码在 `app/agent/output_contract.py` 和 `app/agent/agent_loop.py`；测试在 `tests/test_output_contract.py`。

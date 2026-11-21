@@ -40,7 +40,7 @@ class RunAssembler:
 
     async def run(self, *, key, task, question, options, runtime, model, memory, registry,
                   context_manager, audit, on_event, loop_run_factory=None,
-                  route_model=None, member=None, explorer=None):
+                  route_model=None, member=None, explorer=None, output_contract=None):
         """route_model picks the mode; member and explorer are the member roles' RoleModels
         (stage 4d-2). None: the main model and context, as before."""
         # The mode is chosen once per task and kept when a blocked task resumes (D-026).
@@ -49,7 +49,13 @@ class RunAssembler:
         if team_options is not None and not options['write']:
             team_options = _without_writes(team_options)
         if choice is None:
-            choice = await self._choose_route(question, route_model or model, options['mode'], team_options)
+            if output_contract is not None and options['mode'] == 'auto':
+                # Output contracts run only in the single loop; skip the route model (D-093).
+                from app.agent.route_selection import ModeChoice, log_choice
+                choice = ModeChoice('single', 'rule', 'output_contract')
+                log_choice(choice)
+            else:
+                choice = await self._choose_route(question, route_model or model, options['mode'], team_options)
             if not options['write'] and not choice.read_only:
                 # Writes off for this request: the D-027 read-only path, decided by the host.
                 from dataclasses import replace
@@ -87,11 +93,11 @@ class RunAssembler:
                     def factory(deps):
                         return ExploreLoopRunner(deps.model, deps.tool_registry, loop_options,
                                                  deps.context_manager, store, tally=tally,
-                                                 member=deps.explorer)
+                                                 member=deps.explorer, output_contract=output_contract)
                 else:
                     def factory(deps):
                         return AgentLoopRunner(deps.model, deps.tool_registry, loop_options,
-                                               deps.context_manager, store)
+                                               deps.context_manager, store, output_contract=output_contract)
                 runner_timeout = self._loop_options.timeout_seconds
             # The runner's own time limit is the task deadline; LoopRun enforces it once (stage 5b).
             limits['step_timeout_seconds'] = runner_timeout

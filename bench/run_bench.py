@@ -160,6 +160,10 @@ def usage_fields(record):
         if isinstance(stall, dict) and stall:
             # The loop going round in circles (D-092): reminder, wrap_up, unchanged_read counts.
             fields['stall'] = {k: v for k, v in stall.items() if isinstance(k, str) and type(v) is int}
+        contract = usage.get('contract')
+        if isinstance(contract, dict) and type(contract.get('repairs')) is int:
+            # Output schema contract (D-093): repair count only.
+            fields['contract'] = {'repairs': contract['repairs']}
         for name in ('by_purpose', 'auxiliary'):
             # Where the run's tokens went (docs/cost_measurement_plan.md).
             table = usage.get(name)
