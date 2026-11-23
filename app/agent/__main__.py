@@ -6,6 +6,7 @@ from contextlib import AsyncExitStack
 import json
 import os
 from pathlib import Path
+import sys
 
 from app.agent.persona_commands import (
     COMMANDS_HELP, PERSONA_HELP, PERSONAS_OFF, WAITING_HINT, command_notice, commands_command, memory_label,
@@ -106,6 +107,18 @@ def show_limits(args) -> str:
                               max_seconds=getattr(args, 'max_seconds', None)).table()
     problem = profile_problem()
     return table + chr(10) + (f'ModelProfileError: {problem}' if problem else profile_lines())
+
+
+def show_permissions() -> tuple[str, int]:
+    """The --show-permissions output and exit code; no model call (D-094)."""
+    from app.agent.permission_rules import PermissionRulesError
+    try:
+        rules = config.permission_rules()
+    except PermissionRulesError as exc:
+        return f'PermissionRulesError: {exc}', 2
+    if rules is None:
+        return '没有规则文件（PERMISSIONS_FILE），行为和以前一样', 0
+    return rules.format_table(), 0
 
 
 def load_output_schema(path: str) -> dict:
@@ -304,8 +317,13 @@ def personal_command(store, user_id, session_id, line, persona_id=None):
         return None
 
 
+from app.agent.terminal_input import TerminalReader
+
+_terminal_reader = TerminalReader()
+
+
 async def _read_line(prompt):
-    return await asyncio.to_thread(input, prompt)
+    return await _terminal_reader.read_line(prompt)
 
 
 async def dir_command(command, state, service, read_line, write=print, waiting=None) -> None:
@@ -447,6 +465,10 @@ async def main(args) -> int:
     if getattr(args, 'show_limits', False):
         print(show_limits(args))
         return 0
+    if getattr(args, 'show_permissions', False):
+        text, code = show_permissions()
+        print(text)
+        return code
     output_schema = None
     if getattr(args, 'output_schema', None):
         try:
@@ -494,17 +516,29 @@ async def main(args) -> int:
         if problem:
             print(f'ModelProfileError: {problem}')
             return 2
+        from app.agent.permission_rules import PermissionRulesError
+        from app.agent.terminal_input import TerminalAsker
+        try:
+            permission_rules = config.permission_rules()
+        except PermissionRulesError as exc:
+            print(f'PermissionRulesError: {exc}')
+            return 2
+        asker = (TerminalAsker(_terminal_reader, config.web_approval_timeout_seconds)
+                 if permission_rules and sys.stdin.isatty() else None)
+        startup_deny = (*policy.closed_folders(),
+                        *(permission_rules.deny_paths_for(filesystem_root, write_root) if permission_rules else ()))
         from app.tools.tool_loader import workspace_servers
         service = await stack.enter_async_context(RagAgentService(
             hooks=trace_hooks(filesystem_root, write_root),
             mcp_servers=local_mcp_servers(
                 filesystem_root=filesystem_root,
                 write_root=write_root,
-                tavily_api_key=config.tavily_api_key, sandbox=sandbox, deny=policy.closed_folders(),
+                tavily_api_key=config.tavily_api_key, sandbox=sandbox, deny=startup_deny,
             ),
             # /dir in the interactive mode; a chosen directory is writable only when a write root was given.
             workspace_servers=(workspace_servers(tavily_api_key=config.tavily_api_key, sandbox=sandbox,
-                                                 writes=bool(write_root), deny=policy.closed_folders())
+                                                 writes=bool(write_root), deny=policy.closed_folders(),
+                                                 permission_rules=permission_rules)
                                if config.workspace_choice else None),
             workspace_policy=policy, default_workspace=write_root or filesystem_root,
             include_knowledge=not args.no_knowledge,
@@ -515,6 +549,8 @@ async def main(args) -> int:
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
             single_runner=getattr(args, 'single_runner', 'loop'),
             delegate=getattr(args, 'delegate', False),
+            permission_rules=permission_rules,
+            asker=asker,
         ))
         persona_id, store = None, getattr(service, 'personas', None)
         if getattr(args, 'persona', None):
@@ -604,6 +640,8 @@ def build_parser():
                                           "the session's persona from the start (docs/persona_plan.md)")
     parser.add_argument('--show-limits', action='store_true',
                         help='Print every limit and deadline this command line would use, then exit (no model call)')
+    parser.add_argument('--show-permissions', action='store_true',
+                        help='Print permission rules from PERMISSIONS_FILE, then exit (no model call)')
     return parser
 
 

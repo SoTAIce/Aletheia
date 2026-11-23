@@ -53,13 +53,15 @@ def local_mcp_servers(*, filesystem_root: str | Path | None = None,
     return tuple(servers)
 
 
-def workspace_servers(*, tavily_api_key: str = "", sandbox: bool = False, writes: bool = False, deny=()):
+def workspace_servers(*, tavily_api_key: str = "", sandbox: bool = False, writes: bool = False,
+                      deny=(), permission_rules=None):
     """The per-run tool servers for a chosen working directory (workspace-001): one directory
     for reading and, when writes are on for the server and the run, for writing and the sandbox."""
     def servers(root, writable):
         write_root = root if writes and writable else None
+        rule_deny = permission_rules.deny_paths_for(root) if permission_rules else ()
         return local_mcp_servers(filesystem_root=root, write_root=write_root, tavily_api_key=tavily_api_key,
-                                 sandbox=bool(sandbox and write_root), deny=deny)
+                                 sandbox=bool(sandbox and write_root), deny=(*deny, *rule_deny))
     return servers
 
 

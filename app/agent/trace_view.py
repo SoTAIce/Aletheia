@@ -14,7 +14,7 @@ KINDS = ('task', 'route', 'plan', 'step', 'member', 'model', 'tool', 'todo', 'st
 _MODEL_ATTRS = ('message_count', 'tool_count', 'callable_tools', 'provider_calls', 'prompt_tokens',
                 'completion_tokens', 'cached_tokens', 'tool_calls', 'response_model', 'host_estimate',
                 'provider_ratio', 'provider_state', 'profile', 'denied_by', 'error')
-_TOOL_ATTRS = ('call_id', 'side_effect', 'args_summary', 'success', 'chars', 'denied_by', 'error')
+_TOOL_ATTRS = ('call_id', 'side_effect', 'args_summary', 'success', 'chars', 'denied_by', 'rule', 'error')
 _TASK_ATTRS = ('failure_kind', 'model_calls', 'total_tokens', 'cached_prompt_tokens', 'error')
 _STEP_ATTRS = ('outcome', 'runner', 'step_id')
 _LABELS = ('index', 'revision', 'member')
@@ -265,10 +265,13 @@ def _line(span: dict) -> str:
             parts.append(f"本机估算 {attrs.get('host_estimate') or 0:,}，报告/估算 {attrs['provider_ratio']}（{text}）")
     if kind == 'tool' and span['status'] == 'ok':
         parts.append('成功')
-    if span['status'] in _STATUS_TEXT:
-        parts.append(_STATUS_TEXT[span['status']])
-    if attrs.get('denied_by'):
-        parts.append(f"由 {attrs['denied_by']}")
+    if kind == 'tool' and span['status'] == 'denied' and attrs.get('denied_by') == 'permissions' and attrs.get('rule') is not None:
+        parts.append(f"被权限规则 {attrs['rule']} 拒绝")
+    else:
+        if span['status'] in _STATUS_TEXT:
+            parts.append(_STATUS_TEXT[span['status']])
+        if attrs.get('denied_by'):
+            parts.append(f"由 {attrs['denied_by']}")
     if attrs.get('error'):
         parts.append(f"错误类型 {attrs['error']}")
     if kind == 'tool':

@@ -56,10 +56,11 @@ _SUMMARY_VALUE_CHARS = 200
 class Decision:
     allow: bool
     reason: str | None = None        # host-authored; shown to the model or the user when denied
+    rule: int | None = None          # 1-based permission rule number when denied by a rule (D-094)
 
     @classmethod
-    def deny(cls, reason: str) -> 'Decision':
-        return cls(False, reason)
+    def deny(cls, reason: str, *, rule: int | None = None) -> 'Decision':
+        return cls(False, reason, rule=rule)
 
 
 ALLOW = Decision(True)
@@ -128,7 +129,7 @@ class HookSet:
             if not isinstance(decision, Decision):
                 return Decision.deny(f'{_name(gate)} gave no decision'), _name(gate)
             if not decision.allow:
-                return Decision(False, decision.reason or f'denied by {_name(gate)}'), _name(gate)
+                return Decision(False, decision.reason or f'denied by {_name(gate)}', rule=decision.rule), _name(gate)
         return ALLOW, None
 
     def gate_timeout_for(self, gate) -> float:
@@ -425,8 +426,11 @@ class HookedTool:
                                                 'args_summary': summarize_arguments(arguments),
                                                 'args_preview': preview_arguments(name, arguments)})
         if not decision.allow:
-            hooks.emit({'type': AFTER_TOOL, **base, 'success': False, 'chars': 0, 'seconds': 0.0,
-                        'denied_by': denied_by})
+            denied = {'type': AFTER_TOOL, **base, 'success': False, 'chars': 0, 'seconds': 0.0,
+                      'denied_by': denied_by}
+            if decision.rule is not None:
+                denied['rule'] = decision.rule
+            hooks.emit(denied)
             return ToolOutput(False, '', error=f'not executed: {decision.reason}')
         started = time.monotonic()
         try:

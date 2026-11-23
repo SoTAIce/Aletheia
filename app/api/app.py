@@ -324,10 +324,12 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
     @app.get('/api/health', dependencies=guarded)
     async def health():
         # 'personas' only when they are on, so the answer of a server without them stays as it was.
+        rules = getattr(service, 'permission_rules', None)
         return {'status': 'ok', 'longterm_memory': memory is not None, 'write_enabled': write_enabled,
                 **({'personas': True} if getattr(service, 'personas', None) is not None else {}),
                 'active_runs': runs.active_count, 'options': run_options(),
-                'approval_tools': sorted(approval_tools)}
+                'approval_tools': sorted(approval_tools),
+                'permission_rules': len(rules) if rules else 0}
 
     @app.get('/api/sessions', dependencies=guarded)
     async def sessions(limit: int = 50):

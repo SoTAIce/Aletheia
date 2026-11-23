@@ -83,6 +83,8 @@ class RunMeter:
     stall: dict = field(default_factory=dict)
     # Output schema contract repairs (D-093): None when no contract was active, else >= 0.
     contract_repairs: int | None = None
+    # Permission rule counts (D-094): None when no permission rules were active, else {'denied', 'asked'}.
+    permissions: dict | None = None
     started: float = field(default_factory=time.monotonic)
 
     def __post_init__(self):
@@ -173,6 +175,18 @@ class RunMeter:
         if repaired:
             self.contract_repairs += 1
 
+    def enable_permissions(self) -> None:
+        if self.permissions is None:
+            self.permissions = {'denied': 0, 'asked': 0}
+
+    def record_permission(self, *, denied: bool = False, asked: bool = False) -> None:
+        if self.permissions is None:
+            self.permissions = {'denied': 0, 'asked': 0}
+        if denied:
+            self.permissions['denied'] += 1
+        if asked:
+            self.permissions['asked'] += 1
+
     def tag_calls_since(self, index: int, requested: list[str]) -> None:
         """Mark the calls logged from index on with the tool names the model asked for in
         reply (host-checked names only, loop-trial-001), to see where calls go."""
@@ -222,6 +236,8 @@ class RunMeter:
             usage['stall'] = dict(self.stall)
         if self.contract_repairs is not None:
             usage['contract'] = {'repairs': self.contract_repairs}
+        if self.permissions is not None:
+            usage['permissions'] = dict(self.permissions)
         return usage
 
     def estimated_cost(self) -> float | None:

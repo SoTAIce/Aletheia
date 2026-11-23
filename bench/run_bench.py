@@ -263,7 +263,9 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
                    ALETHEIA_TEAM_TRACE='1',
                    CONVERSATION_STORAGE_DIR=str(archive_dir) if archive else '',
                    # The user's own personas must not change a bench run (docs/persona_plan.md).
-                   PERSONAS_DIR='')
+                   PERSONAS_DIR='',
+                   # The user's own permission rules must not change a bench run (D-094).
+                   PERMISSIONS_FILE='')
         env.pop('ALETHEIA_TRACE_DIR', None)
         env.pop('ALETHEIA_TRACE_NAME', None)
         if trace_dir is not None:

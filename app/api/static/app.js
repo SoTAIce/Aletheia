@@ -1412,7 +1412,8 @@ class LiveView {
 
   askApproval(event) {
     const card = el('div', 'approval');
-    card.append(el('div', 'approval-title', '这一步要执行有副作用的操作，需要你确认'),
+    const title = event.rule ? `规则 ${event.rule} 要求确认` : '这一步要执行有副作用的操作，需要你确认';
+    card.append(el('div', 'approval-title', title),
                 el('div', 'approval-what', approvalText(event)));
     appendApprovalPreview(card, event);
     const actions = el('div', 'approval-actions');

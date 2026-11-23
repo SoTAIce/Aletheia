@@ -156,6 +156,7 @@ class RagAgentService:
         single_runner: str = 'loop', loop_options=None, delegate: bool = False,
         workspace_servers=None, workspace_policy=None, default_workspace: str | None = None,
         personas_dir: str | None = None,
+        permission_rules=None, asker=None,
     ) -> None:
         self.streaming = streaming
         self.model = model
@@ -164,6 +165,11 @@ class RagAgentService:
         if hooks is not None and not isinstance(hooks, HookSet):
             raise TypeError('hooks must be a HookSet')
         self._hooks = hooks
+        from app.agent.permission_rules import PermissionRules
+        if permission_rules is not None and not isinstance(permission_rules, PermissionRules):
+            raise TypeError('permission_rules must be PermissionRules')
+        self._permission_rules = permission_rules
+        self._asker = asker
         self._spent_tokens: dict = {}       # conversation key -> tokens used, for the cap (D-060)
         self._memory_directory = config.conversation_storage_dir if memory_directory is None else memory_directory
         self._conversation_compressor = conversation_compressor
@@ -331,13 +337,21 @@ class RagAgentService:
                                          archive=conversation.archive)
         return RoleModel(model, manager)
 
-    async def _run_hooks(self, key, conversation, extra=None):
-        """This run's hooks: the service's (or the caller's), the request's own (extra, e.g. the
-        web page's approval gate, D-061), plus the audit log and the conversation token cap when
-        configured (D-060). Returns (hooks, audit or None)."""
+    async def _run_hooks(self, key, conversation, extra=None, *, workspace=None):
+        """This run's hooks: the service's (or the caller's), the permission rule gate (D-094),
+        the request's own (extra, e.g. the web page's approval gate, D-061), plus the audit log
+        and the conversation token cap when configured (D-060). Returns (hooks, audit or None)."""
         from app.agent.builtin_hooks import AuditHook, ConversationTokenCap
         from app.agent.hooks import EMPTY, HookSet, installed_hooks
+        from app.agent.permission_rules import RuleGate
         hooks = self._hooks if self._hooks is not None else installed_hooks() or EMPTY
+        extra_gates = extra.gates if extra is not None else ()
+        for gate in extra_gates:
+            if isinstance(gate, RuleGate):
+                gate.use_workspace(workspace)      # the request's gate learns the task's directory
+        if self._permission_rules and not any(isinstance(g, RuleGate) for g in extra_gates):
+            rule_gate = RuleGate(self._permission_rules, workspace=workspace, asker=self._asker)
+            hooks = HookSet(hooks.observers, (*hooks.gates, rule_gate), gate_timeout=hooks.gate_timeout)
         if extra is not None:
             hooks = HookSet((*hooks.observers, *extra.observers), (*hooks.gates, *extra.gates),
                             gate_timeout=hooks.gate_timeout)
@@ -369,6 +383,11 @@ class RagAgentService:
     def personas(self):
         """The persona store, or None when personas are off (PERSONAS_DIR empty)."""
         return self._personas
+
+    @property
+    def permission_rules(self):
+        """The active permission rules, or None when no rules file is configured (D-094)."""
+        return self._permission_rules
 
     def _resolve_persona(self, user_id, session_id, persona_id):
         """The persona of a new task: the one named for this request, else the session's. An
@@ -760,7 +779,8 @@ class RagAgentService:
                        task, memory, runtime, options, context_manager, output_contract=None):
         """Open the models and tools, run the task through the assembler and record its outcome."""
         cache_key = self._prompt_cache_key(self._archive_label(user_id, session_id))
-        run_hooks, audit = await self._run_hooks(key, conversation, hooks)
+        workspace = options.get('workspace') or self._default_workspace
+        run_hooks, audit = await self._run_hooks(key, conversation, hooks, workspace=workspace)
         async with self._role_models(cache_key, run_hooks) as models:
             model = models.main
             async with open_tool_registry(

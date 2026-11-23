@@ -205,7 +205,8 @@ async def test_the_token_is_required_everywhere(tmp_path):
                                       'runners': ['loop'], 'default_runner': 'loop',
                                       'write_available': False, 'write_default': False,
                                       'memory_available': False, 'memory_default': False},
-                          'approval_tools': []}                                          # D-061
+                          'approval_tools': [],                                          # D-061
+                          'permission_rules': 0}                                         # D-094
 
 
 async def test_unknown_runs_and_paths_have_codes(tmp_path):

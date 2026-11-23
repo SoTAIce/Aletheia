@@ -1,0 +1,27 @@
+# 工具权限规则示例（复制为 permissions.toml 后生效，或通过 PERMISSIONS_FILE 指定路径）。
+# 说明：
+# - 规则按顺序编号（从 1 开始）；多条命中时 deny 优先，其次 ask，最后 allow。
+# - 只写了 path 的 deny 规则会同时作为 --deny 交给文件和沙箱工具，搜索和沙箱也碰不到；
+#   限定了 tool/effect 的 deny 规则以及所有 ask/allow 规则只在门控上生效。
+
+# 1. 运行测试总是允许（网页上也会放行，不再弹窗确认）。
+[[rule]]
+tool = "run_tests"
+action = "allow"
+
+# 2. 写入或修改 docs/ 下的文件时先询问确认。
+[[rule]]
+tool = ["write_file", "edit_file"]
+path = "docs/"
+action = "ask"
+
+# 3. 任何工具都不许碰 secrets/（同时交给文件和沙箱工具作为底线）。
+[[rule]]
+path = "secrets/"
+action = "deny"
+
+# 4. 联网搜索允许使用，但每个任务最多调用 5 次。
+[[rule]]
+tool = "search_web"
+action = "allow"
+max_calls = 5

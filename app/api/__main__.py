@@ -81,20 +81,30 @@ async def serve(args) -> int:
         if problem:
             print(f'ModelProfileError: {problem}')
             return 2
+        from app.agent.permission_rules import PermissionRulesError
+        try:
+            permission_rules = config.permission_rules()
+        except PermissionRulesError as exc:
+            print(f'PermissionRulesError: {exc}')
+            return 2
+        startup_deny = (*policy.closed_folders(),
+                        *(permission_rules.deny_paths_for(filesystem_root, write_root) if permission_rules else ()))
         service = await stack.enter_async_context(RagAgentService(
             mcp_servers=local_mcp_servers(
                 filesystem_root=filesystem_root,
                 write_root=write_root, tavily_api_key=config.tavily_api_key, sandbox=args.sandbox,
-                deny=policy.closed_folders()),
+                deny=startup_deny),
             # A chosen directory is also the write directory when a message turns writing on.
             workspace_servers=(workspace_servers(tavily_api_key=config.tavily_api_key, sandbox=args.sandbox,
-                                                 writes=True, deny=policy.closed_folders())
+                                                 writes=True, deny=policy.closed_folders(),
+                                                 permission_rules=permission_rules)
                                if choice else None),
             workspace_policy=policy, default_workspace=write_root or filesystem_root,
             include_knowledge=not args.no_knowledge, execution_mode=args.execution_mode,
             single_runner=args.single_runner, delegate=args.delegate,
             team_options=team_options,
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
+            permission_rules=permission_rules,
         ))
         app = create_app(service, user_id=config.web_user_id, access_token=config.web_access_token,
                          memory=memory, write_enabled=bool(write_root) or choice,

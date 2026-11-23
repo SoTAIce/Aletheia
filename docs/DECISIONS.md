@@ -1019,3 +1019,33 @@
   - 黄金对照文件没有变化。
 - 来源：用户 2026-11-20 定三阶段收尾计划；方案第 8 节四条按推荐定，并要求交给 Gemini 实施。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对并改了两处（方案第 9 节）。
 - 记录：[方案](output_contract_plan.md)；代码在 `app/agent/output_contract.py` 和 `app/agent/agent_loop.py`；测试在 `tests/test_output_contract.py`。
+
+## D-094 2026-11-22 按规则的权限控制：每次调用工具前按规则允许、询问或拒绝
+
+- 起因：命令行完全没有确认，网页只能对固定几个工具一律确认，不能按路径区分；以后接进来的第三方工具也要有统一的管控。想法出自用户的 `docs/agent_feature_ideas.md` 7.2 节，是三阶段收尾计划的 3.2。详见 [方案](permission_rules_plan.md)。
+- 决策：
+  - 规则文件 `permissions.toml`（设置 `PERMISSIONS_FILE`，模板 `permissions.example.toml`），读法照 `models.toml`：
+    - 默认文件不存在就没有规则；
+    - 明确指定了却找不到，或者文件有错，就拒绝启动。
+  - 每条规则写动作（`allow`、`ask`、`deny`），可选工具名、属性（D-087）、相对工作目录的路径前缀、每个任务的次数上限（`max_calls`）。
+  - `RuleGate`（门控名 `permissions`）每次运行新建一个：
+    - 命中的规则里拒绝优先，其次询问，最后允许；
+    - 一条也没命中，就用原来的默认：命令行允许，网页按 `WEB_APPROVAL_TOOLS` 和 `external` 属性问人；
+    - 路径只做字面规范化，规范化不了的算“不明”，带路径的询问和拒绝规则都算命中。
+  - 询问：
+    - 网页走原来的确认卡片，事件带规则序号；
+    - 命令行在终端问（`y`、`a`、其他拒绝），等待时间沿用 `WEB_APPROVAL_TIMEOUT_SECONDS`；终端输入由一个读取器统一管，确认超时后迟到的那一行丢掉；
+    - 不是终端时，询问一律按拒绝，不等待。
+  - 只写了路径的拒绝规则，同时按工作目录换成绝对路径，加进文件和沙箱服务的 `--deny`，成为工具内部的底线，搜索和沙箱也碰不到。
+  - `python -m app.agent --show-permissions` 打印规则表，不调用模型；网页健康检查带 `permission_rules`（条数）；评测给子进程清掉 `PERMISSIONS_FILE`。
+  - 记录：被规则拒绝的 `after_tool` 事件带 `rule`（序号），不带路径和参数原文；`usage.permissions = {'denied': n, 'asked': n}`，只在有规则时出现；轨迹查看器显示“被权限规则 N 拒绝”。
+- 被否方案：
+  - 没有规则文件时，命令行默认对写入和运行类工具询问：评测和管道用法会全部变成拒绝；
+  - 网页默认清单始终保留：`allow` 规则就没法让“`run_tests` 总是允许”在网页上成立；
+  - 拒绝规则只在门控上检查：在根目录上搜索、在沙箱里运行，都能碰到被禁止的目录。
+- 约束：
+  - 门控只看这次调用自己的路径参数，不读文件系统、不解析链接；询问和允许规则管不到在上级目录上的搜索。
+  - 任务因为 `ask_user` 暂停、续跑以后，`max_calls` 从零重新计数。
+  - 没有用真实模型验证；没有规则文件时行为不变，黄金对照文件没有变化。
+- 来源：用户 2026-11-22“接下来写3.2方案吧”，第 8 节五条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对并改了三处（方案第 9 节）。
+- 记录：[方案](permission_rules_plan.md)；代码在 `app/agent/permission_rules.py` 和 `app/agent/terminal_input.py`；测试在 `tests/test_permission_rules.py`。

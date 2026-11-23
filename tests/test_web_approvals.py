@@ -172,3 +172,41 @@ async def test_approval_event_serves_nonempty_preview_to_authenticated_page(tmp_
     asked = next(e for e in events if e['type'] == 'approval_required')
     assert asked['args_summary'] == {'timezone': {'chars': 3}}
     assert asked['args_preview'] == {'timezone': {'text': 'UTC', 'chars': 3, 'omitted_chars': 0}}
+
+
+async def test_permission_rules_ask_and_allow_on_web(tmp_path):
+    from app.agent.permission_rules import parse_permission_rules
+
+    # 1. ask rule adds rule number to approval_required and health reports rule count.
+    ask_rules = parse_permission_rules({'rule': [{'tool': CLOCK, 'action': 'ask'}]})
+    svc = service(tmp_path, [call(), outcome('noon')], permission_rules=ask_rules)
+    async with api(svc, **approvals_on()) as web:
+        health = (await web.client.get('/api/health')).json()
+        assert health['permission_rules'] == 1
+        await web.send('s', 'time?', 'r1')
+        approval_id = await pending(web, 'r1')
+        await answer(web, 'r1', approval_id, 'allow')
+        events = await web.events('r1')
+    asked = next(e for e in events if e['type'] == 'approval_required')
+    assert asked['rule'] == 1 and tools(events) == [(CLOCK, True)]
+
+    # 2. allow rule relaxes WEB_APPROVAL_TOOLS so no approval card is shown.
+    allow_rules = parse_permission_rules({'rule': [{'tool': CLOCK, 'action': 'allow'}]})
+    svc2 = service(tmp_path / 's2', [call(), outcome('fast')], permission_rules=allow_rules)
+    async with api(svc2, **approvals_on()) as web:
+        await web.send('s', 'time?', 'r2')
+        events2 = await web.events('r2')
+    assert not any(e['type'] == 'approval_required' for e in events2)
+    assert tools(events2) == [(CLOCK, True)]
+
+    # 3. unmatched tool still uses WEB_APPROVAL_TOOLS default without a rule number.
+    other_rules = parse_permission_rules({'rule': [{'tool': 'write_file', 'action': 'deny'}]})
+    svc3 = service(tmp_path / 's3', [call(), outcome('default')], permission_rules=other_rules)
+    async with api(svc3, **approvals_on()) as web:
+        await web.send('s', 'time?', 'r3')
+        approval_id = await pending(web, 'r3')
+        await answer(web, 'r3', approval_id, 'deny')
+        events3 = await web.events('r3')
+    asked3 = next(e for e in events3 if e['type'] == 'approval_required')
+    assert 'rule' not in asked3
+    assert tools(events3) == [(CLOCK, False)]

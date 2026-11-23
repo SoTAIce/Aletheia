@@ -119,6 +119,12 @@ def test_held_out_tasks_run_only_when_asked(capsys):
         run_bench.load_tasks(['all'], 'test')
 
 
+def test_bench_child_environment_clears_permissions_file():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / 'bench' / 'run_bench.py').read_text(encoding='utf-8')
+    assert "PERMISSIONS_FILE=''" in source
+
+
 def test_probe_tasks_are_wide_and_kept_apart():
     """Probes (loop-delegate-001) need many files across directories, and --split all leaves them out."""
     assert {t['id'] for t in PROBE} == {'probe_config_keys', 'probe_event_flow'}

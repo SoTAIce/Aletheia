@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     # Optional TOML file of model profiles and roles (stage 4d-2, docs/stage4d_plan.md section 10).
     # Empty: no file. The default name may be absent; a path set explicitly must exist.
     model_profiles_file: str = "models.toml"
+    # Optional TOML file of tool permission rules (D-094, docs/permission_rules_plan.md).
+    # Empty: no rules. The default name may be absent; a path set explicitly must exist.
+    permissions_file: str = "permissions.toml"
 
     # Hooks (D-060): one audit file per run in the conversation's archive directory, and an
     # optional token allowance per conversation (empty means no limit).
@@ -211,6 +214,20 @@ class Settings(BaseSettings):
                 return ModelProfiles.single(default)
             raise ModelProfileError(f'找不到模型档案文件 {path}（MODEL_PROFILES_FILE）')
         return load_profiles(path, default, self)
+
+    def permission_rules(self):
+        """Tool permission rules from PERMISSIONS_FILE (D-094), or None when absent/empty.
+        A bad or explicitly missing file raises PermissionRulesError."""
+        from app.agent.permission_rules import PermissionRulesError, load_permission_rules
+        name = (self.permissions_file or '').strip()
+        if not name:
+            return None
+        path = Path(name)
+        if not path.is_file():
+            if 'permissions_file' not in self.model_fields_set and not path.exists():
+                return None
+            raise PermissionRulesError(f'找不到权限规则文件 {path}（PERMISSIONS_FILE）')
+        return load_permission_rules(path)
 
     @property
     def agent_model_window_tokens(self) -> int:
