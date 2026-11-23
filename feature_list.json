@@ -1774,6 +1774,16 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in two places by Claude. init.ps1 2192 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "permission-rules-001",
+      "name": "Rule-based tool permissions: allow, ask or deny before each tool call",
+      "description": "docs/permission_rules_plan.md, D-094. permissions.toml (PERMISSIONS_FILE) rules by tool, effect, path prefix and per-task max_calls; RuleGate decides before each tool call, deny first, then ask, then allow; ask uses the web approval card or a terminal prompt, and is a denial with no terminal; path-only deny rules also go to the tool servers' --deny. No rules file: behavior unchanged. --show-permissions prints the rules.",
+      "status": "done",
+      "dependencies": [
+        "tool-effects-001"
+      ],
+      "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
+    },
+    {
       "id": "followups-2026-11-20-001",
       "name": "Three-phase follow-up plan",
       "description": "User 2026-11-20: fix what this session left first, then phases 1 to 3 in order. Phase 1: loop-stall wrap-up timing and symlinks, auto + sandbox cost half, thinking-on comparison. Phase 2: handoff records D-084 to D-090, stage4d 4d-4 live comparison, longterm-integration-001 status check, loop-delegate-001 decision. Phase 3: features from docs/agent_feature_ideas.md (structured output contract first). Full table in progress.md.",
