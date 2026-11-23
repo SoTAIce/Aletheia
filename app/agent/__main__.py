@@ -96,6 +96,19 @@ def profile_lines() -> str:
     return chr(10).join(lines)
 
 
+def user_mcp_limit_line() -> str:
+    """User MCP server count and per-call timeout limits for --show-limits (D-095)."""
+    from app.tools.user_mcp import UserMcpError
+    try:
+        cfg = config.user_mcp_config()
+    except UserMcpError as exc:
+        return f'UserMcpError: {exc}'
+    if cfg is None or not cfg.enabled_servers:
+        return '用户 MCP 服务：0 个'
+    timeouts = '、'.join(f'{s.name} {s.timeout_seconds} 秒' for s in cfg.enabled_servers)
+    return f'用户 MCP 服务：{len(cfg.enabled_servers)} 个（单次调用时限：{timeouts}）'
+
+
 def show_limits(args) -> str:
     """The --show-limits table: every limit this command line would run under; no model call."""
     from app.agent.run_limits import RunLimits
@@ -106,7 +119,8 @@ def show_limits(args) -> str:
                               max_total_tokens=getattr(args, 'max_tokens', None),
                               max_seconds=getattr(args, 'max_seconds', None)).table()
     problem = profile_problem()
-    return table + chr(10) + (f'ModelProfileError: {problem}' if problem else profile_lines())
+    return (table + chr(10) + (f'ModelProfileError: {problem}' if problem else profile_lines())
+            + chr(10) + user_mcp_limit_line())
 
 
 def show_permissions() -> tuple[str, int]:
@@ -119,6 +133,41 @@ def show_permissions() -> tuple[str, int]:
     if rules is None:
         return '没有规则文件（PERMISSIONS_FILE），行为和以前一样', 0
     return rules.format_table(), 0
+
+
+async def show_mcp(args, *, confirm_path=None, write=print, ask=input, interactive=None) -> int:
+    """The --show-mcp output and exit code; with --connect also confirms and probes (D-095)."""
+    from app.tools.user_mcp import (
+        UserMcpError, confirm_user_mcp, format_user_mcp_config, probe_user_mcp,
+    )
+    try:
+        cfg = config.user_mcp_config()
+    except UserMcpError as exc:
+        write(f'UserMcpError: {exc}')
+        return 2
+    if cfg is None:
+        write('没有用户服务配置（MCP_SERVERS_FILE），行为和以前一样')
+        return 0
+    probed = None
+    if getattr(args, 'connect', False):
+        problem = confirm_user_mcp(
+            cfg,
+            confirmed=getattr(args, 'confirm_mcp', False),
+            confirm_path=confirm_path,
+            write=write,
+            ask=ask,
+            interactive=interactive,
+        )
+        if problem:
+            write(f'UserMcpError: {problem}')
+            return 2
+        try:
+            probed = await probe_user_mcp(cfg)
+        except UserMcpError as exc:
+            write(f'UserMcpError: {exc}')
+            return 2
+    write(format_user_mcp_config(cfg, confirm_path=confirm_path, probed=probed))
+    return 0
 
 
 def load_output_schema(path: str) -> dict:
@@ -291,8 +340,8 @@ def _persona_store(service):
 
 
 def _notice_to(write):
-    """An on_event that prints the task's persona line (docs/persona_plan.md) and its personal
-    command's line (docs/personal_commands_plan.md); nothing else."""
+    """An on_event that prints the task's persona line (docs/persona_plan.md), its personal
+    command's line (docs/personal_commands_plan.md), and unavailable user MCP servers (D-095)."""
     def on_event(event):
         if event.get('type') == 'persona':
             line = persona_notice(event)
@@ -300,6 +349,8 @@ def _notice_to(write):
                 write(line)
         elif event.get('type') == 'command':
             write(command_notice(event))
+        elif event.get('type') == 'mcp_server' and event.get('result') == 'unavailable':
+            write(f"用户服务 {event.get('server')} 这次没能启动（{event.get('error', 'Error')}），它的工具不可用")
     return on_event
 
 
@@ -469,6 +520,8 @@ async def main(args) -> int:
         text, code = show_permissions()
         print(text)
         return code
+    if getattr(args, 'show_mcp', False):
+        return await show_mcp(args)
     output_schema = None
     if getattr(args, 'output_schema', None):
         try:
@@ -523,8 +576,25 @@ async def main(args) -> int:
         except PermissionRulesError as exc:
             print(f'PermissionRulesError: {exc}')
             return 2
+        from app.tools.user_mcp import UserMcpError, confirm_user_mcp, probe_user_mcp
+        try:
+            user_mcp = config.user_mcp_config()
+        except UserMcpError as exc:
+            print(f'UserMcpError: {exc}')
+            return 2
+        user_mcp_servers = user_mcp.enabled_servers if user_mcp else ()
+        if user_mcp_servers:
+            problem = confirm_user_mcp(user_mcp, confirmed=getattr(args, 'confirm_mcp', False))
+            if problem:
+                print(f'UserMcpError: {problem}')
+                return 2
+            try:
+                await probe_user_mcp(user_mcp)
+            except UserMcpError as exc:
+                print(f'UserMcpError: {exc}')
+                return 2
         asker = (TerminalAsker(_terminal_reader, config.web_approval_timeout_seconds)
-                 if permission_rules and sys.stdin.isatty() else None)
+                 if (permission_rules or user_mcp_servers) and sys.stdin.isatty() else None)
         startup_deny = (*policy.closed_folders(),
                         *(permission_rules.deny_paths_for(filesystem_root, write_root) if permission_rules else ()))
         from app.tools.tool_loader import workspace_servers
@@ -551,6 +621,7 @@ async def main(args) -> int:
             delegate=getattr(args, 'delegate', False),
             permission_rules=permission_rules,
             asker=asker,
+            user_mcp_servers=user_mcp_servers,
         ))
         persona_id, store = None, getattr(service, 'personas', None)
         if getattr(args, 'persona', None):
@@ -573,7 +644,9 @@ async def main(args) -> int:
                          timeout_seconds=getattr(args, 'max_seconds', None))
         try:
             with metering(meter):
-                extra = {'persona': persona_id, 'on_event': _notice_to(print)} if store is not None else {}
+                extra = {'persona': persona_id, 'on_event': _notice_to(print)} if store is not None else (
+                    {'on_event': _notice_to(print)} if user_mcp_servers else {}
+                )
                 # A goal that names one of the persona's commands runs it (docs/personal_commands_plan.md).
                 run_command = personal_command(_persona_store(service), args.user_id, args.session_id,
                                                args.goal, persona_id)
@@ -616,6 +689,8 @@ def build_parser():
     parser.add_argument("--write-root", help="Optional writable directory; omitted means read-only")
     parser.add_argument('--confirm-system-drive', action='store_true',
                         help='Confirm a --filesystem-root/--write-root on the system drive (C:) without a prompt (D-074)')
+    parser.add_argument('--confirm-mcp', action='store_true',
+                        help='Confirm user MCP servers from MCP_SERVERS_FILE without a prompt (D-095)')
     parser.add_argument("--no-knowledge", action="store_true", help="Disable RAG when no knowledge store is configured")
     parser.add_argument('--execution-mode', choices=['single', 'team', 'auto'], default='single',
                         help='single: ordinary tool calling; team: the delegating team; '
@@ -642,12 +717,18 @@ def build_parser():
                         help='Print every limit and deadline this command line would use, then exit (no model call)')
     parser.add_argument('--show-permissions', action='store_true',
                         help='Print permission rules from PERMISSIONS_FILE, then exit (no model call)')
+    parser.add_argument('--show-mcp', action='store_true',
+                        help='Print user MCP servers from MCP_SERVERS_FILE, then exit (no model call)')
+    parser.add_argument('--connect', action='store_true',
+                        help='With --show-mcp, confirm and probe each enabled server to list its tools')
     return parser
 
 
 def parse_args(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.connect and not args.show_mcp:
+        parser.error('--connect can only be used with --show-mcp')
     if (args.goal is None or args.interactive) and args.result_json:
         parser.error('--result-json needs a single goal, not the interactive mode')
     if (args.goal is None or args.interactive) and args.output_schema:

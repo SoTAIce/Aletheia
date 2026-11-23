@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     # Optional TOML file of tool permission rules (D-094, docs/permission_rules_plan.md).
     # Empty: no rules. The default name may be absent; a path set explicitly must exist.
     permissions_file: str = "permissions.toml"
+    # Optional TOML file of user MCP servers (D-095, docs/user_mcp_plan.md).
+    # Empty: no user servers. The default name may be absent; a path set explicitly must exist.
+    mcp_servers_file: str = "mcp.toml"
 
     # Hooks (D-060): one audit file per run in the conversation's archive directory, and an
     # optional token allowance per conversation (empty means no limit).
@@ -228,6 +231,20 @@ class Settings(BaseSettings):
                 return None
             raise PermissionRulesError(f'找不到权限规则文件 {path}（PERMISSIONS_FILE）')
         return load_permission_rules(path)
+
+    def user_mcp_config(self):
+        """User MCP server configuration from MCP_SERVERS_FILE (D-095), or None when absent/empty.
+        A bad or explicitly missing file raises UserMcpError."""
+        from app.tools.user_mcp import UserMcpError, load_user_mcp
+        name = (self.mcp_servers_file or '').strip()
+        if not name:
+            return None
+        path = Path(name)
+        if not path.is_file():
+            if 'mcp_servers_file' not in self.model_fields_set and not path.exists():
+                return None
+            raise UserMcpError(f'找不到用户 MCP 配置文件 {path}（MCP_SERVERS_FILE）')
+        return load_user_mcp(path)
 
     @property
     def agent_model_window_tokens(self) -> int:

@@ -302,12 +302,14 @@ class RuleGate:
         workspace: str | Path | None = None,
         asker=None,
         default_ask_tools: frozenset[str] = frozenset(),
+        ask_external: bool = False,
         case_insensitive: bool | None = None,
     ) -> None:
         self._rules = rules
         self._workspace = str(workspace) if workspace else None
         self._asker = asker
         self._default_ask_tools = frozenset(default_ask_tools)
+        self._ask_external = bool(ask_external)
         self._case_insensitive = (os.name == 'nt') if case_insensitive is None else bool(case_insensitive)
         self._counts: dict[int, int] = {}
         wait = getattr(asker, 'wait_seconds', None)
@@ -352,7 +354,7 @@ class RuleGate:
 
     async def check(self, event: dict) -> Decision:
         meter = current_meter()
-        if meter is not None:
+        if meter is not None and self._rules:
             meter.enable_permissions()
         matched = self._matched_rules(event)
 
@@ -399,15 +401,26 @@ class RuleGate:
             self._record_allowed(matched)
             return ALLOW
 
-        # No rule matched: fall back to default (CLI allows; web asks for default_ask_tools + external).
-        if self._default_ask_tools and (
-            event.get('tool') in self._default_ask_tools or event.get('effect') == 'external'
-        ):
-            if self._asker is not None:
+        # No rule matched: fall back to default (web asks for default_ask_tools + external;
+        # ask_external also asks for external tools even when default_ask_tools is empty, D-095).
+        ask_by_default = (
+            (self._default_ask_tools and (
+                event.get('tool') in self._default_ask_tools or event.get('effect') == 'external'
+            ))
+            or (self._ask_external and event.get('effect') == 'external')
+        )
+        if ask_by_default:
+            if self._asker is None:
                 if meter is not None:
-                    meter.record_permission(asked=True)
-                decision = await self._asker.ask(event, rule=None)
-                if not decision.allow and meter is not None:
                     meter.record_permission(denied=True)
-                return decision
+                return Decision.deny(
+                    'external tool requires user confirmation, but no one can answer here',
+                    rule=None,
+                )
+            if meter is not None:
+                meter.record_permission(asked=True)
+            decision = await self._asker.ask(event, rule=None)
+            if not decision.allow and meter is not None:
+                meter.record_permission(denied=True)
+            return decision
         return ALLOW

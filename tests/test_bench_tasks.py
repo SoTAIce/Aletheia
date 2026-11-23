@@ -123,6 +123,7 @@ def test_bench_child_environment_clears_permissions_file():
     from pathlib import Path
     source = (Path(__file__).resolve().parents[1] / 'bench' / 'run_bench.py').read_text(encoding='utf-8')
     assert "PERMISSIONS_FILE=''" in source
+    assert "MCP_SERVERS_FILE=''" in source
 
 
 def test_probe_tasks_are_wide_and_kept_apart():

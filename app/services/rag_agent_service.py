@@ -157,6 +157,7 @@ class RagAgentService:
         workspace_servers=None, workspace_policy=None, default_workspace: str | None = None,
         personas_dir: str | None = None,
         permission_rules=None, asker=None,
+        user_mcp_servers=(),
     ) -> None:
         self.streaming = streaming
         self.model = model
@@ -170,6 +171,10 @@ class RagAgentService:
             raise TypeError('permission_rules must be PermissionRules')
         self._permission_rules = permission_rules
         self._asker = asker
+        self._user_mcp_servers = (
+            tuple(user_mcp_servers.enabled_servers)
+            if hasattr(user_mcp_servers, 'enabled_servers') else tuple(user_mcp_servers)
+        )
         self._spent_tokens: dict = {}       # conversation key -> tokens used, for the cap (D-060)
         self._memory_directory = config.conversation_storage_dir if memory_directory is None else memory_directory
         self._conversation_compressor = conversation_compressor
@@ -349,8 +354,11 @@ class RagAgentService:
         for gate in extra_gates:
             if isinstance(gate, RuleGate):
                 gate.use_workspace(workspace)      # the request's gate learns the task's directory
-        if self._permission_rules and not any(isinstance(g, RuleGate) for g in extra_gates):
-            rule_gate = RuleGate(self._permission_rules, workspace=workspace, asker=self._asker)
+        has_user_mcp = bool(self._user_mcp_servers)
+        if (self._permission_rules or has_user_mcp) and not any(isinstance(g, RuleGate) for g in extra_gates):
+            from app.agent.permission_rules import PermissionRules
+            rules = self._permission_rules if self._permission_rules is not None else PermissionRules(())
+            rule_gate = RuleGate(rules, workspace=workspace, asker=self._asker, ask_external=has_user_mcp)
             hooks = HookSet(hooks.observers, (*hooks.gates, rule_gate), gate_timeout=hooks.gate_timeout)
         if extra is not None:
             hooks = HookSet((*hooks.observers, *extra.observers), (*hooks.gates, *extra.gates),
@@ -388,6 +396,11 @@ class RagAgentService:
     def permission_rules(self):
         """The active permission rules, or None when no rules file is configured (D-094)."""
         return self._permission_rules
+
+    @property
+    def user_mcp_servers(self):
+        """Enabled user MCP servers configured at startup (D-095)."""
+        return self._user_mcp_servers
 
     def _resolve_persona(self, user_id, session_id, persona_id):
         """The persona of a new task: the one named for this request, else the session's. An
@@ -783,8 +796,16 @@ class RagAgentService:
         run_hooks, audit = await self._run_hooks(key, conversation, hooks, workspace=workspace)
         async with self._role_models(cache_key, run_hooks) as models:
             model = models.main
+            def _on_user_mcp_unavailable(server_name: str, error_type: str) -> None:
+                _emit(on_event, {
+                    'type': 'mcp_server', 'server': server_name,
+                    'result': 'unavailable', 'error': error_type,
+                })
             async with open_tool_registry(
-                memory, mcp_servers=self._servers_for(options), conversation=conversation,
+                memory, mcp_servers=self._servers_for(options),
+                user_servers=self._user_mcp_servers,
+                on_user_server_unavailable=_on_user_mcp_unavailable if self._user_mcp_servers else None,
+                conversation=conversation,
                 knowledge_search=self._knowledge_search, include_knowledge=self._include_knowledge,
                 local_tools=(ContextArchiveTool(conversation.archive, context_manager.tool_result_chars),)
                             if conversation.archive else (),

@@ -8,9 +8,9 @@ effect is one of:
 
 effect_of() takes the tool's own declaration first; a tool that declares nothing is looked up in
 BUILTIN_EFFECTS, this project's own tools and the one table of their names; anything else is
-'external' and is treated as a side effect (fail closed, as D-080). Only this project's own MCP
-servers are connected today, so a declared effect is trusted; tools from a user's own server must
-not be able to call themselves read-only by declaring it.
+'external' and is treated as a side effect (fail closed, as D-080). Built-in MCP servers declare
+their own effect; tools from a user's own MCP server (D-095) get their effect solely from user
+configuration ('read' or 'external', never from readOnlyHint).
 """
 
 from __future__ import annotations

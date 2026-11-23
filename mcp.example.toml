@@ -1,0 +1,20 @@
+# 用户自定义 MCP 服务配置示例（复制为 mcp.toml 后生效，或通过 MCP_SERVERS_FILE 指定路径）。
+# 说明：
+# - 仅支持 stdio 方式的 MCP 服务；最多配置 10 个服务。
+# - 工具名会自动加上 "<服务名>__" 前缀（例如 notes__search_notes），避免与内置工具冲突。
+# - 属性只听下面 effects 的声明：写 "read" 的算只读，其余一律按 "external"（有副作用）处理，
+#   服务自己声明的 readOnlyHint 不算数。
+# - env 只写环境变量名，值在启动服务时从进程环境变量中读取，不要把密钥写进这个文件。
+# - 首次启动或配置发生任何变化时，宿主会列出命令与参数要求确认，并把配置指纹记在 data/mcp_confirmed.json。
+
+[servers.notes]
+command = "node"
+args = ["D:/tools/notes-mcp/index.js"]
+env = ["NOTES_TOKEN"]                     # 只写变量名，值从进程环境里取
+cwd = "D:/tools/notes-mcp"                # 可选，绝对路径；省略时使用本配置文件所在目录
+timeout_seconds = 30                      # 可选，单次调用等待上限（1～300 秒）
+tools = ["search_notes", "create_note"]   # 可选，只接这几个工具；省略时最多接 30 个
+enabled = true                            # 可选，默认 true
+
+[servers.notes.effects]
+search_notes = "read"                     # 不写的工具一律当 external

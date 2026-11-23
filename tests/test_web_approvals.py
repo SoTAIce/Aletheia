@@ -210,3 +210,33 @@ async def test_permission_rules_ask_and_allow_on_web(tmp_path):
     asked3 = next(e for e in events3 if e['type'] == 'approval_required')
     assert 'rule' not in asked3
     assert tools(events3) == [(CLOCK, False)]
+
+
+async def test_user_mcp_external_tool_asks_on_web_even_without_approval_tools(tmp_path):
+    from pathlib import Path
+    import sys
+    from app.tools.user_mcp import UserMcpServer
+
+    time_server = Path(__file__).resolve().parents[1] / 'app' / 'agent' / 'mcp_demo' / 'time_server.py'
+    user_srv = UserMcpServer(
+        name='clock', command=sys.executable, args=(str(time_server),), cwd=str(tmp_path),
+    )
+    user_tool = 'clock__get_current_time'
+    svc = service(
+        tmp_path,
+        [ModelTurn(content='', tool_calls=(ToolCall('c1', user_tool, {'timezone': 'UTC'}),)), outcome('ok')],
+        user_mcp_servers=(user_srv,),
+    )
+    async with api(
+        svc, write_enabled=True, approval_tools=frozenset(), approval_wait_seconds=5,
+        mcp_servers=({'name': 'clock', 'tools': 1},),
+    ) as web:
+        health = (await web.client.get('/api/health')).json()
+        assert health['mcp_servers'] == [{'name': 'clock', 'tools': 1}]
+        await web.send('s', 'time?', 'r1')
+        approval_id = await pending(web, 'r1')
+        await answer(web, 'r1', approval_id, 'allow')
+        events = await web.events('r1')
+    asked = next(e for e in events if e['type'] == 'approval_required')
+    assert asked['tool'] == user_tool and 'rule' not in asked
+    assert tools(events) == [(user_tool, True)]

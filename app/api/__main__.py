@@ -87,6 +87,25 @@ async def serve(args) -> int:
         except PermissionRulesError as exc:
             print(f'PermissionRulesError: {exc}')
             return 2
+        from app.tools.user_mcp import UserMcpError, confirm_user_mcp, probe_user_mcp
+        try:
+            user_mcp = config.user_mcp_config()
+        except UserMcpError as exc:
+            print(f'UserMcpError: {exc}')
+            return 2
+        user_mcp_servers = user_mcp.enabled_servers if user_mcp else ()
+        mcp_health_info = ()
+        if user_mcp_servers:
+            problem = confirm_user_mcp(user_mcp, confirmed=getattr(args, 'confirm_mcp', False))
+            if problem:
+                print(f'UserMcpError: {problem}')
+                return 2
+            try:
+                probed = await probe_user_mcp(user_mcp)
+            except UserMcpError as exc:
+                print(f'UserMcpError: {exc}')
+                return 2
+            mcp_health_info = tuple({'name': s.name, 'tools': len(probed[s.name].tools)} for s in user_mcp_servers)
         startup_deny = (*policy.closed_folders(),
                         *(permission_rules.deny_paths_for(filesystem_root, write_root) if permission_rules else ()))
         service = await stack.enter_async_context(RagAgentService(
@@ -105,6 +124,7 @@ async def serve(args) -> int:
             team_options=team_options,
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
             permission_rules=permission_rules,
+            user_mcp_servers=user_mcp_servers,
         ))
         app = create_app(service, user_id=config.web_user_id, access_token=config.web_access_token,
                          memory=memory, write_enabled=bool(write_root) or choice,
@@ -115,7 +135,8 @@ async def serve(args) -> int:
                          approval_tools=config.web_approval_tool_names,
                          approval_wait_seconds=config.web_approval_timeout_seconds,
                          # The system folder window opens on the server's screen, so only for loopback.
-                         folder_picker=FolderPicker() if choice and is_loopback(host) else None)
+                         folder_picker=FolderPicker() if choice and is_loopback(host) else None,
+                         mcp_servers=mcp_health_info)
         server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_config=None,
                                                access_log=False, server_header=False))
         print(f'Aletheia 网页后端：http://{host}:{port}（写文件：{"开启" if write_root else "关闭"}，'
@@ -133,6 +154,8 @@ def build_parser():
     parser.add_argument('--sandbox', action='store_true', help='Allow the Docker sandbox (needs --write-root)')
     parser.add_argument('--confirm-system-drive', action='store_true',
                         help='Confirm a --filesystem-root/--write-root on the system drive (C:) without a prompt (D-074)')
+    parser.add_argument('--confirm-mcp', action='store_true',
+                        help='Confirm user MCP servers from MCP_SERVERS_FILE without a prompt (D-095)')
     parser.add_argument('--no-knowledge', action='store_true', help='Disable RAG when no knowledge store is configured')
     parser.add_argument('--execution-mode', choices=['single', 'team', 'auto'], default='single')
     parser.add_argument('--single-runner', choices=['loop'], default='loop',

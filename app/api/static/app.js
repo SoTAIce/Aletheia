@@ -1403,6 +1403,14 @@ class LiveView {
         this.say('正在执行');
         break;
       }
+      case 'mcp_server': {
+        if (event.result === 'unavailable') {
+          this.steps.append(el('li', 'route',
+            `用户服务 ${event.server} 这次没能启动（${event.error || 'Error'}），它的工具不可用`));
+          this.steps.hidden = false;
+        }
+        break;
+      }
       default:
         return this.finish(event);
     }

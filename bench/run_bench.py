@@ -265,7 +265,9 @@ def run_one(task, mode, index, timeout, keep_dir=None, write=False, sandbox=Fals
                    # The user's own personas must not change a bench run (docs/persona_plan.md).
                    PERSONAS_DIR='',
                    # The user's own permission rules must not change a bench run (D-094).
-                   PERMISSIONS_FILE='')
+                   PERMISSIONS_FILE='',
+                   # The user's own MCP servers must not change a bench run (D-095).
+                   MCP_SERVERS_FILE='')
         env.pop('ALETHEIA_TRACE_DIR', None)
         env.pop('ALETHEIA_TRACE_NAME', None)
         if trace_dir is not None:

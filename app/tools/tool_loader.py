@@ -1,5 +1,6 @@
 """One registry for RAG, local tools and MCP sessions owned by the caller."""
 
+import asyncio
 from collections.abc import AsyncIterator, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
@@ -12,7 +13,7 @@ from app.models.run_state import RunMemory
 from app.tools.current_time_tool import CurrentTimeTool
 from app.tools.knowledge_registry_tool import KnowledgeRegistryTool
 from app.tools.mcp_client import MCPClient
-from app.tools.mcp_tool_loader import register_mcp_tools
+from app.tools.mcp_tool_loader import register_mcp_tools, register_user_mcp_tools
 from app.tools.tool import Tool
 from app.tools.tool_registry import ToolRegistry
 
@@ -69,6 +70,8 @@ def workspace_servers(*, tavily_api_key: str = "", sandbox: bool = False, writes
 async def open_tool_registry(
     memory: RunMemory, *,
     mcp_servers: Sequence[StdioServerParameters] = (),
+    user_servers: Sequence = (),
+    on_user_server_unavailable=None,
     local_tools: Sequence[Tool] = (),
     conversation: ConversationMemory | None = None,
     knowledge_search=None,
@@ -79,6 +82,9 @@ async def open_tool_registry(
 
     AsyncExitStack closes every connected server on success, failure or cancellation.
     Duplicate tool names are rejected by the existing registry, never overwritten.
+    User MCP servers (D-095) are entered in per-server exit stacks so a server that fails
+    to connect or list tools is closed immediately without leaking its subprocess or
+    affecting built-in or other user servers.
     """
     from app.agent.hooks import HookedToolRegistry
     registry = HookedToolRegistry()          # every tool passes the run's hooks (D-059)
@@ -91,4 +97,20 @@ async def open_tool_registry(
         for parameters in mcp_servers:
             client = await stack.enter_async_context(MCPClient.connect(parameters))
             await register_mcp_tools(client, registry)
+        for server in user_servers:
+            server_stack = AsyncExitStack()
+            try:
+                async with asyncio.timeout(server.timeout_seconds):
+                    client = await server_stack.enter_async_context(
+                        MCPClient.connect(server.to_stdio_params(), read_timeout_seconds=server.timeout_seconds)
+                    )
+                    await register_user_mcp_tools(client, registry, server)
+            except BaseException as exc:
+                await server_stack.aclose()
+                if isinstance(exc, Exception):
+                    if on_user_server_unavailable is not None:
+                        on_user_server_unavailable(server.name, type(exc).__name__)
+                    continue
+                raise
+            stack.push_async_exit(server_stack.pop_all())
         yield registry

@@ -31,11 +31,18 @@ class MCPClient:
     @classmethod
     @asynccontextmanager
     async def connect(
-        cls, parameters: StdioServerParameters
+        cls,
+        parameters: StdioServerParameters,
+        *,
+        read_timeout_seconds: float | timedelta | None = None,
     ) -> AsyncIterator["MCPClient"]:
+        timeout = DEFAULT_READ_TIMEOUT if read_timeout_seconds is None else (
+            read_timeout_seconds if isinstance(read_timeout_seconds, timedelta)
+            else timedelta(seconds=float(read_timeout_seconds))
+        )
         async with stdio_client(parameters) as (read, write):
             async with ClientSession(
-                read, write, read_timeout_seconds=DEFAULT_READ_TIMEOUT
+                read, write, read_timeout_seconds=timeout
             ) as session:
                 await session.initialize()
                 client = cls(session)
@@ -64,8 +71,16 @@ class MCPClient:
             seen_cursors.add(cursor)
 
     async def call_tool(
-        self, name: str, arguments: dict[str, Any]
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        timeout_seconds: float | timedelta | None = None,
     ) -> CallToolResult:
         self._require_open()
-        timeout = SANDBOX_READ_TIMEOUT if name in SANDBOX_TOOLS else None   # None: session default
+        if timeout_seconds is not None:
+            timeout = (timeout_seconds if isinstance(timeout_seconds, timedelta)
+                       else timedelta(seconds=float(timeout_seconds)))
+        else:
+            timeout = SANDBOX_READ_TIMEOUT if name in SANDBOX_TOOLS else None   # None: session default
         return await self._session.call_tool(name, arguments=arguments, read_timeout_seconds=timeout)

@@ -17,6 +17,8 @@ env/
 models.toml
 # Personal tool permission rules (D-094); permissions.example.toml is the template.
 permissions.toml
+# Personal user MCP servers (D-095); mcp.example.toml is the template.
+mcp.toml
 
 # Test and tooling caches
 .pytest_cache/

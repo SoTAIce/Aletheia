@@ -203,15 +203,18 @@ class RunManager:
         if run.resume_task_id is None and run.requested.get('output_schema') is not None:
             choices['output_schema'] = run.requested['output_schema']  # D-093
         rules = getattr(self._service, 'permission_rules', None)
-        if rules:
-            # Rule-based tool control with the web approval list as the unmatched default (D-094).
+        has_user_mcp = bool(getattr(self._service, 'user_mcp_servers', ()))
+        if rules or has_user_mcp:
+            # Rule-based tool control with the web approval list as the unmatched default (D-094),
+            # and external user MCP tools always asked when unmatched (D-095).
             from app.agent.hooks import HookSet
-            from app.agent.permission_rules import RuleGate
+            from app.agent.permission_rules import PermissionRules, RuleGate
             from app.api.approvals import WebAsker
             # The service gives the gate the task's checked working directory (a resumed task keeps its own).
             asker = WebAsker(run, self._approval_wait)
             choices['hooks'] = HookSet(gates=[RuleGate(
-                rules, asker=asker, default_ask_tools=self._approval_tools)])
+                rules if rules is not None else PermissionRules(()),
+                asker=asker, default_ask_tools=self._approval_tools, ask_external=has_user_mcp)])
         elif self._approval_tools:
             # Side-effect tools wait for the person on the page (D-061).
             from app.agent.hooks import HookSet
