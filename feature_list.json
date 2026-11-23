@@ -1784,6 +1784,18 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "user-mcp-001",
+      "name": "User MCP servers: config file, startup confirmation, prefixed tool names",
+      "description": "docs/user_mcp_plan.md, D-095. mcp.toml (MCP_SERVERS_FILE) lists the user's own stdio servers with command, args, cwd, env names, optional tool list, timeout and effects (read or external only). Tools are named <server>__<tool>; readOnlyHint is ignored. Startup lists the commands for confirmation (--confirm-mcp), remembers a fingerprint per server in data/mcp_confirmed.json and probes each server; at run time a server that fails to start is skipped. Single loop only; external tools are asked on the web and in the CLI. --show-mcp prints the config.",
+      "status": "done",
+      "dependencies": [
+        "permission-rules-001",
+        "tool-effects-001",
+        "failure-handling-001"
+      ],
+      "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in one place by Claude. init.ps1 2269 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
+    },
+    {
       "id": "followups-2026-11-20-001",
       "name": "Three-phase follow-up plan",
       "description": "User 2026-11-20: fix what this session left first, then phases 1 to 3 in order. Phase 1: loop-stall wrap-up timing and symlinks, auto + sandbox cost half, thinking-on comparison. Phase 2: handoff records D-084 to D-090, stage4d 4d-4 live comparison, longterm-integration-001 status check, loop-delegate-001 decision. Phase 3: features from docs/agent_feature_ideas.md (structured output contract first). Full table in progress.md.",
