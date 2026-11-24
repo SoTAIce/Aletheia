@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 from dataclasses import asdict
 from typing import Any
 
@@ -9,6 +10,8 @@ from app.agent.step_models import ToolDefinition, ToolOutput
 from app.models.conversation_memory import ConversationMemory, MessageRole
 from app.models.resources import ResourceType
 from app.models.run_state import RunMemory
+
+logger = logging.getLogger(__name__)
 
 
 class KnowledgeRegistryTool:
@@ -18,6 +21,10 @@ class KnowledgeRegistryTool:
         self._conversation = conversation
         self._search = search
         self._context_manager = context_manager
+
+    @property
+    def citation_ledger(self):
+        return self._memory.citations
 
     @property
     def definition(self) -> ToolDefinition:
@@ -77,6 +84,10 @@ class KnowledgeRegistryTool:
         if status not in ("ok", "empty"):
             raise ValueError("Invalid RAG artifact status")
         citations = [asdict(citation) for citation in artifact.get("citations", [])]
+        if status == "ok" and citations:
+            content, citations, aligned = self._memory.citations.renumber_evidence(content, citations)
+            if not aligned:
+                logger.warning("Knowledge citation block mismatch: %s", "ValueError")
         payload = json.dumps(
             {"status": status, "evidence": content, "citations": citations}, ensure_ascii=False
         )

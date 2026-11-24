@@ -295,6 +295,8 @@ def _item_record_from_result(batch_id: str, item_id: str, result, meter: RunMete
         'seconds': seconds,
         'usage': usage,
         'task_id': result.task_id,
+        'citations': [dict(c) for c in (getattr(result, 'citations', ()) or ())],
+        'citation_problems': list(getattr(result, 'citation_problems', ()) or ()),
     }
     output = getattr(result, 'output', None)
     has_contract = 'contract' in usage
@@ -317,6 +319,8 @@ def _synthetic_item_record(batch_id: str, item_id: str, status: str, failure_kin
         'seconds': _usage_seconds(usage, meter),
         'usage': usage,
         'task_id': None,
+        'citations': [],
+        'citation_problems': [],
     }
 
 

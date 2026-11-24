@@ -296,6 +296,7 @@ class RunMemory:
             raise TypeError("task_state must be a RunState")
         self._task_state = task_state
         self._resources = resources if resources is not None else Resources()
+        self._citations = None
 
     @property
     def task_state(self) -> RunState:
@@ -304,3 +305,11 @@ class RunMemory:
     @property
     def resources(self) -> Resources:
         return self._resources
+
+    @property
+    def citations(self):
+        """Task-scoped citation ledger shared across resumes and delegated members (D-098)."""
+        if self._citations is None:
+            from app.agent.citations import CitationLedger
+            self._citations = CitationLedger()
+        return self._citations

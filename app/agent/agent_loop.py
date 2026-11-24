@@ -228,7 +228,8 @@ class AgentLoopRunner:
     def __init__(self, model, tool_registry: ToolRegistry, options: LoopOptions | None = None,
                  context_manager=None, resume_store: LoopResumeStore | None = None, *,
                  host_tools=(), allow_ask_user=True, instructions=None, finish_state=None,
-                 finish_hooks=True, finish_gates=(), output_contract=None):
+                 finish_hooks=True, finish_gates=(), output_contract=None,
+                 citation_ledger=None, check_citations=True):
         if not callable(getattr(model, 'generate', None)):
             raise TypeError('model must provide generate()')
         if not isinstance(tool_registry, ToolRegistry):
@@ -247,6 +248,8 @@ class AgentLoopRunner:
         # completion gate must not depend on installation; hooks-hardening H-1).
         self._finish_gates = tuple(finish_gates)
         self._output_contract = output_contract
+        self._citation_ledger = citation_ledger
+        self._check_citations = bool(check_citations)
         self.format_repair_count = 0
         self.todo: list[dict] = []
         self.resumed = False
@@ -298,6 +301,34 @@ class AgentLoopRunner:
         current_hooks().emit({'type': 'output_contract', 'result': result, 'errors': errors,
                               'parent_id': current_span()})
 
+    @staticmethod
+    def _citation_event(result: str, cited: int, invalid: int) -> None:
+        """Trace one citation check (D-098): result and counts only."""
+        from app.agent.hooks import current_hooks, current_span
+        current_hooks().emit({'type': 'citation_check', 'result': result,
+                              'cited': cited, 'invalid': invalid,
+                              'parent_id': current_span()})
+
+    def _ledger(self):
+        if self._citation_ledger is not None:
+            return self._citation_ledger
+        try:
+            tool = self._registry.get('retrieve_knowledge')
+        except Exception:
+            return None
+        ledger = getattr(tool, 'citation_ledger', None)
+        if ledger is not None:
+            return ledger
+        inner = getattr(tool, 'tool', None)
+        return getattr(inner, 'citation_ledger', None)
+
+    def _resolve_citations(self, text: str):
+        from app.agent.citations import cited_refs
+        ledger = self._ledger()
+        if ledger is not None:
+            return ledger.resolve(text)
+        return (), tuple(cited_refs(text))
+
     def _emit_todo(self):
         from app.agent.hooks import current_hooks, current_span
         current_hooks().emit({'type': 'todo', 'items': [dict(item) for item in self.todo],
@@ -336,6 +367,9 @@ class AgentLoopRunner:
         wrap_up_sent = False
         finish_rejected = False
         reminded = False
+        citation_repaired = False
+        citation_pending = False
+        previous_citation_answer = None
         contract_repaired = False
         self.unverified = False
         host_calls = 0
@@ -348,7 +382,7 @@ class AgentLoopRunner:
                 shown = [t for t in self._host_tools.values() if t.offer is None or t.offer(rounds, options)]
                 tools = offered + controls + tuple(t.definition for t in shown)
                 names = {d.name for d in offered} | {t.definition.name for t in shown}
-            request_tools = ToolsShownOnly(tools) if (spent or contract_repaired) else tools
+            request_tools = ToolsShownOnly(tools) if (spent or contract_repaired or citation_pending) else tools
             meter = current_meter()
             logged = len(meter.call_log) if meter is not None else 0
             try:
@@ -360,6 +394,26 @@ class AgentLoopRunner:
                     self._contract_event('fail', 1)
                     raise StepContractError('Model attempted a tool call during output contract repair',
                                             tuple(refs)) from exc
+                if citation_pending and isinstance(exc.__cause__, ModelToolArgumentsError):
+                    # Malformed tool call during citation repair: deliver previous answer flagged (D-098).
+                    citation_pending = False
+                    text = previous_citation_answer
+                    cited_entries, invalid_refs = self._resolve_citations(text)
+                    self._citation_event('flagged', len(cited_entries) + len(invalid_refs), len(invalid_refs))
+                    if self._output_contract is not None:
+                        checked = self._output_contract.check(text)
+                        if checked.ok:
+                            self._contract_event('pass', 0)
+                            return self._output(checked.text, StepOutcome.SUCCEEDED, None, calls, results, refs,
+                                                output=checked.value, citations=cited_entries,
+                                                citation_problems=invalid_refs)
+                        contract_repaired = True
+                        self.format_repair_count += 1
+                        self._contract_event('repair', len(checked.errors))
+                        messages.append(SystemMessage(self._output_contract.repair_instruction(checked.errors)))
+                        continue
+                    return self._output(text, StepOutcome.SUCCEEDED, None, calls, results, refs,
+                                        citations=cited_entries, citation_problems=invalid_refs)
                 if not isinstance(exc.__cause__, ModelToolArgumentsError) or arg_repairs >= _REPAIRS:
                     raise
                 arg_repairs += 1
@@ -381,6 +435,25 @@ class AgentLoopRunner:
                     if contract_repaired:
                         self._contract_event('fail', 1)
                         raise StepContractError('Model returned no answer during output contract repair', tuple(refs))
+                    if citation_pending and previous_citation_answer is not None:
+                        citation_pending = False
+                        text = previous_citation_answer
+                        cited_entries, invalid_refs = self._resolve_citations(text)
+                        self._citation_event('flagged', len(cited_entries) + len(invalid_refs), len(invalid_refs))
+                        if self._output_contract is not None:
+                            checked = self._output_contract.check(text)
+                            if checked.ok:
+                                self._contract_event('pass', 0)
+                                return self._output(checked.text, StepOutcome.SUCCEEDED, None, calls, results, refs,
+                                                    output=checked.value, citations=cited_entries,
+                                                    citation_problems=invalid_refs)
+                            contract_repaired = True
+                            self.format_repair_count += 1
+                            self._contract_event('repair', len(checked.errors))
+                            messages.append(SystemMessage(self._output_contract.repair_instruction(checked.errors)))
+                            continue
+                        return self._output(text, StepOutcome.SUCCEEDED, None, calls, results, refs,
+                                            citations=cited_entries, citation_problems=invalid_refs)
                     if empty_replies >= _REPAIRS:
                         raise StepFormatError('The model returned no answer', tuple(refs))
                     empty_replies += 1
@@ -397,13 +470,36 @@ class AgentLoopRunner:
                     messages.append(SystemMessage('HOST: ' + decision.reason))
                     continue
                 if options.remind_to_run and _changed_without_passing_run(results):
-                    if not reminded and not spent and not contract_repaired:
+                    if not reminded and not spent and not contract_repaired and not citation_pending:
                         # Once: the second answer finishes, marked unverified (D-087).
                         reminded = True
                         messages.append(turn.to_assistant_message())
                         messages.append(SystemMessage(REMIND_TO_RUN))
                         continue
                     self.unverified = True
+                cited_entries, invalid_refs = (), ()
+                if self._check_citations:
+                    from app.agent.citations import citation_repair_instruction, cited_refs
+                    cited = cited_refs(text)
+                    if cited or citation_pending:
+                        cited_entries, invalid_refs = self._resolve_citations(text)
+                        if not invalid_refs:
+                            citation_pending = False
+                            self._citation_event('pass', len(cited), 0)
+                        elif not citation_repaired and not contract_repaired:
+                            citation_repaired = True
+                            citation_pending = True
+                            previous_citation_answer = text
+                            self.format_repair_count += 1
+                            self._citation_event('repair', len(cited), len(invalid_refs))
+                            messages.append(turn.to_assistant_message())
+                            ledger = self._ledger()
+                            valid_refs = ledger.valid() if ledger is not None else set()
+                            messages.append(SystemMessage(citation_repair_instruction(invalid_refs, valid_refs)))
+                            continue
+                        else:
+                            citation_pending = False
+                            self._citation_event('flagged', len(cited), len(invalid_refs))
                 parsed_output = None
                 if self._output_contract is not None:
                     checked = self._output_contract.check(text)
@@ -421,7 +517,8 @@ class AgentLoopRunner:
                     else:
                         self._contract_event('fail', len(checked.errors))
                         raise StepContractError('Final answer did not conform to the output schema', tuple(refs))
-                return self._output(text, StepOutcome.SUCCEEDED, None, calls, results, refs, output=parsed_output)
+                return self._output(text, StepOutcome.SUCCEEDED, None, calls, results, refs,
+                                    output=parsed_output, citations=cited_entries, citation_problems=invalid_refs)
 
             batch = set()
             for call in turn.tool_calls:
@@ -438,6 +535,28 @@ class AgentLoopRunner:
                 self._refuse(messages, turn.tool_calls, 'not executed: output contract repair does not allow tools')
                 self._contract_event('fail', 1)
                 raise StepContractError('Model called tools during output contract repair', tuple(refs))
+
+            if citation_pending:
+                # Never execute tools during citation repair; deliver the previous answer flagged (D-098).
+                self._refuse(messages, turn.tool_calls, 'not executed: citation repair does not allow tools')
+                citation_pending = False
+                text = previous_citation_answer
+                cited_entries, invalid_refs = self._resolve_citations(text)
+                self._citation_event('flagged', len(cited_entries) + len(invalid_refs), len(invalid_refs))
+                if self._output_contract is not None:
+                    checked = self._output_contract.check(text)
+                    if checked.ok:
+                        self._contract_event('pass', 0)
+                        return self._output(checked.text, StepOutcome.SUCCEEDED, None, calls, results, refs,
+                                            output=checked.value, citations=cited_entries,
+                                            citation_problems=invalid_refs)
+                    contract_repaired = True
+                    self.format_repair_count += 1
+                    self._contract_event('repair', len(checked.errors))
+                    messages.append(SystemMessage(self._output_contract.repair_instruction(checked.errors)))
+                    continue
+                return self._output(text, StepOutcome.SUCCEEDED, None, calls, results, refs,
+                                    citations=cited_entries, citation_problems=invalid_refs)
 
             if spent:
                 if wrap_up_sent:
@@ -573,10 +692,12 @@ class AgentLoopRunner:
             messages.append(ToolMessage(call.call_id, json.dumps(
                 {'success': False, 'content': '', 'error': error, 'source_refs': []}, ensure_ascii=False)))
 
-    def _output(self, content, outcome, reason, calls, results, refs, *, output=None):
+    def _output(self, content, outcome, reason, calls, results, refs, *, output=None,
+                citations=(), citation_problems=()):
         return StepRunOutput(content=content, observation=None, source_refs=tuple(refs),
                              tool_calls=tuple(calls), tool_results=tuple(results), outcome=outcome,
-                             reason=reason, output=output)
+                             reason=reason, output=output,
+                             citations=tuple(citations), citation_problems=tuple(citation_problems))
 
 # The one step a loop or team task runs; LoopRun reports it in the 'plan' and 'step' events (stage 4c).
 LOOP_STEP = 'Deliver the active goal in one agent loop.'

@@ -57,6 +57,8 @@ def _restore_result(data: dict) -> AgentRunResult:
         steps.append(StepExecutionReceipt(**item))
     data['status'] = TaskStatus(data['status'])
     data['step_log'] = tuple(data.get('step_log', ()))   # older archives have no run log (D-034)
+    data['citations'] = tuple(data.get('citations', ()))
+    data['citation_problems'] = tuple(data.get('citation_problems', ()))
     return AgentRunResult(steps=tuple(steps), **data)
 
 def _total_tokens(usage) -> int:
@@ -885,7 +887,12 @@ class RagAgentService:
                 if key in self._spent_tokens:
                     self._spent_tokens[key] += _total_tokens(result.usage)
                 # Retain the result before resource cleanup or durable completion can fail.
-                self._pending_outcomes[outcome_key] = (TurnStatus(result.status.value), result.content, asdict(result))
+                archived = asdict(result)
+                if not archived.get('citations'):
+                    archived.pop('citations', None)
+                if not archived.get('citation_problems'):
+                    archived.pop('citation_problems', None)
+                self._pending_outcomes[outcome_key] = (TurnStatus(result.status.value), result.content, archived)
                 if result.status is TaskStatus.BLOCKED:
                     self._tasks[(key, task.task_id)] = runtime
                 else:

@@ -447,3 +447,32 @@ kbd { font: 11.5px/1 var(--mono); padding: 3px 6px; border: 1px solid var(--rule
   border: 1px solid var(--rule); border-radius: 8px; background: var(--code); color: var(--ink);
   font: 12.5px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
 }
+
+/* Clickable citation tags and source cards (D-098). */
+.cite-btn {
+  display: inline-flex; align-items: center; padding: 0 6px; margin: 0 2px;
+  border: 1px solid var(--rule-strong); border-radius: 999px;
+  background: var(--paper-2); color: var(--accent-ink);
+  font: 12px/1.5 var(--mono); vertical-align: baseline;
+}
+.cite-btn:hover { border-color: var(--accent); background: var(--accent-wash); }
+.cite-btn[aria-expanded="true"] { border-color: var(--accent); background: var(--accent-wash); }
+.cite-btn.invalid {
+  border-color: var(--fail); background: var(--accent-wash); color: var(--fail);
+}
+.cite-card-host { margin: 10px 0 6px; }
+.cite-card {
+  padding: 12px 14px; border: 1px solid var(--rule-strong); border-radius: 10px;
+  background: var(--card); font-size: 13.5px;
+}
+.cite-card.invalid { border-color: var(--fail); background: var(--accent-wash); }
+.cite-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.cite-card-title { font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.cite-snippet {
+  margin: 0 0 8px; padding: 8px 10px; max-height: 240px; overflow: auto;
+  border: 1px solid var(--rule); border-radius: 6px; background: var(--code); color: var(--ink);
+  font: 12.5px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.cite-disclaimer { margin: 0; font-size: 12px; color: var(--muted); }
+.cite-invalid-msg { margin: 0; font-size: 13.5px; color: var(--fail); }
+.cite-warning { margin-top: 8px; color: var(--warn); }

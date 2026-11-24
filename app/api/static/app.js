@@ -195,16 +195,29 @@ async function api(path, options = {}) {
 // ---- reply formatting (text nodes only) -----------------------------------------------
 
 const INLINE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|\[([^\]\n]+)\]\((\S+?)\)|(?<![\w*])\*([^*\s][^*\n]*?)\*(?![\w*])/g;
+const INLINE_CITE = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|\[([^\]\n]+)\]\((\S+?)\)|(?<![\w*])\*([^*\s][^*\n]*?)\*(?![\w*])|\[ref:(\d+(?:\s*,\s*\d+)*)\]/g;
 
-function inline(text) {
+function inline(text, citeCtx = null) {
   const frag = document.createDocumentFragment();
   let last = 0;
-  for (const m of text.matchAll(INLINE)) {
+  const pattern = citeCtx ? INLINE_CITE : INLINE;
+  for (const m of text.matchAll(pattern)) {
     if (m.index > last) frag.append(text.slice(last, m.index));
     if (m[1]) frag.append(el('code', '', m[1].slice(1, -1)));
     else if (m[2]) frag.append(el('strong', '', m[2].slice(2, -2)));
     else if (m[5]) frag.append(el('em', '', m[5]));
-    else if (/^https?:\/\/[^\s<>"']+$/i.test(m[4])) {
+    else if (m[6]) {
+      const refs = m[6].split(',').map((s) => Number.parseInt(s.trim(), 10)).filter((n) => !Number.isNaN(n));
+      for (const n of refs) {
+        const valid = citeCtx.byRef.has(n);
+        const btn = el('button', 'cite-btn' + (valid ? '' : ' invalid'), `[ref:${n}]`);
+        btn.type = 'button';
+        btn.setAttribute('aria-expanded', 'false');
+        btn.title = valid ? '点击查看来源片段' : '这个编号不在本次检索结果里';
+        btn.addEventListener('click', () => citeCtx.toggle(n, btn));
+        frag.append(btn);
+      }
+    } else if (/^https?:\/\/[^\s<>"']+$/i.test(m[4])) {
       const a = el('a', '', m[3]);
       a.href = m[4];
       a.target = '_blank';
@@ -215,6 +228,38 @@ function inline(text) {
   }
   if (last < text.length) frag.append(text.slice(last));
   return frag;
+}
+
+function buildCitationCard(ref, entry, onClose) {
+  const card = el('div', 'cite-card' + (entry ? '' : ' invalid'));
+  const head = el('div', 'cite-card-head');
+  const title = el('span', 'cite-card-title');
+  if (entry) {
+    const name = entry.file_name || entry.source || '';
+    const heading = entry.heading_path || '';
+    const loc = name && heading ? `${name} > ${heading}` : (name || heading);
+    let lines = '';
+    if (typeof entry.start_line === 'number' && typeof entry.end_line === 'number') {
+      lines = `（第 ${entry.start_line}～${entry.end_line} 行）`;
+    } else if (typeof entry.start_line === 'number') {
+      lines = `（第 ${entry.start_line} 行）`;
+    }
+    title.textContent = `[ref:${ref}] ${loc}${lines}`.trim();
+  } else {
+    title.textContent = `[ref:${ref}]`;
+  }
+  const close = el('button', 'mini-btn', '关闭');
+  close.type = 'button';
+  close.addEventListener('click', onClose);
+  head.append(title, close);
+  card.append(head);
+  if (entry) {
+    if (entry.snippet) card.append(el('pre', 'cite-snippet', entry.snippet));
+    card.append(el('p', 'cite-disclaimer', '只核对了编号存在，没有核对内容是否支持这句话'));
+  } else {
+    card.append(el('p', 'cite-invalid-msg', '这个编号不在本次检索结果里'));
+  }
+  return card;
 }
 
 function copyButton(getText, label = '复制') {
@@ -291,12 +336,12 @@ function svgFigure(code) {
   return figure;
 }
 
-function renderMarkdown(text) {
+function renderMarkdown(text, citeCtx = null) {
   const root = el('div', 'md');
   const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
   let i = 0, para = [], list = null;
   const flush = () => {
-    if (para.length) { const p = el('p'); p.append(inline(para.join('\n'))); root.append(p); para = []; }
+    if (para.length) { const p = el('p'); p.append(inline(para.join('\n'), citeCtx)); root.append(p); para = []; }
     list = null;
   };
   while (i < lines.length) {
@@ -333,19 +378,19 @@ function renderMarkdown(text) {
     if (heading) {
       flush();
       const h = el('h' + Math.min(5, heading[1].length + 2));
-      h.append(inline(heading[2]));
+      h.append(inline(heading[2], citeCtx));
       root.append(h);
     } else if (bullet || number) {
       if (para.length) flush();
       const kind = bullet ? 'ul' : 'ol';
       if (!list || list.tagName.toLowerCase() !== kind) { list = el(kind); root.append(list); }
       const li = el('li');
-      li.append(inline((bullet || number)[1]));
+      li.append(inline((bullet || number)[1], citeCtx));
       list.append(li);
     } else if (quote) {
       flush();
       const q = el('blockquote');
-      q.append(inline(quote[1]));
+      q.append(inline(quote[1], citeCtx));
       root.append(q);
     } else if (!line.trim()) {
       flush();
@@ -1186,13 +1231,52 @@ function turnBlock(text, iso, index) {
   return box;
 }
 
-// turn: {status, reply, finished_at}; extra: {message, usage, trace}
+// turn: {status, reply, finished_at}; extra: {message, usage, trace, citations, citationProblems}
 function agentPart(turn, extra = {}) {
   const part = el('div', 'agent-part');
   part.append(speaker('Aletheia', 'agent', turn.finished_at, turn.status));
   const reply = el('div', 'reply' + (turn.status === 'blocked' ? ' blocked' : ''));
+  const citations = Array.isArray(extra.citations) ? extra.citations : [];
+  const citationProblems = Array.isArray(extra.citationProblems) ? extra.citationProblems : [];
+  let citeCardHost = null;
+  let citeCtx = null;
+  if (turn.status === 'completed' && (citations.length || citationProblems.length)) {
+    const byRef = new Map();
+    for (const c of citations) {
+      if (c && typeof c.ref === 'number') byRef.set(c.ref, c);
+    }
+    citeCardHost = el('div', 'cite-card-host');
+    citeCardHost.hidden = true;
+    let activeRef = null;
+    let activeBtn = null;
+    citeCtx = {
+      byRef,
+      toggle(ref, btn) {
+        if (activeRef === ref && !citeCardHost.hidden) {
+          citeCardHost.hidden = true;
+          citeCardHost.replaceChildren();
+          if (activeBtn) activeBtn.setAttribute('aria-expanded', 'false');
+          activeRef = null;
+          activeBtn = null;
+          return;
+        }
+        if (activeBtn) activeBtn.setAttribute('aria-expanded', 'false');
+        activeRef = ref;
+        activeBtn = btn;
+        btn.setAttribute('aria-expanded', 'true');
+        citeCardHost.replaceChildren(buildCitationCard(ref, byRef.get(ref) || null, () => {
+          citeCardHost.hidden = true;
+          citeCardHost.replaceChildren();
+          btn.setAttribute('aria-expanded', 'false');
+          activeRef = null;
+          activeBtn = null;
+        }));
+        citeCardHost.hidden = false;
+      },
+    };
+  }
   if (turn.status === 'completed' || turn.status === 'blocked') {
-    reply.append(renderMarkdown(turn.reply));
+    reply.append(renderMarkdown(turn.reply, citeCtx));
   } else if (turn.status === 'cancelled') {
     reply.append(el('p', 'note', '任务已停止。停止前调用过的工具可能已经产生了副作用。'));
   } else {
@@ -1200,6 +1284,11 @@ function agentPart(turn, extra = {}) {
     reply.append(el('p', 'note', extra.message || '任务没有完成，可以换个说法或拆小一点再试。'));
   }
   part.append(reply);
+  if (citeCardHost) part.append(citeCardHost);
+  if (turn.status === 'completed' && citationProblems.length) {
+    const bad = citationProblems.map((n) => `[${n}]`).join('、');
+    part.append(el('p', 'note cite-warning', `提示：答案里的引用 ${bad} 不在本次检索结果里（只核对了编号是否存在）`));
+  }
   const usage = extra.usage;
   if (turn.status === 'completed' || (usage && usage.model_calls)) {
     const foot = el('div', 'reply-foot');
@@ -1242,7 +1331,7 @@ function agentPart(turn, extra = {}) {
 // ---- run record: the trace of a finished task, from its audit files (trace-001, D-073) ----
 
 const SPAN_TEXT = {task: '任务', route: '路由', plan: '规划', step: '步骤', member: '成员', model: '模型',
-                   tool: '工具', todo: '清单'};
+                   tool: '工具', todo: '清单', citation: '引用'};
 const SPAN_STATUS = {failed: '失败', error: '出错', denied: '被拒绝', unfinished: '未结束', blocked: '等待回答'};
 
 function number(n) { return (n || 0).toLocaleString('zh-CN'); }
@@ -1583,7 +1672,8 @@ class LiveView {
     }
     const turn = {status: event.type, reply: event.content || event.question || '', finished_at: new Date().toISOString(),
                   task_id: event.task_id};
-    this.part.replaceWith(agentPart(turn, {message: event.message, usage: event.usage, trace}));
+    this.part.replaceWith(agentPart(turn, {message: event.message, usage: event.usage, trace,
+                                           citations: event.citations, citationProblems: event.citation_problems}));
     if (event.type === 'blocked') { state.waiting = {task_id: event.task_id, question: event.question}; updateComposer(); }
     scrollToEnd();
     return true;

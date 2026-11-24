@@ -129,11 +129,11 @@ def search_knowledge(query: str) -> tuple[str, KnowledgeArtifact]:
         search_result = RagSearchService(vector_store_manager).dense_search_compat(query, k=config.rag_top_k)
         documents = search_result.documents
     except Exception as exc:
-        logger.exception("Knowledge retrieval failed")
+        logger.warning("Knowledge retrieval failed: {}", type(exc).__name__)
         return "知识库检索暂时不可用。", {
             "status": "error",
             "documents": [],
-            "error": str(exc),
+            "error": f"knowledge retrieval failed ({type(exc).__name__})",
             "trace": None,
             "citations": [],
         }
@@ -190,11 +190,11 @@ async def asearch_knowledge(
         if rewrite_result.warning:
             result.trace.warnings.append(rewrite_result.warning)
     except Exception as exc:
-        logger.exception("Knowledge retrieval failed")
+        logger.warning("Knowledge retrieval failed: {}", type(exc).__name__)
         return "知识库检索暂时不可用。", {
             "status": "error",
             "documents": [],
-            "error": str(exc),
+            "error": f"knowledge retrieval failed ({type(exc).__name__})",
             "trace": None,
             "citations": [],
         }

@@ -10,7 +10,7 @@ Only host-authored fields are kept. The loop's todo items (model text) are reduc
 
 from __future__ import annotations
 
-KINDS = ('task', 'route', 'plan', 'step', 'member', 'model', 'tool', 'todo', 'stall', 'contract')
+KINDS = ('task', 'route', 'plan', 'step', 'member', 'model', 'tool', 'todo', 'stall', 'contract', 'citation')
 _MODEL_ATTRS = ('message_count', 'tool_count', 'callable_tools', 'provider_calls', 'prompt_tokens',
                 'completion_tokens', 'cached_tokens', 'tool_calls', 'response_model', 'host_estimate',
                 'provider_ratio', 'provider_state', 'profile', 'denied_by', 'error')
@@ -145,6 +145,14 @@ def build_trace(records: list[dict]) -> dict:
                              errors=errors))
             span['seconds'] = 0.0
             span['status'] = 'failed' if event['result'] == 'fail' else 'ok'
+        elif kind == 'citation_check' and event.get('result') in _CITATION_TEXT:
+            # Citation check (D-098): result and counts only, never snippets or answers.
+            cited = event.get('cited') if type(event.get('cited')) is int and event.get('cited') >= 0 else None
+            invalid = event.get('invalid') if type(event.get('invalid')) is int and event.get('invalid') >= 0 else None
+            span = add(_span(f'citation-{next(numbers)}', parent, 'citation', event['result'], t,
+                             cited=cited, invalid=invalid))
+            span['seconds'] = 0.0
+            span['status'] = 'ok'
         elif kind == 'step':
             # The progress record of a step attempt, emitted right after its scope ended.
             match = next((s for s in reversed(order) if s['kind'] == 'step'
@@ -199,11 +207,14 @@ def build_trace(records: list[dict]) -> dict:
 
 
 _KIND_TEXT = {'task': '任务', 'route': '路由', 'plan': '规划', 'step': '步骤', 'member': '成员',
-              'model': '模型', 'tool': '工具', 'todo': '清单', 'stall': '打转', 'contract': '契约'}
+              'model': '模型', 'tool': '工具', 'todo': '清单', 'stall': '打转', 'contract': '契约',
+              'citation': '引用'}
 _STALL_TEXT = {'reminder': '原地打转，提醒一次', 'wrap_up': '原地打转，提前收尾',
                'unchanged_read': '重读未变的文件，只回指向前一次结果的说明'}
 _CONTRACT_TEXT = {'pass': '输出格式符合要求', 'repair': '输出格式不合格，要求修改一次',
                   'fail': '输出格式仍不合格，任务停止'}
+_CITATION_TEXT = {'pass': '引用编号核对通过', 'repair': '发现无效引用编号，要求修改一次',
+                  'flagged': '改写后仍有无效引用编号，已标出'}
 _PROVIDER_TEXT = {'dropped': '内容可能被丢弃', 'plain': '与发出的相当', 'padded': '服务商加了少量内容',
                   'heavy': '服务商加了大量内容', 'unknown': '未知'}
 _STATUS_TEXT = {'failed': '失败', 'error': '出错', 'denied': '被拒绝', 'unfinished': '未结束', 'blocked': '等待回答'}
@@ -238,6 +249,13 @@ def _line(span: dict) -> str:
         errors = attrs.get('errors')
         if span['label'] != 'pass' and errors:
             return f'{text}（{errors} 处错误）'
+        return text
+    elif kind == 'citation':
+        text = _CITATION_TEXT.get(span['label'], span['label'])
+        cited, invalid = attrs.get('cited'), attrs.get('invalid')
+        if cited is not None:
+            detail = f'引用 {cited} 处' + (f'，无效 {invalid} 处' if invalid else '')
+            return f'{text}（{detail}）'
         return text
     else:
         head = f"{_KIND_TEXT.get(kind, kind)} {span['label']}"

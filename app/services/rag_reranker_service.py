@@ -121,7 +121,7 @@ class RerankerService:
                 ),
             )
         except Exception as exc:
-            logger.warning("Rerank failed; using L2 fallback: {}", exc)
+            logger.warning("Rerank failed; using L2 fallback: {}", type(exc).__name__)
             elapsed_ms = (perf_counter() - started) * 1000
             return self._dense_fallback(
                 original, "rerank_failed", elapsed_ms, attempted_count=len(pool)

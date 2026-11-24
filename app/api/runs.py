@@ -115,6 +115,12 @@ def terminal_event(result) -> tuple[str, dict]:
         has_contract = isinstance(result.usage, dict) and 'contract' in result.usage
         if output is not None or has_contract:
             event['output'] = output
+        citations = getattr(result, 'citations', ()) or ()
+        if citations:
+            event['citations'] = [dict(c) for c in citations]
+        citation_problems = getattr(result, 'citation_problems', ()) or ()
+        if citation_problems:
+            event['citation_problems'] = list(citation_problems)
         return 'completed', event
     if result.status is TaskStatus.BLOCKED:
         return 'blocked', {'type': 'blocked', 'task_id': result.task_id, 'question': result.content}

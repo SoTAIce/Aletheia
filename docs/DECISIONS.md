@@ -1118,3 +1118,20 @@
   - 不用批处理时其他入口行为不变，黄金对照文件没有变化；没有用真实模型验证。
 - 来源：用户 2026-11-23“写方案吧”、“按推荐定”（第 8 节七条）。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对，没有改动。
 - 记录：[方案](batch_run_plan.md)；代码在 `app/agent/batch.py`、`app/agent/__main__.py`（`open_cli_service`）；测试在 `tests/test_batch.py`。
+
+## D-098 2026-11-23 引用核对：整个任务统一编号，交付前查编号存在，网页可点开来源；补检索链测试
+
+- 起因：3.5 的第二项（[批处理方案](batch_run_plan.md)第 1 节的排序），想法出自用户的 `docs/agent_feature_ideas.md` 2.3 节，按那一节的要求先补设计审查 5.1 节的检索链测试。核实时发现引用编号每次检索都从 1 开始，一个任务检索两次就有两个 `[ref:1]`；答案里的编号对不对，宿主不知道；用户也看不到编号指什么。详见 [方案](citation_check_plan.md)。
+- 决策：
+  - 编号：`KnowledgeRegistryTool` 在打包证据前重新编号，整个任务连续，同一片段（来源、起止行、内容摘要）沿用原编号；只改证据里宿主生成的块头行和 `citations` 的 `ref_id`。编号表 `CitationLedger`（`app/agent/citations.py`）挂在 `RunMemory` 上，续跑和成员共用。`ContextBuilder` 不改。
+  - 交付前检查：单一循环（含 `--delegate`）在“写了没跑的提醒”之后、输出契约之前，找出答案里的 `[ref:n]`（也认 `[ref:1,2]`）。没有引用不检查；有无效编号时退回改写一次（不准调用工具）；还无效、或改写那一轮调用工具或没回答，就用当时的答案照常交付并标出，任务不失败。只检查编号存在，不检查内容是否支持那句话。团队负责人和成员关掉这项检查。钩子事件 `citation_check` 只带结果和计数。
+  - 结果：`AgentRunResult` 加 `citations`（答案里用到的有效引用：文件、来源、标题路径、起止行、最多 500 字的原文片段）和 `citation_problems`（无效编号）；默认值时归档、网页事件、`--result-json` 里都不出现。命令行在答案后列“引用 [n]：文件 > 标题（第 a～b 行）”并提示无效编号；批处理每项带这两个字段；网页把 `[ref:n]` 变成可点的标签，点开是来源卡片，写明“只核对了编号存在”。
+  - 检索链测试：`tests/test_rag_chain.py` 用内存替身测稠密、关键词、混合检索、融合、重排序回落、改写回落、上下文构建。
+  - 顺带修 D-033：`app/tools/knowledge_tool.py` 两处日志和交给模型的 `error` 改成只带异常类型名，`app/services/rag_reranker_service.py` 的日志同样。
+- 被否方案：每次检索各自编号（模型更容易写错）；不合格就让任务失败（错一个编号丢掉整个答案太重）；用了知识库就必须引用；这次就做团队模式。
+- 约束：
+  - 网页历史记录里的答案不渲染可点开的引用（会话历史接口不带 `citations`）；
+  - 证据块和引用条数对不上时，这次检索按原编号登记；
+  - 没有用到 `retrieve_knowledge` 的任务行为不变，黄金对照文件没有变化；没有用真实模型验证，模型看到的编号从“每次从 1 开始”变成“整个任务连续”。
+- 来源：用户 2026-11-23“可以开始”（写方案）、“按推荐定”（第 8 节八条）。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，进程跑完但没写出最后的报告；Claude 核对，没有改动。
+- 记录：[方案](citation_check_plan.md)；代码在 `app/agent/citations.py`、`app/tools/knowledge_registry_tool.py`、`app/agent/agent_loop.py`；测试在 `tests/test_citations.py`、`tests/test_rag_chain.py`。

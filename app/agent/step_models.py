@@ -155,6 +155,8 @@ class StepRunOutput:
     outcome: StepOutcome = StepOutcome.SUCCEEDED
     reason: str | None = None
     output: Any = None
+    citations: tuple[dict[str, Any], ...] = ()
+    citation_problems: tuple[int, ...] = ()
 
 @dataclass(frozen = True, slots = True)
 class StepExecutionReceipt:

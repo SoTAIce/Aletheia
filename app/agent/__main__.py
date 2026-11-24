@@ -199,6 +199,12 @@ def result_record(result) -> dict:
     has_contract = isinstance(result.usage, dict) and 'contract' in result.usage
     if output is not None or (has_contract and result.status is TaskStatus.COMPLETED):
         record['output'] = output
+    citations = getattr(result, 'citations', ()) or ()
+    if citations:
+        record['citations'] = [dict(c) for c in citations]
+    citation_problems = getattr(result, 'citation_problems', ()) or ()
+    if citation_problems:
+        record['citation_problems'] = list(citation_problems)
     from app.agent.run_meter import LEDGER
     outside = LEDGER.snapshot()
     if outside:
@@ -258,12 +264,35 @@ def write_result(path, result) -> None:
     temporary.replace(target)
 
 
+def _citation_line(entry: dict) -> str:
+    ref = entry.get('ref')
+    name = entry.get('file_name') or entry.get('source') or ''
+    heading = entry.get('heading_path') or ''
+    location = f'{name} > {heading}' if (name and heading) else (name or heading)
+    start, end = entry.get('start_line'), entry.get('end_line')
+    lines = ''
+    if start is not None and end is not None:
+        lines = f'（第 {start}～{end} 行）'
+    elif start is not None:
+        lines = f'（第 {start} 行）'
+    return f'引用 [{ref}]：{location}{lines}'
+
+
 def report(result, write=print) -> None:
     """Print one outcome: the answer, the Chinese explanation, then the status line the bench parses."""
     write(result.content)
     if getattr(result, 'user_message', None):
         # The first line stays the English diagnostic the bench parses; this explains it (D-033).
         write(f"\n说明：{result.user_message}")
+    citations = getattr(result, 'citations', ()) or ()
+    citation_problems = getattr(result, 'citation_problems', ()) or ()
+    if citations:
+        write('')
+        for entry in citations:
+            write(_citation_line(entry))
+    if citation_problems:
+        bad = '、'.join(f'[{n}]' for n in citation_problems)
+        write(f'\n提示：答案里的引用 {bad} 不在本次检索结果里（只核对了编号是否存在）')
     from app.agent.provider_state import notice
     usage = getattr(result, 'usage', None) or {}
     if usage.get('unverified_changes') is True:

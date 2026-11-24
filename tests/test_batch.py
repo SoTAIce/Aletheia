@@ -469,3 +469,26 @@ def test_run_limits_includes_batch_defaults():
     rows = {name: value for layer, name, value in RunLimits.current().rows() if layer == '批处理'}
     assert rows['每项默认令牌预算（--item-max-tokens）'] == '200,000'
     assert rows['每项默认时间预算（--item-max-seconds）'] == '300 秒'
+
+
+def test_batch_records_citations_and_citation_problems(tmp_path):
+    manifest = tmp_path / 'm.jsonl'
+    manifest.write_text(
+        '{"id": "plain", "goal": "no cite"}\n'
+        '{"id": "badcite", "goal": "bad cite"}\n',
+        encoding='utf-8',
+    )
+    out = tmp_path / 'out.jsonl'
+    model = ScriptedUsageModel([
+        ModelTurn('plain answer'),
+        ModelTurn('answer with [ref:7]'),
+        ModelTurn('still bad [ref:7]'),
+    ])
+    args = batch.parse_args([str(manifest), '--out', str(out), '--max-tokens', '1000', '--confirm-batch'])
+    code = asyncio.run(batch.run_batch(args, write=lambda _: None, service_opener=_opener_for(model)))
+    assert code == 0
+    rows = {r['id']: r for r in _read_jsonl(out)[1:]}
+    assert rows['plain']['citations'] == []
+    assert rows['plain']['citation_problems'] == []
+    assert rows['badcite']['citations'] == []
+    assert rows['badcite']['citation_problems'] == [7]

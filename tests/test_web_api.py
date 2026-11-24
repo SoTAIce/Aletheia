@@ -457,3 +457,30 @@ async def test_web_api_project_instructions_endpoints_auth_and_workspace_checks(
                                          json={'workspace': str(other), 'workspace_confirmed': True,
                                                'digest': r200.json()['digest']})
             assert c200.status_code == 200 and c200.json()['status'] == 'loaded'
+
+
+def test_web_terminal_event_citations_and_static_safety():
+    from pathlib import Path
+    from app.agent.runtime import AgentRunResult
+    from app.api.runs import terminal_event
+    from app.models.taskstate import TaskStatus
+
+    plain = AgentRunResult('t1', TaskStatus.COMPLETED, 'ok', (), 1, 0)
+    status, ev_plain = terminal_event(plain)
+    assert status == 'completed'
+    assert 'citations' not in ev_plain and 'citation_problems' not in ev_plain
+
+    cited = AgentRunResult(
+        't2', TaskStatus.COMPLETED, 'see [ref:1][ref:9]', (), 1, 0,
+        citations=({'ref': 1, 'file_name': 'a.md', 'source': 'a.md',
+                    'heading_path': 'H1', 'start_line': 1, 'end_line': 2, 'snippet': 'text'},),
+        citation_problems=(9,),
+    )
+    _, ev_cited = terminal_event(cited)
+    assert ev_cited['citations'][0]['ref'] == 1
+    assert ev_cited['citation_problems'] == [9]
+
+    js = (Path(__file__).resolve().parents[1] / 'app' / 'api' / 'static' / 'app.js').read_text(encoding='utf-8')
+    assert 'innerHTML' not in js
+    assert '只核对了编号存在，没有核对内容是否支持这句话' in js
+    assert '这个编号不在本次检索结果里' in js

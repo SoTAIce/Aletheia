@@ -114,6 +114,8 @@ class LoopRun:
         self._meter = None
         self._final = None
         self._output = None
+        self._citations: tuple = ()
+        self._citation_problems: tuple = ()
         self._lock = asyncio.Lock()
         self._on_event = None
 
@@ -289,6 +291,8 @@ class LoopRun:
         self._execution_count += 1
         self._watch.reset()
         self._output = None
+        self._citations = ()
+        self._citation_problems = ()
         started = time.monotonic()
         try:
             try:
@@ -415,6 +419,8 @@ class LoopRun:
             raise StaleExecutionError('Execution is no longer current')
         self._check_resource_context()
         self._output = output.output
+        self._citations = tuple(output.citations)
+        self._citation_problems = tuple(output.citation_problems)
         return StepExecutionReceipt(
             task_id=task.task_id, step_id=step.step_id, goal_revision=task.goal_revision,
             plan_revision=self._plan_revision, state_version=task.state_version, result_id=str(uuid4()),
@@ -531,7 +537,10 @@ class LoopRun:
             usage['unverified_changes'] = True   # host flag the CLI and the web page explain (D-087)
         result = AgentRunResult(task.task_id, task.status, content, tuple(self._steps),
                                 self._execution_count, self._replan_count, kind, usage, tuple(self._step_log),
-                                output=self._output if task.status is TaskStatus.COMPLETED else None)
+                                output=self._output if task.status is TaskStatus.COMPLETED else None,
+                                citations=self._citations if task.status is TaskStatus.COMPLETED else (),
+                                citation_problems=(self._citation_problems
+                                                   if task.status is TaskStatus.COMPLETED else ()))
         if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
             self._final = result
         return result

@@ -76,6 +76,8 @@ class AgentRunResult:
     usage: dict | None = None          # model calls, tokens and seconds of this run (D-034)
     step_log: tuple[dict, ...] = ()    # host-authored record of every step attempt (D-034)
     output: Any = None                 # parsed JSON document when an output contract passed (D-093)
+    citations: tuple[dict, ...] = ()          # valid citations used in the final answer (D-098)
+    citation_problems: tuple[int, ...] = ()   # invalid [ref:n] numbers in the final answer (D-098)
 
     @property
     def user_message(self) -> str | None:

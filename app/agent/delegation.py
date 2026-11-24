@@ -132,7 +132,8 @@ class MemberSpawner:
         for tool_name in sorted(tools):
             registry.register(_Observed(self.registry.get(tool_name), tool_name, seen))
         runner = AgentLoopRunner(self.model, registry, limits, self.context_manager,
-            host_tools=host_tools, allow_ask_user=False, instructions=instructions, finish_hooks=False)
+            host_tools=host_tools, allow_ask_user=False, instructions=instructions, finish_hooks=False,
+            check_citations=False)
         return runner, seen
 
     @staticmethod
@@ -385,7 +386,8 @@ class DelegatingLoopRunner:
                           ' Automatic completion requires a successful write in this run; without writes, '
                           'use the reports to answer the active goal yourself in its requested format. '
                           'Reply with the final answer as plain text, without a status envelope.'),
-            finish_state=lambda: self._state(run), finish_gates=(gate,) if hooks is None else ())
+            finish_state=lambda: self._state(run), finish_gates=(gate,) if hooks is None else (),
+            check_citations=False)
         try:
             # The team deadline is LoopRun's task deadline (stage 5b); members have their own inside it.
             with using_hooks(hooks) if hooks is not None else nullcontext():
@@ -559,7 +561,7 @@ class ExploreLoopRunner:
 
     def __init__(self, model, tool_registry, loop_options=None, context_manager=None, resume_store=None,
                  options: ExploreOptions | None = None, tally=None, member=None, *, output_contract=None,
-                 allow_ask_user=True):
+                 allow_ask_user=True, citation_ledger=None):
         self.explore = ExploreDelegation(model, tool_registry, options, context_manager, tally, member)
         self._context = None
 
@@ -569,7 +571,8 @@ class ExploreLoopRunner:
         self.loop = AgentLoopRunner(model, tool_registry, loop_options, context_manager, resume_store,
                                     host_tools=(HostTool(DELEGATE_DEFINITION, invoke, self.explore.offer),),
                                     allow_ask_user=allow_ask_user,
-                                    instructions=EXPLORE_INSTRUCTIONS, output_contract=output_contract)
+                                    instructions=EXPLORE_INSTRUCTIONS, output_contract=output_contract,
+                                    citation_ledger=citation_ledger)
 
     @property
     def format_repair_count(self):
