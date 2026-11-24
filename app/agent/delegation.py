@@ -558,7 +558,8 @@ class ExploreLoopRunner:
     runner_id = LOOP_RUNNER_ID
 
     def __init__(self, model, tool_registry, loop_options=None, context_manager=None, resume_store=None,
-                 options: ExploreOptions | None = None, tally=None, member=None, *, output_contract=None):
+                 options: ExploreOptions | None = None, tally=None, member=None, *, output_contract=None,
+                 allow_ask_user=True):
         self.explore = ExploreDelegation(model, tool_registry, options, context_manager, tally, member)
         self._context = None
 
@@ -567,6 +568,7 @@ class ExploreLoopRunner:
 
         self.loop = AgentLoopRunner(model, tool_registry, loop_options, context_manager, resume_store,
                                     host_tools=(HostTool(DELEGATE_DEFINITION, invoke, self.explore.offer),),
+                                    allow_ask_user=allow_ask_user,
                                     instructions=EXPLORE_INSTRUCTIONS, output_contract=output_contract)
 
     @property

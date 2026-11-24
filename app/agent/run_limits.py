@@ -82,6 +82,7 @@ class RunLimits:
                 ('团队', '委派次数 / 负责人轮数', f'{team.max_delegations} / {team.max_lead_turns}'),
                 ('团队', '成员工具轮数 / 调用次数', f'{team.worker_tool_rounds} / {team.worker_tool_calls}'),
             ]
+        from app.agent.batch import DEFAULT_ITEM_MAX_SECONDS, DEFAULT_ITEM_MAX_TOKENS
         rows += [
             ('调研成员', '每个成员的时限（--delegate）', seconds(explore.member_timeout_seconds)),
             ('调研成员', '委派次数 / 每个成员的调用次数', f'{explore.max_delegations} / {explore.member_tool_calls}'),
@@ -89,6 +90,8 @@ class RunLimits:
             ('单次调用', '模型调用失败后的重试', retry_policy()),
             ('单次调用', '选择执行模式的调用时限', seconds(self.route_seconds)),
             ('单次调用', '每个门控的时限', seconds(self.gate_seconds)),
+            ('批处理', '每项默认令牌预算（--item-max-tokens）', f'{DEFAULT_ITEM_MAX_TOKENS:,}'),
+            ('批处理', '每项默认时间预算（--item-max-seconds）', seconds(DEFAULT_ITEM_MAX_SECONDS)),
         ]
         return rows
 

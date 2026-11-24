@@ -68,6 +68,21 @@ async def test_delegate_and_team_choose_their_runners():
     assert runtime.kwargs['step_description'] == TEAM_STEP and isinstance(_runner(runtime), DelegatingLoopRunner)
 
 
+async def test_ask_user_option_is_passed_to_single_and_explore_runners():
+    for delegate in (False, True):
+        assembler, *_ = _assembler(delegate=delegate)
+        task = SimpleNamespace(task_id='t1')
+        runtime, _ = await assembler.run(
+            key='k', task=task, question='q', runtime=None,
+            options={'mode': 'single', 'runner': 'loop', 'write': False, 'memory': False, 'ask_user': False},
+            model=object(), memory=object(), registry=ToolRegistry(),
+            context_manager=None, audit=None, on_event=None, loop_run_factory=_Run,
+        )
+        runner = _runner(runtime)
+        loop = runner.loop if delegate else runner
+        assert loop._allow_ask_user is False
+
+
 async def test_writes_off_makes_the_task_read_only():
     assembler, events, routes, _ = _assembler()
     await _run(assembler, write=False)

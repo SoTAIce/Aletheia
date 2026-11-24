@@ -87,17 +87,20 @@ class RunAssembler:
                 from app.agent.agent_loop import AgentLoopRunner, LoopResumeStore
                 store = LoopResumeStore()  # one per task run, retained by its factory on rebind
                 loop_options = _with_reminder(self._loop_options, registry, choice.read_only)
+                allow_ask_user = options.get('ask_user', True)
                 if self._delegate:
                     from app.agent.delegation import ExploreLoopRunner
                     tally = {'delegations': 0}   # per task, kept across rebinds
                     def factory(deps):
                         return ExploreLoopRunner(deps.model, deps.tool_registry, loop_options,
                                                  deps.context_manager, store, tally=tally,
-                                                 member=deps.explorer, output_contract=output_contract)
+                                                 member=deps.explorer, output_contract=output_contract,
+                                                 allow_ask_user=allow_ask_user)
                 else:
                     def factory(deps):
                         return AgentLoopRunner(deps.model, deps.tool_registry, loop_options,
-                                               deps.context_manager, store, output_contract=output_contract)
+                                               deps.context_manager, store, output_contract=output_contract,
+                                               allow_ask_user=allow_ask_user)
                 runner_timeout = self._loop_options.timeout_seconds
             # The runner's own time limit is the task deadline; LoopRun enforces it once (stage 5b).
             limits['step_timeout_seconds'] = runner_timeout

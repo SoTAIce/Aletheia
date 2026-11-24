@@ -116,6 +116,12 @@ Compose 文件里的账号密码只是开发用的默认值，部署到生产环
 .\.venv\Scripts\python.exe -m app.agent "阅读 README.md 并总结项目功能" --filesystem-root . --no-knowledge
 ```
 
+只读批处理（按文件展开或传清单文件，需要指定 `--out` 和 `--max-tokens`）：
+
+```powershell
+.\.venv\Scripts\python.exe -m app.agent.batch --each-file "docs/*.md" --goal "用三句话总结 {file}" --out output/summaries.jsonl --max-tokens 2000000 --filesystem-root . --no-knowledge
+```
+
 启动本地网页（只监听回环地址；如果监听其他地址，必须设置访问令牌）：
 
 ```powershell

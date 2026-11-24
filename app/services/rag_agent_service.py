@@ -570,7 +570,7 @@ class RagAgentService:
         single_runner: str | None = None,
         hooks=None, workspace: str | None = None, workspace_confirmed: bool = False,
         attachments=None, persona: str | None = None, command: str | None = None,
-        output_schema: dict | None = None,
+        output_schema: dict | None = None, allow_ask_user: bool = True,
     ) -> AgentRunResult:
         """on_event, if given, receives host-authored progress records ('route',
         then LoopRun's 'plan' and 'step'); see LoopRun.run (D-045).
@@ -585,6 +585,10 @@ class RagAgentService:
 
         command names a personal command of the task's persona, question being the whole line; see
         _persona_choices (docs/personal_commands_plan.md)."""
+        if type(allow_ask_user) is not bool:
+            raise ValueError('allow_ask_user must be a boolean')
+        if not allow_ask_user and resume_task_id is not None:
+            raise ValueError('allow_ask_user=False is for a new task, not a resume')
         if persona is not None and (self._personas is None or resume_task_id is not None):
             raise ValueError('persona needs personas on and a new task')
         if command is not None and (self._personas is None or resume_task_id is not None):
@@ -612,7 +616,7 @@ class RagAgentService:
             runtime, memory, options, question_id = self._open_task(
                 key, user_id, session_id, question, resume_task_id, question_id,
                 execution_mode, single_runner, allow_writes, use_memory, workspace,
-                output_contract=output_contract)
+                output_contract=output_contract, allow_ask_user=allow_ask_user)
             task = memory.task_state
             turn = ConversationTurn([ConversationMessage(MessageRole.USER, question, stamp)], turn_id, stamp,
                                     task_id=task.task_id, status=TurnStatus.RECEIVED, question_id=question_id)
@@ -726,7 +730,7 @@ class RagAgentService:
 
     def _open_task(self, key, user_id, session_id, question, resume_task_id, question_id,
                    execution_mode, single_runner, allow_writes, use_memory, workspace,
-                   output_contract=None):
+                   output_contract=None, allow_ask_user=True):
         """The blocked task to resume (and its question) or a new task, with its run options."""
         runtime = None
         if resume_task_id is not None:
@@ -754,6 +758,8 @@ class RagAgentService:
                        'memory': (self._longterm_memory is not None) if use_memory is None else use_memory}
             if self._workspace_servers is not None:
                 options['workspace'] = workspace       # None: the startup directory and its servers
+            if not allow_ask_user:
+                options['ask_user'] = False
         if runtime is None and output_contract is not None and options['mode'] == 'team':
             raise ValueError('output_schema is not supported in team mode')
         if memory is None:

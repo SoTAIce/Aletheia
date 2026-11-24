@@ -570,6 +570,137 @@ def sandbox_problem(write_root, sandbox):
     return None
 
 
+class CliSession:
+    """Opened CLI service and resolved startup context shared by single, interactive and batch runs."""
+
+    __slots__ = ('service', 'persona_id', 'memory', 'instructions_trust',
+                 'user_mcp_servers', 'filesystem_root', 'write_root')
+
+    def __init__(self, service, persona_id, memory, instructions_trust,
+                 user_mcp_servers, filesystem_root, write_root):
+        self.service = service
+        self.persona_id = persona_id
+        self.memory = memory
+        self.instructions_trust = instructions_trust
+        self.user_mcp_servers = user_mcp_servers
+        self.filesystem_root = filesystem_root
+        self.write_root = write_root
+
+
+async def open_cli_service(args, stack: AsyncExitStack) -> CliSession | int:
+    """Run startup checks and open RagAgentService in stack; returns exit code 2 on refusal."""
+    compressor = None
+    if getattr(args, 'compress_history', False):
+        if not config.conversation_storage_dir:
+            raise ValueError('--compress-history requires CONVERSATION_STORAGE_DIR')
+        from app.core.dependencies import open_conversation_compressor
+        compressor = await stack.enter_async_context(open_conversation_compressor())
+    write_root = args.write_root or config.mcp_filesystem_write_root or None
+    sandbox = getattr(args, 'sandbox', False)
+    problem = sandbox_problem(write_root, sandbox)
+    if problem:
+        print(f'SandboxUnavailableError: {problem}')
+        return 2
+    filesystem_root = args.filesystem_root or config.mcp_filesystem_root or None
+    # Every directory passes the same checks; one on the system drive needs confirming (D-074).
+    from app.services.workspace import WorkspacePolicy, confirm_startup
+    policy = WorkspacePolicy.from_config()
+    problem = confirm_startup(policy, (filesystem_root, write_root),
+                              confirmed=getattr(args, 'confirm_system_drive', False))
+    if problem:
+        print(f'WorkspaceError: {problem}')
+        return 2
+    memory = None
+    if config.longterm_memory_dsn:
+        from app.services.longterm_memory_setup import open_longterm_memory
+        memory = await stack.enter_async_context(open_longterm_memory())
+    # A user id scopes long-term memory; the local CLI user is 'local' unless given.
+    args.user_id = getattr(args, 'user_id', None) or ('local' if memory is not None else None)
+    team_options = team_options_for(getattr(args, 'execution_mode', 'single'), write_root, sandbox,
+                                    getattr(args, 'team_timeout', None))
+    problem = deadline_problem(sandbox, team_options)
+    if problem:
+        print(f'DeadlineError: {problem}')
+        return 2
+    problem = profile_problem()
+    if problem:
+        print(f'ModelProfileError: {problem}')
+        return 2
+    from app.agent.permission_rules import PermissionRulesError
+    from app.agent.terminal_input import TerminalAsker
+    try:
+        permission_rules = config.permission_rules()
+    except PermissionRulesError as exc:
+        print(f'PermissionRulesError: {exc}')
+        return 2
+    from app.tools.user_mcp import UserMcpError, confirm_user_mcp, probe_user_mcp
+    try:
+        user_mcp = config.user_mcp_config()
+    except UserMcpError as exc:
+        print(f'UserMcpError: {exc}')
+        return 2
+    user_mcp_servers = user_mcp.enabled_servers if user_mcp else ()
+    if user_mcp_servers:
+        problem = confirm_user_mcp(user_mcp, confirmed=getattr(args, 'confirm_mcp', False))
+        if problem:
+            print(f'UserMcpError: {problem}')
+            return 2
+        try:
+            await probe_user_mcp(user_mcp)
+        except UserMcpError as exc:
+            print(f'UserMcpError: {exc}')
+            return 2
+    asker = (TerminalAsker(_terminal_reader, config.web_approval_timeout_seconds)
+             if (permission_rules or user_mcp_servers) and sys.stdin.isatty() else None)
+    startup_deny = (*policy.closed_folders(),
+                    *(permission_rules.deny_paths_for(filesystem_root, write_root) if permission_rules else ()))
+    from app.services.project_instructions import InstructionsTrust
+    instructions_trust = None if getattr(args, 'no_instructions', False) else InstructionsTrust()
+    from app.tools.tool_loader import workspace_servers
+    service = await stack.enter_async_context(RagAgentService(
+        hooks=trace_hooks(filesystem_root, write_root),
+        mcp_servers=local_mcp_servers(
+            filesystem_root=filesystem_root,
+            write_root=write_root,
+            tavily_api_key=config.tavily_api_key, sandbox=sandbox, deny=startup_deny,
+        ),
+        # /dir in the interactive mode; a chosen directory is writable only when a write root was given.
+        workspace_servers=(workspace_servers(tavily_api_key=config.tavily_api_key, sandbox=sandbox,
+                                             writes=bool(write_root), deny=policy.closed_folders(),
+                                             permission_rules=permission_rules)
+                           if config.workspace_choice else None),
+        workspace_policy=policy, default_workspace=write_root or filesystem_root,
+        include_knowledge=not args.no_knowledge,
+        max_executions=args.max_executions,
+        conversation_compressor=compressor,
+        execution_mode=getattr(args, 'execution_mode', 'single'),
+        team_options=team_options,
+        longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
+        single_runner=getattr(args, 'single_runner', 'loop'),
+        delegate=getattr(args, 'delegate', False),
+        permission_rules=permission_rules,
+        asker=asker,
+        user_mcp_servers=user_mcp_servers,
+        instructions_trust=instructions_trust,
+    ))
+    if getattr(args, 'trust_instructions', False) and instructions_trust is not None:
+        found = service.instructions_status()
+        if found is not None and found.status in ('unconfirmed', 'changed'):
+            service.confirm_instructions(None, found.digest)
+    persona_id, store = None, getattr(service, 'personas', None)
+    if getattr(args, 'persona', None):
+        if store is None:
+            print(PERSONAS_OFF)
+            return 2
+        try:
+            persona_id = store.find(args.user_id, args.persona).persona_id
+        except PersonaError as exc:
+            print(exc.message)
+            return 2
+    return CliSession(service, persona_id, memory, instructions_trust,
+                      user_mcp_servers, filesystem_root, write_root)
+
+
 async def main(args) -> int:
     if getattr(args, 'show_limits', False):
         print(show_limits(args))
@@ -590,118 +721,15 @@ async def main(args) -> int:
             print(f'OutputSchemaError: {exc}')
             return 2
     async with AsyncExitStack() as stack:
-        compressor = None
-        if getattr(args, 'compress_history', False):
-            if not config.conversation_storage_dir:
-                raise ValueError('--compress-history requires CONVERSATION_STORAGE_DIR')
-            from app.core.dependencies import open_conversation_compressor
-            compressor = await stack.enter_async_context(open_conversation_compressor())
-        write_root = args.write_root or config.mcp_filesystem_write_root or None
-        sandbox = getattr(args, 'sandbox', False)
-        problem = sandbox_problem(write_root, sandbox)
-        if problem:
-            print(f'SandboxUnavailableError: {problem}')
-            return 2
-        filesystem_root = args.filesystem_root or config.mcp_filesystem_root or None
-        # Every directory passes the same checks; one on the system drive needs confirming (D-074).
-        from app.services.workspace import WorkspacePolicy, confirm_startup
-        policy = WorkspacePolicy.from_config()
-        problem = confirm_startup(policy, (filesystem_root, write_root),
-                                  confirmed=getattr(args, 'confirm_system_drive', False))
-        if problem:
-            print(f'WorkspaceError: {problem}')
-            return 2
-        memory = None
-        if config.longterm_memory_dsn:
-            from app.services.longterm_memory_setup import open_longterm_memory
-            memory = await stack.enter_async_context(open_longterm_memory())
-        # A user id scopes long-term memory; the local CLI user is 'local' unless given.
-        args.user_id = getattr(args, 'user_id', None) or ('local' if memory is not None else None)
-        team_options = team_options_for(getattr(args, 'execution_mode', 'single'), write_root, sandbox,
-                                        getattr(args, 'team_timeout', None))
-        problem = deadline_problem(sandbox, team_options)
-        if problem:
-            print(f'DeadlineError: {problem}')
-            return 2
-        problem = profile_problem()
-        if problem:
-            print(f'ModelProfileError: {problem}')
-            return 2
-        from app.agent.permission_rules import PermissionRulesError
-        from app.agent.terminal_input import TerminalAsker
-        try:
-            permission_rules = config.permission_rules()
-        except PermissionRulesError as exc:
-            print(f'PermissionRulesError: {exc}')
-            return 2
-        from app.tools.user_mcp import UserMcpError, confirm_user_mcp, probe_user_mcp
-        try:
-            user_mcp = config.user_mcp_config()
-        except UserMcpError as exc:
-            print(f'UserMcpError: {exc}')
-            return 2
-        user_mcp_servers = user_mcp.enabled_servers if user_mcp else ()
-        if user_mcp_servers:
-            problem = confirm_user_mcp(user_mcp, confirmed=getattr(args, 'confirm_mcp', False))
-            if problem:
-                print(f'UserMcpError: {problem}')
-                return 2
-            try:
-                await probe_user_mcp(user_mcp)
-            except UserMcpError as exc:
-                print(f'UserMcpError: {exc}')
-                return 2
-        asker = (TerminalAsker(_terminal_reader, config.web_approval_timeout_seconds)
-                 if (permission_rules or user_mcp_servers) and sys.stdin.isatty() else None)
-        startup_deny = (*policy.closed_folders(),
-                        *(permission_rules.deny_paths_for(filesystem_root, write_root) if permission_rules else ()))
-        from app.services.project_instructions import InstructionsTrust
-        instructions_trust = None if getattr(args, 'no_instructions', False) else InstructionsTrust()
-        from app.tools.tool_loader import workspace_servers
-        service = await stack.enter_async_context(RagAgentService(
-            hooks=trace_hooks(filesystem_root, write_root),
-            mcp_servers=local_mcp_servers(
-                filesystem_root=filesystem_root,
-                write_root=write_root,
-                tavily_api_key=config.tavily_api_key, sandbox=sandbox, deny=startup_deny,
-            ),
-            # /dir in the interactive mode; a chosen directory is writable only when a write root was given.
-            workspace_servers=(workspace_servers(tavily_api_key=config.tavily_api_key, sandbox=sandbox,
-                                                 writes=bool(write_root), deny=policy.closed_folders(),
-                                                 permission_rules=permission_rules)
-                               if config.workspace_choice else None),
-            workspace_policy=policy, default_workspace=write_root or filesystem_root,
-            include_knowledge=not args.no_knowledge,
-            max_executions=args.max_executions,
-            conversation_compressor=compressor,
-            execution_mode=getattr(args, 'execution_mode', 'single'),
-            team_options=team_options,
-            longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
-            single_runner=getattr(args, 'single_runner', 'loop'),
-            delegate=getattr(args, 'delegate', False),
-            permission_rules=permission_rules,
-            asker=asker,
-            user_mcp_servers=user_mcp_servers,
-            instructions_trust=instructions_trust,
-        ))
-        if getattr(args, 'trust_instructions', False) and instructions_trust is not None:
-            found = service.instructions_status()
-            if found is not None and found.status in ('unconfirmed', 'changed'):
-                service.confirm_instructions(None, found.digest)
-        persona_id, store = None, getattr(service, 'personas', None)
-        if getattr(args, 'persona', None):
-            if store is None:
-                print(PERSONAS_OFF)
-                return 2
-            try:
-                persona_id = store.find(args.user_id, args.persona).persona_id
-            except PersonaError as exc:
-                print(exc.message)
-                return 2
+        opened = await open_cli_service(args, stack)
+        if isinstance(opened, int):
+            return opened
+        service, persona_id = opened.service, opened.persona_id
+        store = getattr(service, 'personas', None)
         if args.goal is None or getattr(args, 'interactive', False):
             if persona_id is not None:       # the first persona of this session (docs/persona_plan.md)
                 store.bind(args.user_id, args.session_id, persona_id)
-            code = await interactive(service, args, memory=memory)
+            code = await interactive(service, args, memory=opened.memory)
             if outside_line():
                 print(outside_line())
             return code
@@ -709,9 +737,10 @@ async def main(args) -> int:
                          timeout_seconds=getattr(args, 'max_seconds', None))
         try:
             with metering(meter):
-                has_instructions = instructions_trust is not None and bool(write_root or filesystem_root)
+                has_instructions = (opened.instructions_trust is not None
+                                    and bool(opened.write_root or opened.filesystem_root))
                 extra = {'persona': persona_id, 'on_event': _notice_to(print)} if store is not None else (
-                    {'on_event': _notice_to(print)} if (user_mcp_servers or has_instructions) else {}
+                    {'on_event': _notice_to(print)} if (opened.user_mcp_servers or has_instructions) else {}
                 )
                 # A goal that names one of the persona's commands runs it (docs/personal_commands_plan.md).
                 run_command = personal_command(_persona_store(service), args.user_id, args.session_id,

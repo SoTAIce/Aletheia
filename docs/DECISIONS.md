@@ -1099,3 +1099,22 @@
   - 没有说明文件或用了 `--no-instructions` 时行为不变，黄金对照文件没有变化；没有用真实模型验证。
 - 来源：用户 2026-11-23“可以”（写方案）、“按推荐定”（第 8 节七条）。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对，没有改动。
 - 记录：[方案](project_instructions_plan.md)；代码在 `app/services/project_instructions.py`、`app/services/rag_agent_service.py`；测试在 `tests/test_project_instructions.py`。
+
+## D-097 2026-11-23 只读批处理：一个清单逐项运行，结果按行追加，可以续跑
+
+- 起因：三阶段收尾计划 3.5 是十几个功能，先按当前代码重排（[方案](batch_run_plan.md)第 1 节），批处理排第一：成本小，输出契约（D-093）做完后每项结果能按 Schema 校验。用户想一次交一批同样的活（逐个文件总结、逐条回答问题清单），现在只能一条条问或自己写脚本。
+- 决策：
+  - 入口 `python -m app.agent.batch`：清单文件（JSON Lines，每行 `id`、`goal`，可选 `output_schema`）或 `--each-file GLOB --goal 模板`（`{file}` 换成相对路径，只在工作目录里找，跳过禁止目录，最多 500 项），二选一。
+  - 启动检查和服务和单次任务完全相同：从 `app/agent/__main__.py` 的 `main` 抽出 `open_cli_service`，三处共用。
+  - 每项只读、不召回长期记忆、只用单一循环、不能追问：`query_result` 加 `allow_ask_user`，只在为 `False` 时写进任务选项，经装配器传给单一循环执行器；默认请求的选项不变。每项一个新会话 `batch-<批次编号>-<序号>`，按顺序跑，不并发。
+  - 预算：整批 `--max-tokens` 必填，每项默认 200,000 令牌、300 秒；每项的上限取“每项上限”和“整批剩余”中较小的。整批用量由批处理自己累加（`RunMeter` 用一个上下文变量切换，内层用量不会计入外层）。用完后剩下的项记 `not_run`，不再调用模型。
+  - 开头打印项数和预算，终端输入 `y` 才开始，不能交互时要 `--confirm-batch`。
+  - 结果文件 `--out`：第一行是批次头，之后每项一行，写完就 `fsync`。批次编号是展开后清单和 Schema 的 SHA-256 前 12 位。已存在时续跑：编号不一致就报错、不碰文件；`completed` 的跳过（`--skip-failed` 时 `failed` 也跳过）；同一 `id` 以最后一行为准；写到一半的最后一行忽略并截掉。
+  - 终端每项一行（序号、`id`、状态、令牌），最后汇总；答案只写进结果文件，不进轨迹、钩子事件、审计和日志。退出码：全部完成 0，有失败 1，有没运行的 2，Ctrl+C 130。
+- 被否方案：允许写文件和开沙箱（批量写出错难以逐项核对）；追问的项记成阻塞跳过；团队模式（每项太贵）；并发（和预算、服务商限流互相干扰）；整批预算默认不限。
+- 约束：
+  - 用了 `--persona` 且人设设了默认工作目录时，每项会用人设的目录，而 `--each-file` 按 `--filesystem-root` 展开；
+  - 没有网页界面，不导出表格；
+  - 不用批处理时其他入口行为不变，黄金对照文件没有变化；没有用真实模型验证。
+- 来源：用户 2026-11-23“写方案吧”、“按推荐定”（第 8 节七条）。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对，没有改动。
+- 记录：[方案](batch_run_plan.md)；代码在 `app/agent/batch.py`、`app/agent/__main__.py`（`open_cli_service`）；测试在 `tests/test_batch.py`。
