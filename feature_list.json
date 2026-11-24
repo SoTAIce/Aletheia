@@ -1784,6 +1784,16 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "batch-run-001",
+      "name": "Read-only batch runner: one manifest, items run in order, resumable results",
+      "description": "docs/batch_run_plan.md, D-097. python -m app.agent.batch takes a JSONL manifest (id, goal, optional output_schema) or --each-file GLOB --goal TEMPLATE. Startup is shared with the single-task CLI (open_cli_service). Each item is read-only, single loop, no long-term memory, no ask_user (query_result allow_ask_user=False), a fresh session. --max-tokens for the whole batch is required, with per-item limits; a prompt or --confirm-batch starts it. Results are appended per line with fsync; rerunning the same manifest skips completed items. Section 1 of the plan reorders the rest of 3.5.",
+      "status": "done",
+      "dependencies": [
+        "output-contract-001"
+      ],
+      "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked by Claude without changes. init.ps1 2307 passed, 28 skipped; goldens unchanged. Not committed. No live model run."
+    },
+    {
       "id": "project-instructions-001",
       "name": "Project instructions file: confirmed working-directory rules as a task constraint",
       "description": "docs/project_instructions_plan.md, D-096. The working directory root's .aletheia/instructions.md, else AGENTS.md, is read once by the host (no links, inside the workspace, not in closed folders, UTF-8, up to 8000 chars) and, once confirmed, added to each new task as a constraint after the persona instructions. Confirmation is a per-directory content digest in data/instructions_confirmed.json; a change asks again; unconfirmed files are skipped with a notice. Web: GET /api/instructions, POST /api/instructions/confirm, a bar and dialog above the input. CLI: asks in the interactive mode, --trust-instructions, --no-instructions. The instructions event carries no text or path.",
