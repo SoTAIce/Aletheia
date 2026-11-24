@@ -1784,6 +1784,16 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "citation-check-001",
+      "name": "Citation check: task-wide [ref:n] numbering, existence check before delivery, clickable sources",
+      "description": "docs/citation_check_plan.md, D-098. KnowledgeRegistryTool renumbers retrieved evidence across the task (CitationLedger on RunMemory; the same chunk keeps its number). The single loop checks [ref:n] in the final answer before the output contract: invalid numbers get one rewrite without tools, then the answer is delivered with citation_problems; existence only, not support. AgentRunResult carries citations (file, heading, lines, snippet) and citation_problems; CLI lists sources, batch rows carry them, the web page shows clickable source cards. Adds retrieval chain tests and fixes two D-033 leaks in knowledge retrieval and reranking.",
+      "status": "done",
+      "dependencies": [
+        "output-contract-001"
+      ],
+      "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium); the run finished without its final report, checked by Claude without changes. init.ps1 2339 passed, 28 skipped; goldens unchanged. Not committed. No live model run. Web history does not render clickable citations."
+    },
+    {
       "id": "batch-run-001",
       "name": "Read-only batch runner: one manifest, items run in order, resumable results",
       "description": "docs/batch_run_plan.md, D-097. python -m app.agent.batch takes a JSONL manifest (id, goal, optional output_schema) or --each-file GLOB --goal TEMPLATE. Startup is shared with the single-task CLI (open_cli_service). Each item is read-only, single loop, no long-term memory, no ask_user (query_result allow_ask_user=False), a fresh session. --max-tokens for the whole batch is required, with per-item limits; a prompt or --confirm-batch starts it. Results are appended per line with fsync; rerunning the same manifest skips completed items. Section 1 of the plan reorders the rest of 3.5.",
