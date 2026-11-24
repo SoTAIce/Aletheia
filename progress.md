@@ -42,7 +42,7 @@
 | 3.1 | 结构化输出契约 | 5.1 | 已实施（2026-11-20，D-093，`docs/output_contract_plan.md`，未提交）：第 8 节按推荐定，Gemini 实施、Claude 核对并改了两处；`init.ps1` 2192 passed；没有用真实模型验证 |
 | 3.2 | 按规则的权限控制 | 7.2 | 已实施（2026-11-22，D-094，`docs/permission_rules_plan.md`，未提交）：第 8 节按推荐定，Gemini 实施、Claude 核对并改了三处；`init.ps1` 2226 passed；没有用真实模型验证 |
 | 3.3 | 接入用户自己的 MCP 服务器 | 7.1 | 已实施（2026-11-22，D-095，`docs/user_mcp_plan.md`，未提交）：第 8 节按推荐定，Gemini 实施、Claude 核对并改了一处；`init.ps1` 2269 passed；没有用真实模型验证 |
-| 3.4 | 项目说明文件 | 1.1 的另一半 | 人设只覆盖了个人指令（D-088 约束里写明） |
+| 3.4 | 项目说明文件 | 1.1 的另一半 | 已实施（2026-11-23，D-096，`docs/project_instructions_plan.md`，未提交）：第 8 节七条按推荐定，Gemini 实施、Claude 核对没有改动；`init.ps1` 2283 passed；没有用真实模型验证 |
 | 3.5 | 其余：批处理、引用核对、新模型角色、定时任务、更多文档格式等 | 见想法清单第 9 节 | 按价值 / 成本排 |
 
 ## 已确认基线（历史，未重新测量）
@@ -53,6 +53,13 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-23 — project-instructions-001：项目说明文件（D-096）
+
+- 三阶段收尾计划 3.4。方案 `docs/project_instructions_plan.md` 第 8 节七条按推荐定。
+- 由 Gemini（`D:\tools\agy\agy.exe`，`gemini-4-neon-medium`）实施，一次启动成功；Claude 核对没有改动。
+- 实施中有一步在真实的 `data/personas/` 写了会话绑定文件；另让 Gemini 清理时因无头模式没有命令权限被拒，由 Claude 按用户同意删掉了 `data/personas/`。
+- `init.ps1` 2283 passed、28 skipped；黄金对照文件不变；用户未提交的文件没有被碰过。没有调用真实模型。未提交。
 
 ### 2026-11-22 — user-mcp-001：接入用户自己的 MCP 服务器（D-095）
 
