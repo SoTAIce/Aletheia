@@ -207,7 +207,8 @@ async def test_the_token_is_required_everywhere(tmp_path):
                                       'memory_available': False, 'memory_default': False},
                           'approval_tools': [],                                          # D-061
                           'permission_rules': 0,                                         # D-094
-                          'mcp_servers': []}                                             # D-095
+                          'mcp_servers': [],                                             # D-095
+                          'project_instructions': False}                                 # D-096
 
 
 async def test_unknown_runs_and_paths_have_codes(tmp_path):
@@ -377,3 +378,82 @@ async def test_web_api_output_schema_option_validation_and_delivery(tmp_path):
         # Resume with output_schema is rejected with 400.
         resp_resume = await web.send('s1', 'yes', 'r10', resume_task_id='t1', options={'output_schema': schema})
         assert resp_resume.status_code == 400 and resp_resume.json()['code'] == 'invalid_input'
+
+
+async def test_web_api_project_instructions_endpoints_auth_and_workspace_checks(tmp_path, monkeypatch):
+    from app.services.project_instructions import InstructionsTrust
+    from app.services.workspace import WorkspacePolicy
+
+    # 1. Disabled by default (instructions_trust=None): health reports false, endpoints return 404.
+    async with api(service_for(tmp_path)) as web:
+        health = (await web.client.get('/api/health')).json()
+        assert health['project_instructions'] is False
+        assert (await web.client.get('/api/instructions')).status_code == 404
+        assert (await web.client.get('/api/instructions')).json()['code'] == 'instructions_unavailable'
+        r_post = await web.client.post('/api/instructions/confirm', json={'digest': 'abc'})
+        assert r_post.status_code == 404 and r_post.json()['code'] == 'instructions_unavailable'
+
+    # 2. Enabled with default workspace and no workspace_servers (remote-listener case):
+    ws = tmp_path / 'repo'
+    ws.mkdir()
+    other = tmp_path / 'other'
+    other.mkdir()
+    trust = InstructionsTrust(tmp_path / 'trust.json')
+    svc = RagAgentService(
+        model=AsyncMock(), mcp_servers=(), include_knowledge=False, memory_directory=tmp_path,
+        default_workspace=str(ws), instructions_trust=trust,
+    )
+    async with api(svc) as web:
+        assert (await web.client.get('/api/health')).json()['project_instructions'] is True
+
+        # Auth required on both endpoints
+        assert (await web.client.get('/api/instructions', headers={'Authorization': ''})).status_code == 401
+        assert (await web.client.post('/api/instructions/confirm', json={'digest': 'x'},
+                                      headers={'Authorization': ''})).status_code == 401
+
+        # No file -> status 'none'
+        assert (await web.client.get('/api/instructions')).json() == {'status': 'none'}
+
+        # Passing ?workspace= when workspace_servers is off (e.g. remote listener) is refused
+        bad_ws = await web.client.get('/api/instructions', params={'workspace': str(other)})
+        assert bad_ws.status_code == 400 and bad_ws.json()['code'] == 'workspace_unavailable'
+
+        # Create AGENTS.md -> GET returns unconfirmed + text + digest
+        (ws / 'AGENTS.md').write_text('WEB_RULE_TEXT', encoding='utf-8')
+        info = (await web.client.get('/api/instructions')).json()
+        assert info['status'] == 'unconfirmed' and info['file'] == 'AGENTS.md'
+        assert info['text'] == 'WEB_RULE_TEXT' and info['digest']
+
+        # Wrong digest -> 409 instructions_changed, does not write trust file
+        mismatch = await web.client.post('/api/instructions/confirm', json={'digest': '0' * 64})
+        assert mismatch.status_code == 409 and mismatch.json()['code'] == 'instructions_changed'
+        assert not trust.path.exists()
+
+        # Matching digest -> 200 loaded, subsequent GET omits text
+        ok = await web.client.post('/api/instructions/confirm', json={'digest': info['digest']})
+        assert ok.status_code == 200 and ok.json()['status'] == 'loaded'
+        after = (await web.client.get('/api/instructions')).json()
+        assert after['status'] == 'loaded' and 'text' not in after
+
+    # 3. With workspace_servers enabled, system drive requires workspace_confirmed
+    monkeypatch.setenv('SystemDrive', str(other.resolve().drive or 'C:').upper())
+    svc_ws = RagAgentService(
+        model=AsyncMock(), mcp_servers=(), include_knowledge=False, memory_directory=tmp_path,
+        workspace_servers=lambda root, writable: (), workspace_policy=WorkspacePolicy(),
+        instructions_trust=trust,
+    )
+    (other / 'AGENTS.md').write_text('SYS_RULE', encoding='utf-8')
+    async with api(svc_ws) as web:
+        if other.resolve().drive:
+            r409 = await web.client.get('/api/instructions', params={'workspace': str(other)})
+            assert r409.status_code == 409 and r409.json()['code'] == 'workspace_confirmation_required'
+            r200 = await web.client.get('/api/instructions',
+                                        params={'workspace': str(other), 'workspace_confirmed': 'true'})
+            assert r200.status_code == 200 and r200.json()['status'] == 'unconfirmed'
+            c409 = await web.client.post('/api/instructions/confirm',
+                                         json={'workspace': str(other), 'digest': r200.json()['digest']})
+            assert c409.status_code == 409 and c409.json()['code'] == 'workspace_confirmation_required'
+            c200 = await web.client.post('/api/instructions/confirm',
+                                         json={'workspace': str(other), 'workspace_confirmed': True,
+                                               'digest': r200.json()['digest']})
+            assert c200.status_code == 200 and c200.json()['status'] == 'loaded'

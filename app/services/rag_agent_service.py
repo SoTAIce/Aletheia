@@ -158,6 +158,7 @@ class RagAgentService:
         personas_dir: str | None = None,
         permission_rules=None, asker=None,
         user_mcp_servers=(),
+        instructions_trust=None,
     ) -> None:
         self.streaming = streaming
         self.model = model
@@ -175,6 +176,10 @@ class RagAgentService:
             tuple(user_mcp_servers.enabled_servers)
             if hasattr(user_mcp_servers, 'enabled_servers') else tuple(user_mcp_servers)
         )
+        from app.services.project_instructions import InstructionsTrust
+        if instructions_trust is not None and not isinstance(instructions_trust, InstructionsTrust):
+            raise TypeError('instructions_trust must be InstructionsTrust')
+        self._instructions_trust = instructions_trust
         self._spent_tokens: dict = {}       # conversation key -> tokens used, for the cap (D-060)
         self._memory_directory = config.conversation_storage_dir if memory_directory is None else memory_directory
         self._conversation_compressor = conversation_compressor
@@ -402,6 +407,48 @@ class RagAgentService:
         """Enabled user MCP servers configured at startup (D-095)."""
         return self._user_mcp_servers
 
+    @property
+    def instructions_trust(self):
+        """Trust store for working-directory project instructions, or None when disabled (D-096)."""
+        return self._instructions_trust
+
+    def _closed_folders(self) -> tuple[Path, ...]:
+        return self._workspace_policy.closed_folders() if self._workspace_policy is not None else ()
+
+    def instructions_status(self, workspace: str | None = None):
+        """Inspect the working directory's project instructions file; None when disabled or absent."""
+        if self._instructions_trust is None:
+            return None
+        target = workspace or self._default_workspace
+        if not target:
+            return None
+        from app.services.project_instructions import find_instructions
+        return find_instructions(target, self._closed_folders(), self._instructions_trust)
+
+    def confirm_instructions(self, workspace: str | None, digest: str):
+        """Confirm a project instructions file after re-reading and verifying its SHA-256 digest."""
+        if self._instructions_trust is None:
+            raise ValueError('project instructions are disabled')
+        from app.services.project_instructions import (
+            InstructionsChanged, ProjectInstructions, find_instructions,
+        )
+        target = workspace or self._default_workspace
+        if not target:
+            raise InstructionsChanged('没有设置工作目录。')
+        found = find_instructions(target, self._closed_folders(), self._instructions_trust)
+        if found is None or found.status == 'unreadable' or not digest or found.digest != digest:
+            raise InstructionsChanged()
+        self._instructions_trust.confirm(target, found.name, found.digest)
+        return ProjectInstructions(
+            name=found.name,
+            text=found.text,
+            chars=found.chars,
+            truncated=found.truncated,
+            digest=found.digest,
+            status='loaded',
+            reason=None,
+        )
+
     def _resolve_persona(self, user_id, session_id, persona_id):
         """The persona of a new task: the one named for this request, else the session's. An
         unbound session is bound to the one it gets, so its first task fixes it."""
@@ -576,7 +623,7 @@ class RagAgentService:
                     _emit(on_event, note)
                 context_manager = await self._prepare_task(
                     conversation, key, user_id, question, task, runtime, question_id, attachments, options,
-                    chosen, command_text, output_contract=output_contract)
+                    chosen, command_text, output_contract=output_contract, on_event=on_event)
                 result = await self._execute(
                     conversation, key, user_id, session_id, question, hooks, on_event, outcome_key,
                     task, memory, runtime, options, context_manager, output_contract=output_contract)
@@ -739,10 +786,11 @@ class RagAgentService:
             raise
 
     async def _prepare_task(self, conversation, key, user_id, question, task, runtime, question_id,
-                            attachments, options, persona=None, command_text=None, output_contract=None):
+                            attachments, options, persona=None, command_text=None, output_contract=None,
+                            on_event=None):
         """The task's context manager, with the answer, attachments, workspace note, history and recall
-        pinned, and a new task's persona instructions as a constraint (docs/persona_plan.md), then
-        its personal command's expanded template (docs/personal_commands_plan.md)."""
+        pinned, and a new task's persona instructions, project instructions, personal command and
+        output contract added as constraints."""
         main = config.model_profiles().role('main')      # the default profile without a file (4d-2)
         context_manager = ContextManager(
             window_tokens=main.context_tokens,
@@ -754,13 +802,21 @@ class RagAgentService:
         if runtime is None and persona is not None and persona.instructions:
             from app.services.personas import PERSONA_PREAMBLE
             task.add_constraint(PERSONA_PREAMBLE + '\n\n' + persona.instructions)
+        current = options.get('workspace') or self._default_workspace
+        if runtime is None and self._instructions_trust is not None and current:
+            from app.services.project_instructions import find_instructions
+            found = await asyncio.to_thread(
+                find_instructions, current, self._closed_folders(), self._instructions_trust)
+            if found is not None:
+                _emit(on_event, found.event())
+                if found.status == 'loaded':
+                    task.add_constraint(found.constraint_text())
         if runtime is None and command_text:
             task.add_constraint(command_text)
         if runtime is None and output_contract is not None:
             task.add_constraint(output_contract.constraint_text())
         if attachments:
             task.pin_content(await self._attachment_note(conversation, attachments), 'attachments')
-        current = options.get('workspace') or self._default_workspace
         previous = self._session_workspaces.get(key)
         if runtime is None and previous is not None and previous != current:
             task.pin_content(WORKSPACE_CHANGED_NOTE, 'workspace_note')

@@ -67,6 +67,7 @@ def test_sandbox_auto_run_offers_tools_but_grades_the_answer(monkeypatch):
     row = run_bench.run_one(TASK, 'auto', 1, 5, sandbox=True)
     cmd = seen['cmd']
     assert '--write-root' in cmd and '--sandbox' in cmd and cmd[cmd.index('--execution-mode') + 1] == 'auto'
+    assert '--no-instructions' in cmd
     assert cmd[cmd.index('-m') + 2] == TASK['goal']                    # no write goal, no sandbox test hint
     assert row['delivery'] == 'answer' and row['passed'] is True and row['checks_total'] == 6
     assert row['route_correct'] is True and row['lenient_all_passed'] is True

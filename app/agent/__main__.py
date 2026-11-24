@@ -341,10 +341,16 @@ def _persona_store(service):
 
 def _notice_to(write):
     """An on_event that prints the task's persona line (docs/persona_plan.md), its personal
-    command's line (docs/personal_commands_plan.md), and unavailable user MCP servers (D-095)."""
+    command's line (docs/personal_commands_plan.md), project instructions (D-096), and
+    unavailable user MCP servers (D-095)."""
     def on_event(event):
         if event.get('type') == 'persona':
             line = persona_notice(event)
+            if line:
+                write(line)
+        elif event.get('type') == 'instructions':
+            from app.services.project_instructions import instructions_notice
+            line = instructions_notice(event)
             if line:
                 write(line)
         elif event.get('type') == 'command':
@@ -352,6 +358,51 @@ def _notice_to(write):
         elif event.get('type') == 'mcp_server' and event.get('result') == 'unavailable':
             write(f"用户服务 {event.get('server')} 这次没能启动（{event.get('error', 'Error')}），它的工具不可用")
     return on_event
+
+
+async def prompt_instructions(service, workspace, *, declined: set, read_line, write=print,
+                              interactive: bool | None = None) -> None:
+    """In an interactive terminal, ask whether to trust an unconfirmed/changed project instructions file."""
+    is_tty = sys.stdin.isatty() if interactive is None else interactive
+    if not is_tty:
+        return
+    status_fn = getattr(service, 'instructions_status', None)
+    if not callable(status_fn):
+        return
+    found = status_fn(workspace)
+    if found is None or found.status not in ('unconfirmed', 'changed'):
+        return
+    target = workspace or (service.run_options().get('default_workspace')
+                           if hasattr(service, 'run_options') else None)
+    key = (os.path.normcase(str(Path(target).resolve())) if target else '', found.name)
+    if key in declined:
+        return
+    from app.services.project_instructions import InstructionsChanged, MAX_INSTRUCTION_CHARS
+    if found.status == 'changed':
+        write(f'项目说明 {found.name}（{found.chars} 字）内容已更改，需要重新确认。')
+    else:
+        write(f'这个目录有项目说明 {found.name}（{found.chars} 字），还没确认。')
+    try:
+        answer = (await read_line('输入 v 显示全文，y 信任，其他任意输入这次运行不再问：')).strip().lower()
+    except EOFError:
+        answer = ''
+    if answer == 'v':
+        write(found.text)
+        if found.truncated:
+            write(f'（超过 {MAX_INSTRUCTION_CHARS} 字的部分已截断，不会发给模型）')
+        try:
+            answer = (await read_line('信任这份项目说明吗？输入 y 信任，其他任意输入这次运行不再问：')).strip().lower()
+        except EOFError:
+            answer = ''
+    if answer == 'y':
+        try:
+            service.confirm_instructions(workspace, found.digest)
+            write(f'已信任项目说明 {found.name}。')
+        except InstructionsChanged:
+            write(f'项目说明 {found.name} 刚刚发生变化，未确认。')
+    else:
+        declined.add(key)
+        write(f'本次运行不再询问 {found.name}。')
 
 
 def personal_command(store, user_id, session_id, line, persona_id=None):
@@ -377,7 +428,8 @@ async def _read_line(prompt):
     return await _terminal_reader.read_line(prompt)
 
 
-async def dir_command(command, state, service, read_line, write=print, waiting=None) -> None:
+async def dir_command(command, state, service, read_line, write=print, waiting=None, *,
+                      declined=None, is_tty=None) -> None:
     """/dir shows the working directory; /dir PATH changes it for the next tasks (workspace-001).
     A directory on the system drive needs a typed 'y' (D-074)."""
     offered = service.run_options()
@@ -405,9 +457,11 @@ async def dir_command(command, state, service, read_line, write=print, waiting=N
             return
     state.update(workspace=result.path, confirmed=result.system_drive)
     write('工作目录已更换为：' + result.path + ('（等待回答的任务仍用原来的目录）' if waiting else ''))
+    await prompt_instructions(service, result.path, declined=declined if declined is not None else set(),
+                              read_line=read_line, write=write, interactive=is_tty)
 
 
-async def interactive(service, args, read_line=None, write=print, memory=None) -> int:
+async def interactive(service, args, read_line=None, write=print, memory=None, *, is_tty=None) -> int:
     """Keep one service and session open across turns (D-040).
 
     A blocked task lives only in this process, so the next line answers it unless /new
@@ -420,6 +474,9 @@ async def interactive(service, args, read_line=None, write=print, memory=None) -
     waiting = None          # task id of a blocked task waiting for an answer
     queued = args.goal      # a goal given on the command line is the first turn
     place = {}              # the working directory chosen with /dir (workspace-001)
+    declined = set()        # (normalized_workspace, filename) declined for this run (D-096)
+    await prompt_instructions(service, None, declined=declined, read_line=read_line, write=write,
+                              interactive=is_tty)
     while True:
         if queued is not None:
             line, queued = queued, None
@@ -442,7 +499,8 @@ async def interactive(service, args, read_line=None, write=print, memory=None) -
             waiting = None
             continue
         if command == '/dir' or command.startswith('/dir '):
-            await dir_command(command, place, service, read_line, write, waiting)
+            await dir_command(command, place, service, read_line, write, waiting,
+                              declined=declined, is_tty=is_tty)
             continue
         if command.split(' ', 1)[0] in ('/remember', '/memories', '/forget'):
             await memory_command(command, memory, user_id, write,
@@ -597,6 +655,8 @@ async def main(args) -> int:
                  if (permission_rules or user_mcp_servers) and sys.stdin.isatty() else None)
         startup_deny = (*policy.closed_folders(),
                         *(permission_rules.deny_paths_for(filesystem_root, write_root) if permission_rules else ()))
+        from app.services.project_instructions import InstructionsTrust
+        instructions_trust = None if getattr(args, 'no_instructions', False) else InstructionsTrust()
         from app.tools.tool_loader import workspace_servers
         service = await stack.enter_async_context(RagAgentService(
             hooks=trace_hooks(filesystem_root, write_root),
@@ -622,7 +682,12 @@ async def main(args) -> int:
             permission_rules=permission_rules,
             asker=asker,
             user_mcp_servers=user_mcp_servers,
+            instructions_trust=instructions_trust,
         ))
+        if getattr(args, 'trust_instructions', False) and instructions_trust is not None:
+            found = service.instructions_status()
+            if found is not None and found.status in ('unconfirmed', 'changed'):
+                service.confirm_instructions(None, found.digest)
         persona_id, store = None, getattr(service, 'personas', None)
         if getattr(args, 'persona', None):
             if store is None:
@@ -644,8 +709,9 @@ async def main(args) -> int:
                          timeout_seconds=getattr(args, 'max_seconds', None))
         try:
             with metering(meter):
+                has_instructions = instructions_trust is not None and bool(write_root or filesystem_root)
                 extra = {'persona': persona_id, 'on_event': _notice_to(print)} if store is not None else (
-                    {'on_event': _notice_to(print)} if user_mcp_servers else {}
+                    {'on_event': _notice_to(print)} if (user_mcp_servers or has_instructions) else {}
                 )
                 # A goal that names one of the persona's commands runs it (docs/personal_commands_plan.md).
                 run_command = personal_command(_persona_store(service), args.user_id, args.session_id,
@@ -691,6 +757,10 @@ def build_parser():
                         help='Confirm a --filesystem-root/--write-root on the system drive (C:) without a prompt (D-074)')
     parser.add_argument('--confirm-mcp', action='store_true',
                         help='Confirm user MCP servers from MCP_SERVERS_FILE without a prompt (D-095)')
+    parser.add_argument('--trust-instructions', action='store_true',
+                        help="Trust the current working directory's project instructions file for this run (D-096)")
+    parser.add_argument('--no-instructions', action='store_true',
+                        help='Do not read project instructions files from the working directory (D-096)')
     parser.add_argument("--no-knowledge", action="store_true", help="Disable RAG when no knowledge store is configured")
     parser.add_argument('--execution-mode', choices=['single', 'team', 'auto'], default='single',
                         help='single: ordinary tool calling; team: the delegating team; '
@@ -729,6 +799,8 @@ def parse_args(argv=None):
     args = parser.parse_args(argv)
     if args.connect and not args.show_mcp:
         parser.error('--connect can only be used with --show-mcp')
+    if args.trust_instructions and args.no_instructions:
+        parser.error('--trust-instructions and --no-instructions cannot be used together')
     if (args.goal is None or args.interactive) and args.result_json:
         parser.error('--result-json needs a single goal, not the interactive mode')
     if (args.goal is None or args.interactive) and args.output_schema:

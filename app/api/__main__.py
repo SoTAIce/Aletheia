@@ -108,6 +108,8 @@ async def serve(args) -> int:
             mcp_health_info = tuple({'name': s.name, 'tools': len(probed[s.name].tools)} for s in user_mcp_servers)
         startup_deny = (*policy.closed_folders(),
                         *(permission_rules.deny_paths_for(filesystem_root, write_root) if permission_rules else ()))
+        from app.services.project_instructions import InstructionsTrust
+        instructions_trust = None if getattr(args, 'no_instructions', False) else InstructionsTrust()
         service = await stack.enter_async_context(RagAgentService(
             mcp_servers=local_mcp_servers(
                 filesystem_root=filesystem_root,
@@ -125,6 +127,7 @@ async def serve(args) -> int:
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
             permission_rules=permission_rules,
             user_mcp_servers=user_mcp_servers,
+            instructions_trust=instructions_trust,
         ))
         app = create_app(service, user_id=config.web_user_id, access_token=config.web_access_token,
                          memory=memory, write_enabled=bool(write_root) or choice,
@@ -156,6 +159,8 @@ def build_parser():
                         help='Confirm a --filesystem-root/--write-root on the system drive (C:) without a prompt (D-074)')
     parser.add_argument('--confirm-mcp', action='store_true',
                         help='Confirm user MCP servers from MCP_SERVERS_FILE without a prompt (D-095)')
+    parser.add_argument('--no-instructions', action='store_true',
+                        help='Do not read project instructions files from the working directory (D-096)')
     parser.add_argument('--no-knowledge', action='store_true', help='Disable RAG when no knowledge store is configured')
     parser.add_argument('--execution-mode', choices=['single', 'team', 'auto'], default='single')
     parser.add_argument('--single-runner', choices=['loop'], default='loop',

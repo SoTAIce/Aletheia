@@ -61,6 +61,9 @@ Thumbs.db
 data/conversations/
 # The user's own personas (docs/persona_plan.md)
 data/personas/
+# Confirmed user MCP servers (D-095) and project instructions (D-096)
+data/mcp_confirmed.json
+data/instructions_confirmed.json
 
 # Handoff branch worktree (session-handoff.md, progress.md, feature_list.json; see AGENTS.md)
 .handoff/

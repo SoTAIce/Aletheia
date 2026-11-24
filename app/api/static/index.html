@@ -73,6 +73,10 @@
           <span class="waiting-label">等待你的回答</span>
           <span id="waiting-question"></span>
         </div>
+        <div id="instructions-banner" class="instructions-banner" hidden>
+          <span id="instructions-banner-text"></span>
+          <button type="button" id="instructions-review" class="ghost-btn">查看并信任</button>
+        </div>
         <form id="composer" class="composer">
           <div id="command-menu" class="command-menu" role="listbox" aria-label="个人命令" hidden></div>
           <div id="attachments" class="attachments" hidden></div>
@@ -243,6 +247,21 @@
         <span class="spacer"></span>
         <button type="button" id="drive-cancel" class="ghost-btn">取消</button>
         <button type="button" id="drive-confirm" class="danger-btn">仍然使用</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="instructions-dialog" class="dialog" role="alertdialog" aria-labelledby="instructions-title">
+    <div class="dialog-body">
+      <h2 id="instructions-title" class="dialog-title">项目说明</h2>
+      <p id="instructions-meta" class="muted"></p>
+      <pre id="instructions-text" class="instructions-preview"></pre>
+      <p id="instructions-truncated" class="muted" hidden></p>
+      <p id="instructions-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <span class="spacer"></span>
+        <button type="button" id="instructions-cancel" class="ghost-btn">取消</button>
+        <button type="button" id="instructions-confirm" class="pill">信任</button>
       </div>
     </div>
   </dialog>

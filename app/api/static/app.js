@@ -103,6 +103,7 @@ const $ = (id) => document.getElementById(id);
 const state = {token: '', session: null, sessions: [], turns: [], waiting: null, run: null,
                caps: null, options: null,    // caps: health.options; options: what the next run asks for
                place: null, attachments: [], // place: chosen working directory; attachments: uploaded files
+               instructionsOn: false, instructions: null,            // D-096: project instructions
                personasOn: false, persona: null, personaList: [],   // docs/persona_plan.md
                commands: [], menuIndex: 0};                          // docs/personal_commands_plan.md
 
@@ -394,6 +395,7 @@ async function refreshHealth() {
   $('dot-runs').className = 'dot' + (health.active_runs ? ' busy' : '');
   $('toggle-memory').hidden = !health.longterm_memory;
   state.personasOn = Boolean(health.personas);
+  state.instructionsOn = Boolean(health.project_instructions);
   $('toggle-persona').hidden = !state.personasOn;
   $('toggle-commands').hidden = !state.personasOn;
   $('persona-option').hidden = !state.personasOn;
@@ -508,6 +510,7 @@ async function openSession(sessionId) {
   renderSessions();
   await loadTurns();
   await loadPersonas().catch((e) => toast(e.message));
+  checkInstructions().catch(() => {});
   const runId = saved(RUN_KEY, {})[sessionId];
   setBusy(false);
   if (runId) resumeFollowing(runId);
@@ -527,6 +530,7 @@ function newSession() {
   renderTurns();
   setBusy(false);
   loadPersonas().catch((e) => toast(e.message));
+  checkInstructions().catch(() => {});
   $('input').focus();
 }
 
@@ -930,6 +934,114 @@ async function applyDir(check) {
   if ($('dir-dialog').open) $('dir-dialog').close();
   renderOptions();
   toast('');
+  await checkInstructions();
+}
+
+// ---- project instructions (D-096, docs/project_instructions_plan.md) -------------------
+
+const INSTRUCTION_REASONS = {
+  link: '是符号链接或目录联接',
+  not_file: '不是普通文件',
+  outside: '真实路径不在工作目录内',
+  closed: '在禁止读写的目录里',
+  too_large: '文件超过大小上限',
+  not_utf8: '不是 UTF-8 编码',
+  error: '读取失败',
+};
+
+function instructionsNotice(event) {
+  const file = event.file || '';
+  if (event.status === 'loaded') {
+    return `本次任务带了项目说明 ${file}（${event.chars || 0} 字）`
+      + (event.truncated ? '，超过 8000 字的部分没带上' : '');
+  }
+  if (event.status === 'unconfirmed') {
+    return `这个目录有项目说明 ${file}，还没确认，这次没带上（在输入框上方确认）`;
+  }
+  if (event.status === 'changed') {
+    return `项目说明 ${file} 改过了，需要重新确认，这次没带上`;
+  }
+  if (event.status === 'unreadable') {
+    const reason = INSTRUCTION_REASONS[event.reason] || '读取失败';
+    return `项目说明 ${file} 读不了（${reason}），这次没带上`;
+  }
+  return '';
+}
+
+function renderInstructionsBanner() {
+  const banner = $('instructions-banner');
+  const info = state.instructions;
+  if (!info || (info.status !== 'unconfirmed' && info.status !== 'changed')) {
+    banner.hidden = true;
+    return;
+  }
+  const text = info.status === 'changed'
+    ? `项目说明 ${info.file}（${info.chars} 字）内容已更改，需要重新确认，任务不会带上它。`
+    : `这个目录有项目说明 ${info.file}（${info.chars} 字），还没确认，任务不会带上它。`;
+  $('instructions-banner-text').textContent = text;
+  banner.hidden = false;
+}
+
+async function checkInstructions() {
+  if (!state.instructionsOn) {
+    state.instructions = null;
+    renderInstructionsBanner();
+    return;
+  }
+  const params = new URLSearchParams();
+  if (state.place && state.place.path) {
+    params.set('workspace', state.place.path);
+    if (state.place.confirmed) params.set('workspace_confirmed', 'true');
+  }
+  const query = params.toString() ? '?' + params.toString() : '';
+  try {
+    state.instructions = await api('/api/instructions' + query);
+  } catch (e) {
+    if (e.status === 401) return;
+    state.instructions = null;
+  }
+  renderInstructionsBanner();
+}
+
+function openInstructionsDialog() {
+  const info = state.instructions;
+  if (!info || (info.status !== 'unconfirmed' && info.status !== 'changed')) return;
+  const dialog = $('instructions-dialog');
+  $('instructions-title').textContent = `项目说明：${info.file}`;
+  $('instructions-meta').textContent = `共 ${info.chars} 字` + (info.status === 'changed' ? '（内容已更改，需重新确认）' : '');
+  $('instructions-text').textContent = info.text || '';
+  $('instructions-truncated').textContent = '超过 8000 字的部分已截断，不会发给模型。';
+  $('instructions-truncated').hidden = !info.truncated;
+  $('instructions-error').hidden = true;
+  $('instructions-confirm').disabled = false;
+  dialog.showModal();
+  $('instructions-cancel').focus();   // safe default focus
+}
+
+async function confirmInstructions() {
+  const info = state.instructions;
+  if (!info || !info.digest) return;
+  const error = $('instructions-error');
+  error.hidden = true;
+  $('instructions-confirm').disabled = true;
+  try {
+    const body = {
+      workspace: state.place ? state.place.path : null,
+      workspace_confirmed: Boolean(state.place && state.place.confirmed),
+      digest: info.digest,
+    };
+    const updated = await api('/api/instructions/confirm', {method: 'POST', body});
+    state.instructions = updated;
+    renderInstructionsBanner();
+    $('instructions-dialog').close();
+    toast(`已信任项目说明 ${info.file}，下个任务起生效。`);
+  } catch (e) {
+    if (e.status === 401) return;
+    error.textContent = e.message;
+    error.hidden = false;
+    $('instructions-confirm').disabled = false;
+    if (e.status === 409) checkInstructions().catch(() => {});
+  }
 }
 
 // ---- attachments: text files dropped into the message box (workspace-001) --------------
@@ -1313,6 +1425,8 @@ class LiveView {
     this.route = el('p', 'route');
     this.persona = el('p', 'route');
     this.persona.hidden = true;
+    this.instructions = el('p', 'route');
+    this.instructions.hidden = true;
     this.command = el('p', 'route');
     this.command.hidden = true;
     this.steps = el('ol', 'steps');
@@ -1321,7 +1435,7 @@ class LiveView {
     this.approvals = new Map();   // approval_id -> card (D-061)
     this.runId = null;
     this.order = [];
-    this.part.append(this.status, this.persona, this.command, this.route, this.steps);
+    this.part.append(this.status, this.persona, this.instructions, this.command, this.route, this.steps);
     turnBox.append(this.part);
   }
 
@@ -1350,6 +1464,11 @@ class LiveView {
       case 'persona': {
         this.persona.textContent = personaNotice(event);
         this.persona.hidden = !this.persona.textContent;
+        break;
+      }
+      case 'instructions': {
+        this.instructions.textContent = instructionsNotice(event);
+        this.instructions.hidden = !this.instructions.textContent;
         break;
       }
       case 'command': {
@@ -1641,7 +1760,11 @@ $('dir-default').addEventListener('click', () => {
   }
   $('dir-dialog').close();
   renderOptions();
+  checkInstructions().catch(() => {});
 });
+$('instructions-review').addEventListener('click', openInstructionsDialog);
+$('instructions-cancel').addEventListener('click', () => $('instructions-dialog').close());
+$('instructions-confirm').addEventListener('click', confirmInstructions);
 $('attach-btn').addEventListener('click', () => $('attach-input').click());
 $('attach-input').addEventListener('change', (event) => {
   const files = [...event.target.files];

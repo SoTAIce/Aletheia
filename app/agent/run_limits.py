@@ -64,6 +64,7 @@ class RunLimits:
         def seconds(value):
             return '不限' if value is None else f'{value:g} 秒'
         loop, explore = self.loop, self.explore
+        from app.services.project_instructions import MAX_INSTRUCTION_CHARS
         rows = [
             ('任务', '单一循环任务时限（AGENT_TASK_TIMEOUT_SECONDS）', seconds(loop.timeout_seconds)),
             ('任务', '单一循环工具轮数 / 调用次数', f'{loop.max_tool_rounds} / {loop.max_tool_calls}'),
@@ -71,6 +72,7 @@ class RunLimits:
             ('任务', '一个任务最多执行次数（含阻塞后续跑）', str(self.max_executions)),
             ('任务', '令牌预算（--max-tokens）', '不限' if self.max_total_tokens is None else str(self.max_total_tokens)),
             ('任务', '时间预算（--max-seconds）', seconds(self.max_seconds)),
+            ('任务', '项目说明文件上限', f'{MAX_INSTRUCTION_CHARS} 字符'),
         ]
         if self.team is not None:
             team = self.team

@@ -434,3 +434,16 @@ kbd { font: 11.5px/1 var(--mono); padding: 3px 6px; border: 1px solid var(--rule
 .dir-recent { display: flex; flex-direction: column; gap: 2px; }
 .dir-recent button { text-align: left; border: none; background: none; padding: 4px 8px; border-radius: 6px; font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); overflow-wrap: anywhere; }
 .dir-recent button:hover { background: var(--active); }
+
+/* Project instructions banner and confirmation dialog (D-096). */
+.instructions-banner:not([hidden]) {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin-bottom: 10px; padding: 8px 14px; border-left: 3px solid var(--warn);
+  background: var(--warn-wash); border-radius: 0 8px 8px 0; font-size: 13.5px; color: var(--ink);
+}
+.instructions-banner .ghost-btn { flex: none; white-space: nowrap; }
+.instructions-preview {
+  margin: 0; padding: 10px 12px; max-height: 320px; overflow: auto;
+  border: 1px solid var(--rule); border-radius: 8px; background: var(--code); color: var(--ink);
+  font: 12.5px/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
+}

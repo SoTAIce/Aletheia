@@ -73,6 +73,14 @@ class PickIn(BaseModel):
     initial: str | None = None                   # the folder the window opens in
 
 
+class InstructionsConfirmIn(BaseModel):
+    """Confirm a working directory's project instructions file by its SHA-256 digest (D-096)."""
+    model_config = ConfigDict(extra='forbid')
+    workspace: str | None = None
+    workspace_confirmed: StrictBool = False
+    digest: str = Field(min_length=1, max_length=128)
+
+
 class AttachmentIn(BaseModel):
     model_config = ConfigDict(extra='forbid')
     name: str
@@ -327,6 +335,7 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
         rules = getattr(service, 'permission_rules', None)
         return {'status': 'ok', 'longterm_memory': memory is not None, 'write_enabled': write_enabled,
                 **({'personas': True} if getattr(service, 'personas', None) is not None else {}),
+                'project_instructions': getattr(service, 'instructions_trust', None) is not None,
                 'active_runs': runs.active_count, 'options': run_options(),
                 'approval_tools': sorted(approval_tools),
                 'permission_rules': len(rules) if rules else 0,
@@ -412,6 +421,44 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
         if not path:
             return {'path': None}
         return (await asyncio.to_thread(service.check_workspace, path)).view()
+
+    def _need_instructions():
+        if getattr(service, 'instructions_trust', None) is None:
+            raise ApiError(404, 'instructions_unavailable', '项目说明文件功能没有开启。')
+
+    def _resolve_instructions_workspace(workspace: str | None, workspace_confirmed: bool = False) -> str | None:
+        if workspace is None or workspace == '':
+            return None
+        if not run_options().get('workspace_available'):
+            raise ApiError(400, 'workspace_unavailable', '这台服务不能更换工作目录。')
+        check = service.check_workspace(workspace)
+        if check.problem is not None:
+            raise ApiError(400, 'workspace_invalid', check.message)
+        if check.system_drive and not workspace_confirmed:
+            raise ApiError(409, 'workspace_confirmation_required', '这个目录在系统盘上，需要你确认后才能使用。')
+        return check.path
+
+    @app.get('/api/instructions', dependencies=guarded)
+    async def instructions_get(workspace: str | None = None, workspace_confirmed: bool = False):
+        """Inspect project instructions in the default or chosen working directory (D-096)."""
+        _need_instructions()
+        target = _resolve_instructions_workspace(workspace, workspace_confirmed)
+        found = await asyncio.to_thread(service.instructions_status, target)
+        if found is None:
+            return {'status': 'none'}
+        return found.api_view()
+
+    @app.post('/api/instructions/confirm', dependencies=guarded)
+    async def instructions_confirm(body: InstructionsConfirmIn):
+        """Confirm a project instructions file after verifying its current SHA-256 digest (D-096)."""
+        _need_instructions()
+        target = _resolve_instructions_workspace(body.workspace, body.workspace_confirmed)
+        from app.services.project_instructions import InstructionsChanged
+        try:
+            confirmed = await asyncio.to_thread(service.confirm_instructions, target, body.digest)
+        except InstructionsChanged as exc:
+            raise ApiError(409, 'instructions_changed', exc.message) from None
+        return confirmed.api_view()
 
     @app.post('/api/sessions/{session_id}/attachments', status_code=201, dependencies=guarded)
     async def attach(session_id: str, body: AttachmentIn):

@@ -1076,3 +1076,26 @@
   - 没有用真实模型验证；没有 `mcp.toml` 时行为不变，黄金对照文件没有变化。
 - 来源：用户 2026-11-22“写 3.3 方案”，第 8 节六条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对并改了一处（方案第 9 节）。
 - 记录：[方案](user_mcp_plan.md)；代码在 `app/tools/user_mcp.py`、`app/tools/mcp_tool_adapter.py`、`app/tools/tool_loader.py`；测试在 `tests/test_user_mcp.py`。
+
+## D-096 2026-11-23 项目说明文件：工作目录根下的说明，确认后作为约束带进每个新任务
+
+- 起因：仓库自己的规则（怎么跑测试、注释用什么语言、哪些目录不能改）每次都要重说；人设（D-088）只覆盖了跟着人走的个人指令。难点是说明文件正好是“文件里的指令”，陌生仓库可能借它注入。想法出自用户的 `docs/agent_feature_ideas.md` 1.1 节，是三阶段收尾计划的 3.4。详见 [方案](project_instructions_plan.md)。
+- 决策：
+  - 只看工作目录根下，先找 `.aletheia/instructions.md`，没有再找 `AGENTS.md`，只读一个。链接、目录联接、不是普通文件、真实路径不在工作目录里、在禁止目录里、超过 1 MB、不是 UTF-8 的都不读。由宿主直接读一次，算指纹、截断都用这一份。
+  - 上限 8000 字符，超了截断，约束末尾和提示里都说明；`--show-limits` 多一行。
+  - 确认按“工作目录真实路径 + 文件名 → 内容的 SHA-256”记在 `data/instructions_confirmed.json`，整台机器共用；内容一变就要重新确认。没确认时这次任务不带，照常运行，发一行提示。
+  - 网页：`GET /api/instructions` 查状态（要确认时带正文），`POST /api/instructions/confirm` 带看到的指纹确认，指纹不符返回 409；输入框上方提示条和页面内确认对话框（默认焦点在“取消”）；健康检查带 `project_instructions`。
+  - 命令行：交互模式开头和 `/dir` 换目录后当场问（`v` 看全文、`y` 信任，其余这次运行不再问），不是终端时不问；单次任务 `--trust-instructions` 才确认；`--no-instructions` 这次不读。评测子进程加 `--no-instructions`。
+  - 进任务：新任务在人设指令之后加一条约束，前面是宿主写的英文说明，优先级为宿主规则 > 这条消息 > 人设指令 > 项目说明。续跑不重读。团队成员和调研成员照样带着。
+  - 记录：`instructions` 进度事件只带文件名、字数、是否截断、状态和原因，不带正文和路径；轨迹、钩子事件、审计、日志都不记正文。
+- 被否方案：
+  - 只认 `.aletheia/instructions.md`：克隆来的仓库里现成的 `AGENTS.md` 用不上；
+  - 只按目录记确认：拉取更新带进来的新指令会直接生效；
+  - 没确认时任务停下来等：每个任务开头都可能被打断；
+  - 项目说明排在人设前面：说明文件可能是别人写的。
+- 约束：
+  - 不认子目录说明、多个文件合并和 `@引用`；网页上不能编辑说明文件。
+  - `.gitignore` 顺带补上 `data/mcp_confirmed.json`（D-095 漏掉的）。
+  - 没有说明文件或用了 `--no-instructions` 时行为不变，黄金对照文件没有变化；没有用真实模型验证。
+- 来源：用户 2026-11-23“可以”（写方案）、“按推荐定”（第 8 节七条）。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对，没有改动。
+- 记录：[方案](project_instructions_plan.md)；代码在 `app/services/project_instructions.py`、`app/services/rag_agent_service.py`；测试在 `tests/test_project_instructions.py`。
