@@ -229,7 +229,7 @@ class AgentLoopRunner:
                  context_manager=None, resume_store: LoopResumeStore | None = None, *,
                  host_tools=(), allow_ask_user=True, instructions=None, finish_state=None,
                  finish_hooks=True, finish_gates=(), output_contract=None,
-                 citation_ledger=None, check_citations=True):
+                 citation_ledger=None, check_citations=True, tool_loading=None):
         if not callable(getattr(model, 'generate', None)):
             raise TypeError('model must provide generate()')
         if not isinstance(tool_registry, ToolRegistry):
@@ -238,7 +238,11 @@ class AgentLoopRunner:
         self._options = options or LoopOptions()
         self._manager = context_manager
         self._store = resume_store
-        host_tools = tuple(host_tools)
+        self._tool_loading = tool_loading
+        all_host_tools = list(host_tools)
+        if tool_loading is not None:
+            all_host_tools.append(HostTool(tool_loading.find_tools_definition, tool_loading.find_tools))
+        host_tools = tuple(all_host_tools)
         self._host_tools = {t.definition.name: t for t in host_tools}
         if len(self._host_tools) != len(host_tools) or set(self._host_tools) & CONTROL_TOOLS:
             raise ValueError('host tools must have unique non-control names')
@@ -254,6 +258,7 @@ class AgentLoopRunner:
         self.todo: list[dict] = []
         self.resumed = False
         self.unverified = False   # answered after changing files with no passing run since (D-087)
+        self.current_round = 0
 
     async def _generate(self, messages, tools, refs):
         # Every model call checks the run's budget first, inside a step too, so a long step or a
@@ -338,12 +343,16 @@ class AgentLoopRunner:
         if not isinstance(context, StepExecutionContext):
             raise TypeError('context must be a StepExecutionContext')
         options = self._options
+        deferred_names = self._tool_loading.deferred_names if self._tool_loading is not None else frozenset()
         offered = tuple(d for d in self._registry.list_definitions()
-                        if d.name not in CONTROL_TOOLS and d.name not in self._host_tools)
+                        if d.name not in CONTROL_TOOLS and d.name not in self._host_tools
+                        and d.name not in deferred_names)
         controls = tuple(d for d in CONTROL_DEFINITIONS if self._allow_ask_user or d.name != ASK_USER)
         control_names = {d.name for d in controls}
-        tools = offered + controls + tuple(t.definition for t in self._host_tools.values())
-        names = {d.name for d in offered} | set(self._host_tools)
+        call_tool_defs = (self._tool_loading.call_tool_definition,) if self._tool_loading is not None else ()
+        call_tool_names = {d.name for d in call_tool_defs}
+        tools = offered + controls + tuple(t.definition for t in self._host_tools.values()) + call_tool_defs
+        names = {d.name for d in offered} | set(self._host_tools) | call_tool_names
         gated = any(t.offer is not None for t in self._host_tools.values())
         system = _system(options)
         if not self._allow_ask_user:
@@ -352,6 +361,8 @@ class AgentLoopRunner:
                                     'say in your final answer exactly what information is missing')
         if self._instructions:
             system += '\n\n' + self._instructions
+        if self._tool_loading is not None:
+            system += '\n\n' + self._tool_loading.system_note()
         messages = [SystemMessage(system), UserMessage(_context_message(context))]
         calls, results, refs, seen = [], [], [], set()
         rounds = arg_repairs = unavailable_replies = empty_replies = prior_calls = tool_raises = 0
@@ -375,18 +386,24 @@ class AgentLoopRunner:
         host_calls = 0
         watch = StallWatch(options.stall_rounds, options.stall_wrap_up, self._effect)
         while True:
+            self.current_round = rounds
             used = prior_calls + len(calls) + host_calls
             spent = rounds >= options.max_tool_rounds or used >= options.max_tool_calls or watch.stalled
             if gated:
                 # Host rules decide per request which host tools the model sees (loop-delegate-001).
                 shown = [t for t in self._host_tools.values() if t.offer is None or t.offer(rounds, options)]
-                tools = offered + controls + tuple(t.definition for t in shown)
-                names = {d.name for d in offered} | {t.definition.name for t in shown}
+                tools = offered + controls + tuple(t.definition for t in shown) + call_tool_defs
+                names = {d.name for d in offered} | {t.definition.name for t in shown} | call_tool_names
             request_tools = ToolsShownOnly(tools) if (spent or contract_repaired or citation_pending) else tools
+            request_messages = messages
+            if self._tool_loading is not None:
+                volatile = self._tool_loading.volatile_message()
+                if volatile is not None:
+                    request_messages = (*messages, SystemMessage(volatile))
             meter = current_meter()
             logged = len(meter.call_log) if meter is not None else 0
             try:
-                turn = await self._generate(messages, request_tools, refs)
+                turn = await self._generate(request_messages, request_tools, refs)
             except StepModelError as exc:
                 if contract_repaired and isinstance(exc.__cause__, ModelToolArgumentsError):
                     # A tool call in the repair turn, even a malformed one, ends the one repair (D-093);
@@ -629,6 +646,15 @@ class AgentLoopRunner:
                         finish_rejected = True
                         messages.append(SystemMessage('HOST: ' + decision.reason))
                     continue
+                if self._tool_loading is not None and call.tool_name in call_tool_names:
+                    resolved_call, problem = self._tool_loading.resolve_call(call)
+                    if problem is not None:
+                        watch.other()
+                        messages.append(ToolMessage(call.call_id, json.dumps(
+                            {'success': False, 'content': '', 'error': problem, 'source_refs': []},
+                            ensure_ascii=False)))
+                        continue
+                    call = resolved_call
                 try:
                     result = await self._registry.invoke(call)
                 except Exception as exc:

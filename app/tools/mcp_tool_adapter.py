@@ -68,6 +68,8 @@ class UserMCPToolAdapter:
     effect ('read' or 'external', ignoring readOnlyHint), bounded description, per-server
     timeout, and English host notes replacing non-text content blocks."""
 
+    is_user_mcp_tool = True
+
     def __init__(
         self,
         client: MCPClient,
@@ -79,6 +81,7 @@ class UserMCPToolAdapter:
     ) -> None:
         self._client = client
         self._remote_name = tool.name
+        self.server_name = server_name
         self._timeout_seconds = timeout_seconds
         prefixed = f"{server_name}__{tool.name}"
         raw_desc = tool.description or f"Invoke MCP tool {prefixed}."

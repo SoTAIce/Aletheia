@@ -561,18 +561,29 @@ class ExploreLoopRunner:
 
     def __init__(self, model, tool_registry, loop_options=None, context_manager=None, resume_store=None,
                  options: ExploreOptions | None = None, tally=None, member=None, *, output_contract=None,
-                 allow_ask_user=True, citation_ledger=None):
+                 allow_ask_user=True, citation_ledger=None, tool_loading=None):
         self.explore = ExploreDelegation(model, tool_registry, options, context_manager, tally, member)
         self._context = None
 
         async def invoke(arguments):
+            rounds = self.loop.current_round
+            if not self.explore.offer(rounds, self.loop._options):
+                if rounds < 1:
+                    return self.explore._refuse(
+                        'too_early',
+                        'inspect the workspace yourself first before delegating.',
+                    )
+                return self.explore._refuse(
+                    'budget',
+                    'most tool rounds are already used; wrap up with the information you have.',
+                )
             return await self.explore.delegate(self._context, arguments)
 
         self.loop = AgentLoopRunner(model, tool_registry, loop_options, context_manager, resume_store,
-                                    host_tools=(HostTool(DELEGATE_DEFINITION, invoke, self.explore.offer),),
+                                    host_tools=(HostTool(DELEGATE_DEFINITION, invoke),),
                                     allow_ask_user=allow_ask_user,
                                     instructions=EXPLORE_INSTRUCTIONS, output_contract=output_contract,
-                                    citation_ledger=citation_ledger)
+                                    citation_ledger=citation_ledger, tool_loading=tool_loading)
 
     @property
     def format_repair_count(self):

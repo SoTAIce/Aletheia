@@ -83,6 +83,7 @@ class RunLimits:
                 ('团队', '成员工具轮数 / 调用次数', f'{team.worker_tool_rounds} / {team.worker_tool_calls}'),
             ]
         from app.agent.batch import DEFAULT_ITEM_MAX_SECONDS, DEFAULT_ITEM_MAX_TOKENS
+        from app.agent.tool_loading import DEFER_THRESHOLD, MAX_LOADED_TOOLS, MAX_VOLATILE_CHARS
         rows += [
             ('调研成员', '每个成员的时限（--delegate）', seconds(explore.member_timeout_seconds)),
             ('调研成员', '委派次数 / 每个成员的调用次数', f'{explore.max_delegations} / {explore.member_tool_calls}'),
@@ -92,6 +93,9 @@ class RunLimits:
             ('单次调用', '每个门控的时限', seconds(self.gate_seconds)),
             ('批处理', '每项默认令牌预算（--item-max-tokens）', f'{DEFAULT_ITEM_MAX_TOKENS:,}'),
             ('批处理', '每项默认时间预算（--item-max-seconds）', seconds(DEFAULT_ITEM_MAX_SECONDS)),
+            ('工具加载', '用户工具延迟加载阈值', f'超过 {DEFER_THRESHOLD} 个时启用'),
+            ('工具加载', '每个任务最多加载的延迟工具', f'{MAX_LOADED_TOOLS} 个'),
+            ('工具加载', '波动区定义总长度上限', f'{MAX_VOLATILE_CHARS:,} 字符'),
         ]
         return rows
 

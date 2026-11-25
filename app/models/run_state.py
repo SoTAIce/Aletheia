@@ -297,6 +297,7 @@ class RunMemory:
         self._task_state = task_state
         self._resources = resources if resources is not None else Resources()
         self._citations = None
+        self._loaded_tools = None
 
     @property
     def task_state(self) -> RunState:
@@ -313,3 +314,11 @@ class RunMemory:
             from app.agent.citations import CitationLedger
             self._citations = CitationLedger()
         return self._citations
+
+    @property
+    def loaded_tools(self):
+        """Task-scoped loaded deferred tools shared across resumes and rebinds (D-099)."""
+        if self._loaded_tools is None:
+            from app.agent.tool_loading import LoadedTools
+            self._loaded_tools = LoadedTools()
+        return self._loaded_tools

@@ -89,21 +89,30 @@ class RunAssembler:
                 loop_options = _with_reminder(self._loop_options, registry, choice.read_only)
                 allow_ask_user = options.get('ask_user', True)
                 citation_ledger = getattr(memory, 'citations', None)
+                loaded_tools = getattr(memory, 'loaded_tools', None)
                 if self._delegate:
                     from app.agent.delegation import ExploreLoopRunner
                     tally = {'delegations': 0}   # per task, kept across rebinds
                     def factory(deps):
+                        from app.agent.tool_loading import ToolLoading
+                        tool_loading = ToolLoading.for_registry(
+                            deps.tool_registry, loaded_tools, read_only=choice.read_only)
                         return ExploreLoopRunner(deps.model, deps.tool_registry, loop_options,
                                                  deps.context_manager, store, tally=tally,
                                                  member=deps.explorer, output_contract=output_contract,
                                                  allow_ask_user=allow_ask_user,
-                                                 citation_ledger=citation_ledger)
+                                                 citation_ledger=citation_ledger,
+                                                 tool_loading=tool_loading)
                 else:
                     def factory(deps):
+                        from app.agent.tool_loading import ToolLoading
+                        tool_loading = ToolLoading.for_registry(
+                            deps.tool_registry, loaded_tools, read_only=choice.read_only)
                         return AgentLoopRunner(deps.model, deps.tool_registry, loop_options,
                                                deps.context_manager, store, output_contract=output_contract,
                                                allow_ask_user=allow_ask_user,
-                                               citation_ledger=citation_ledger)
+                                               citation_ledger=citation_ledger,
+                                               tool_loading=tool_loading)
                 runner_timeout = self._loop_options.timeout_seconds
             # The runner's own time limit is the task deadline; LoopRun enforces it once (stage 5b).
             limits['step_timeout_seconds'] = runner_timeout

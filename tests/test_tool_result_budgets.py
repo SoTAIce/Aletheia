@@ -112,3 +112,61 @@ async def test_the_real_filesystem_server_returns_a_file_once(tmp_path):
     assert _same_as_text(structured, '\n'.join(b.text for b in blocks))
 
 
+async def test_read_context_artifact_pattern_search_context_merge_and_limits(tmp_path):
+    import json
+    archive = ConversationArchive(tmp_path, 's')
+    text = '\n'.join([
+        'alpha line',
+        'beta line',
+        'ERROR: first failure',
+        'detail 1',
+        'ERROR: second failure',
+        'detail 2',
+        'detail 3',
+        'detail 4',
+        'detail 5',
+        'error: lowercase should not match',
+        'ERROR: third failure',
+        'omega line',
+    ])
+    ref = archive.save_text(text)
+    tool = ContextArchiveTool(archive, max_chars=8000)
+
+    # Default context=2 merges adjacent blocks (lines 3 and 5) and stays case-sensitive.
+    out = await tool.invoke({'ref': ref, 'pattern': 'ERROR:'})
+    assert out.success is True
+    data = json.loads(out.content)
+    assert data['total_matches'] == 3
+    assert data['truncated'] is False
+    assert len(data['matches']) == 2
+    assert data['matches'][0]['line'] == 1
+    assert 'ERROR: first failure' in data['matches'][0]['text']
+    assert 'ERROR: second failure' in data['matches'][0]['text']
+    assert data['matches'][1]['line'] == 9
+    assert 'ERROR: third failure' in data['matches'][1]['text']
+
+    # No match.
+    miss = await tool.invoke({'ref': ref, 'pattern': 'NOT_PRESENT'})
+    assert miss.success is True
+    assert json.loads(miss.content) == {'matches': [], 'total_matches': 0, 'truncated': False}
+
+    # Limit truncation keeps valid JSON within limit.
+    small = await tool.invoke({'ref': ref, 'pattern': 'ERROR:', 'limit': 120})
+    assert small.success is True
+    assert len(small.content) <= 120
+    small_data = json.loads(small.content)
+    assert small_data['truncated'] is True and small_data['total_matches'] == 3
+
+    # More than 200 matches caps at 200 and sets truncated=True.
+    many_text = '\n'.join(f'hit {i}' for i in range(250))
+    many_ref = archive.save_text(many_text)
+    many_out = await tool.invoke({'ref': many_ref, 'pattern': 'hit ', 'context': 0})
+    many_data = json.loads(many_out.content)
+    assert many_data['total_matches'] == 250 and many_data['truncated'] is True
+
+    # Invalid context (>10) is rejected.
+    bad = await tool.invoke({'ref': ref, 'pattern': 'ERROR:', 'context': 11})
+    assert bad.success is False
+
+
+

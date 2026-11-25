@@ -1135,3 +1135,23 @@
   - 没有用到 `retrieve_knowledge` 的任务行为不变，黄金对照文件没有变化；没有用真实模型验证，模型看到的编号从“每次从 1 开始”变成“整个任务连续”。
 - 来源：用户 2026-11-23“可以开始”（写方案）、“按推荐定”（第 8 节八条）。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，进程跑完但没写出最后的报告；Claude 核对，没有改动。
 - 记录：[方案](citation_check_plan.md)；代码在 `app/agent/citations.py`、`app/tools/knowledge_registry_tool.py`、`app/agent/agent_loop.py`；测试在 `tests/test_citations.py`、`tests/test_rag_chain.py`。
+
+## D-099 2026-11-24 工具按需加载：工具清单不变，加载的定义放在请求末尾的波动区
+
+- 起因：用户 2026-11-23 提出工具多了以后每次请求带全部定义负担大，要按需匹配；随后提出参照 craft-agents-oss 把上下文分成稳定和波动两部分，免得“加载一个工具就让提示缓存失效”。用户 MCP 服务（D-095）最坏情况下每次请求约 300 份定义。craft-agents-oss 的做法（读源码核实）：系统提示每个会话只渲染一次，日期和状态拼在每轮用户消息末尾；它自己不做工具按需加载。详见 [方案](tool_loading_plan.md)。
+- 决策：
+  - 三个区：稳定区（系统提示、任务上下文、工具清单，整个任务一个字节都不变）、历史区（只往后追加）、波动区（每轮重建的一条宿主 `SystemMessage`，放在请求最末尾，不写进历史，列出已加载工具的完整定义）。
+  - 只有本次任务的用户 MCP 工具超过 10 个时启用；内置工具一直常驻。没启用时请求和以前逐字相同。
+  - 工具清单里用 `find_tools` 和 `call_tool` 代替延迟工具；系统提示末尾列出服务名和每个服务的工具数。
+  - `find_tools(query, server)`：在名字、说明、服务名上用 BM25 打分（复用 `tokenize_for_bm25`，另补中文二元组），一次最多 5 个，找到就自动加载；只读任务只找得到只读工具；每个任务最多 10 个、波动区最多 8000 字符；已加载集合挂在 `RunMemory` 上。
+  - `call_tool(name, arguments)`：循环里的别名，名字必须已加载，参数按工具的输入 Schema 校验（离线，不解析远程 `$ref`），不合格就把错误交回模型；合格就改写成真实工具名，走普通工具的同一条路径，权限门控、副作用、转存和计量都看到真实工具名。
+  - 顺带修一个现有的缓存破坏点：开了 `--delegate` 时 `delegate` 一直列出，不该用的轮次调用由宿主拒绝、不计委派次数。
+  - `read_context_artifact` 加 `pattern`（大小写敏感的子串）和 `context`，只返回匹配行和附近几行。
+  - 钩子事件 `tool_search` 只带计数；`--show-limits` 多“工具加载”三行。
+- 被否方案：找到的工具直接追加进工具清单原生调用（每加载一次缓存失效一次）；只要配置了用户服务就启用；先找再选的两步加载；内置工具也延迟；用向量检索找工具。
+- 约束：
+  - 只在单一循环里用（含 `--delegate`），团队负责人、团队成员、调研成员不装；
+  - 波动区每轮都按全价计；`call_tool` 是否不如原生调用稳、服务商实际命中率，都没用真实模型验证；
+  - 唯一改变的现有行为是 `--delegate` 时 `delegate` 一直列出；黄金对照文件没有改。
+- 来源：用户 2026-11-23“写成方案”，2026-11-24“按推荐定”（第 8 节八条）。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对，没有改动。
+- 记录：[方案](tool_loading_plan.md)；代码在 `app/agent/tool_loading.py`、`app/agent/agent_loop.py`；测试在 `tests/test_tool_loading.py`。

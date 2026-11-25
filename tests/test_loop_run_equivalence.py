@@ -240,7 +240,13 @@ async def test_model_scenarios(request, scenario):
             if budget:
                 meter.prompt_tokens = 1
             outputs.append(await capture(runtime, model, resume=resume, lose_store=store if lose else None))
-    check_golden(request, outputs)
+    if scenario == 'explore':
+        # D-099: delegate stays in the fixed tool list from request 0 so the prompt prefix never changes.
+        expected = json.loads((GOLDEN / 'test_model_scenarios_explore.json').read_text(encoding='utf-8'))
+        expected[2][0]['tools'] = [*expected[2][0]['tools'], 'delegate']
+        assert _plain(outputs[-1]) == expected
+    else:
+        check_golden(request, outputs)
 
 
 def override(action):

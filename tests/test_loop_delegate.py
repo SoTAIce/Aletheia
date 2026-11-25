@@ -53,28 +53,35 @@ def _messages(model, index):
 
 
 async def test_delegate_is_offered_only_after_the_first_round():
+    # D-099: delegate stays in the fixed tool list on every round to preserve prompt caching.
     runner, model, log, context = setup([call('a', 'read_file', path='a.py'), text('done')])
     output = await runner.run(context)
     assert output.content == 'done'
-    assert DELEGATE not in _tools(model, 0)
-    assert _tools(model, 1)[-1] == DELEGATE
+    assert _tools(model, 0)[-1] == DELEGATE
+    assert _tools(model, 1) == _tools(model, 0)
     assert EXPLORE_INSTRUCTIONS in _messages(model, 0)[0].content
 
 
 async def test_delegate_disappears_when_most_rounds_are_used():
-    turns = [call(f'r{i}', 'read_file', path=f'{i}.py') for i in range(3)] + [text('done')]
+    # D-099: delegate remains listed on every round, but calling it near the budget is refused.
+    turns = ([call(f'r{i}', 'read_file', path=f'{i}.py') for i in range(3)]
+             + [call('d', DELEGATE, task='too late'), text('done')])
     runner, model, log, context = setup(turns, loop_options=LoopOptions(max_tool_rounds=4, max_tool_calls=10))
     await runner.run(context)
-    offered = [DELEGATE in _tools(model, i) for i in range(4)]
-    # Rounds used before each request: 0, 1, 2, 3; offered while 1 <= rounds < 0.75 * 4.
-    assert offered == [False, True, True, False]
+    offered = [DELEGATE in _tools(model, i) for i in range(5)]
+    assert offered == [True, True, True, True, True]
+    reply = _messages(model, 4)[-1].content
+    assert reply.startswith('HOST: ') and 'wrap up' in reply
+    assert runner.explore.delegations == 0
 
 
 async def test_a_delegate_call_before_it_is_offered_is_unavailable():
+    # D-099: calling delegate on round 0 is refused with a host note without starting a member.
     runner, model, log, context = setup([call('d', DELEGATE, task='look around'), text('done')])
     await runner.run(context)
-    reply = json.loads(_messages(model, 1)[-1].content)
-    assert reply['success'] is False and 'not available' in reply['error']
+    reply = _messages(model, 1)[-1].content
+    assert reply.startswith('HOST: ') and 'first' in reply
+    assert runner.explore.delegations == 0
     assert model.generate.await_count == 2      # no member was started
 
 
@@ -214,8 +221,9 @@ async def test_the_service_offers_delegate_only_when_enabled():
             result = await service.query_result('What time is it?', 's1')
         assert result.content == 'noon'
         second = [t.name for t in model.generate.await_args_list[1].args[1]]
+        first = [t.name for t in model.generate.await_args_list[0].args[1]]
+        assert (DELEGATE in first) is enabled
         assert (DELEGATE in second) is enabled
-        assert DELEGATE not in [t.name for t in model.generate.await_args_list[0].args[1]]
     with pytest.raises(TypeError):
         RagAgentService(model=AsyncMock(), mcp_servers=(), delegate='yes')
 

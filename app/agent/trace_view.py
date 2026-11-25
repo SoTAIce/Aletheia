@@ -10,7 +10,8 @@ Only host-authored fields are kept. The loop's todo items (model text) are reduc
 
 from __future__ import annotations
 
-KINDS = ('task', 'route', 'plan', 'step', 'member', 'model', 'tool', 'todo', 'stall', 'contract', 'citation')
+KINDS = ('task', 'route', 'plan', 'step', 'member', 'model', 'tool', 'todo', 'stall', 'contract',
+         'citation', 'tool_search')
 _MODEL_ATTRS = ('message_count', 'tool_count', 'callable_tools', 'provider_calls', 'prompt_tokens',
                 'completion_tokens', 'cached_tokens', 'tool_calls', 'response_model', 'host_estimate',
                 'provider_ratio', 'provider_state', 'profile', 'denied_by', 'error')
@@ -153,6 +154,15 @@ def build_trace(records: list[dict]) -> dict:
                              cited=cited, invalid=invalid))
             span['seconds'] = 0.0
             span['status'] = 'ok'
+        elif kind == 'tool_search':
+            # Deferred tool search (D-099): counts only, never query text.
+            found = event.get('found') if type(event.get('found')) is int and event.get('found') >= 0 else None
+            loaded = event.get('loaded') if type(event.get('loaded')) is int and event.get('loaded') >= 0 else None
+            skipped = event.get('skipped') if type(event.get('skipped')) is int and event.get('skipped') >= 0 else None
+            span = add(_span(f'tool-search-{next(numbers)}', parent, 'tool_search', 'tool_search', t,
+                             found=found, loaded=loaded, skipped=skipped))
+            span['seconds'] = 0.0
+            span['status'] = 'ok'
         elif kind == 'step':
             # The progress record of a step attempt, emitted right after its scope ended.
             match = next((s for s in reversed(order) if s['kind'] == 'step'
@@ -208,7 +218,7 @@ def build_trace(records: list[dict]) -> dict:
 
 _KIND_TEXT = {'task': '任务', 'route': '路由', 'plan': '规划', 'step': '步骤', 'member': '成员',
               'model': '模型', 'tool': '工具', 'todo': '清单', 'stall': '打转', 'contract': '契约',
-              'citation': '引用'}
+              'citation': '引用', 'tool_search': '查找工具'}
 _STALL_TEXT = {'reminder': '原地打转，提醒一次', 'wrap_up': '原地打转，提前收尾',
                'unchanged_read': '重读未变的文件，只回指向前一次结果的说明'}
 _CONTRACT_TEXT = {'pass': '输出格式符合要求', 'repair': '输出格式不合格，要求修改一次',
@@ -257,6 +267,10 @@ def _line(span: dict) -> str:
             detail = f'引用 {cited} 处' + (f'，无效 {invalid} 处' if invalid else '')
             return f'{text}（{detail}）'
         return text
+    elif kind == 'tool_search':
+        found, loaded, skipped = attrs.get('found', 0), attrs.get('loaded', 0), attrs.get('skipped', 0)
+        detail = f'匹配 {found}，加载 {loaded}' + (f'，超限跳过 {skipped}' if skipped else '')
+        return f'查找工具（{detail}）'
     else:
         head = f"{_KIND_TEXT.get(kind, kind)} {span['label']}"
     parts = [head]
