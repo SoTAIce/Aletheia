@@ -1784,6 +1784,16 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "tool-loading-001",
+      "name": "On-demand tool loading: fixed tool list, loaded definitions in a volatile tail",
+      "description": "docs/tool_loading_plan.md, D-099. When a task has more than 10 user MCP tools, they leave the tool list; find_tools (BM25 with Chinese bigrams, top 5, auto-load, at most 10 per task and 8000 chars) and call_tool (alias validated against the input schema, dispatched under the real tool name) take their place. The tool list and first two messages stay byte-identical for the whole task; loaded definitions go in a trailing host SystemMessage rebuilt each request and never stored in history. delegate is now always listed and refused when not allowed. read_context_artifact gains pattern/context.",
+      "status": "done",
+      "dependencies": [
+        "user-mcp-001"
+      ],
+      "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked by Claude without changes. init.ps1 2352 passed, 28 skipped; goldens unchanged. Not committed. No live model run; provider cache hit rate not measured."
+    },
+    {
       "id": "citation-check-001",
       "name": "Citation check: task-wide [ref:n] numbering, existence check before delivery, clickable sources",
       "description": "docs/citation_check_plan.md, D-098. KnowledgeRegistryTool renumbers retrieved evidence across the task (CitationLedger on RunMemory; the same chunk keeps its number). The single loop checks [ref:n] in the final answer before the output contract: invalid numbers get one rewrite without tools, then the answer is delivered with citation_problems; existence only, not support. AgentRunResult carries citations (file, heading, lines, snippet) and citation_problems; CLI lists sources, batch rows carry them, the web page shows clickable source cards. Adds retrieval chain tests and fixes two D-033 leaks in knowledge retrieval and reranking.",
