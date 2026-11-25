@@ -12,3 +12,8 @@
 2026-11-25 | 基础 | 工具定义按需加载与工具搜索；即时上下文与 grep 代码搜索 | defer_loading, tool_reference, regex/BM25 工具检索, just-in-time context, 前缀追加 | https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool ; https://www.anthropic.com/research/advanced-tool-use
 2026-11-25 | 面试 | 工具调用超时的重试语义：最多一次/至少一次、幂等、幂等键、条件写入与重试前查状态 | idempotency key, at-most-once, CAS, edit_file 条件写入 | 通用分布式系统原理；Aletheia D-032/D-085
 2026-11-25 | 面试 | 约束解码与事后校验修复的取舍：令牌掩码、分布扭曲、Schema 限制、两者叠加 | constrained decoding, grammar, structured outputs, logit mask | https://platform.claude.com/docs/en/build-with-claude/structured-outputs
+2026-11-26 | 前沿 | Agent 带倾向时专家的服从：随机分配倾向测因果效应、单边论证、事后归因失真、审查者独立性 | deferral, judgment calls, randomized lean, disempowerment, 独立检查 | https://www.anthropic.com/research/agents-judgment-calls
+2026-11-26 | 前沿 | 线上系统当验证器：模型只跑一次再回放、检查点定位、差异指纹分组、内/外/记忆三层验证循环、验证器被钻空子需人工关口 | shadowing, differential testing, record-replay, fingerprint, verification loop, weakened assertions | https://www.anthropic.com/research/migrating-api-to-rust
+2026-11-26 | 基础 | temperature=0 仍不确定：浮点非结合、归约顺序随批大小变、批不变内核、记录—回放与 k 次统计 | batch invariance, floating-point non-associativity, VLLM_BATCH_INVARIANT, deterministic inference | https://github.com/thinking-machines-lab/batch_invariant_ops ; https://github.com/vllm-project/vllm/blob/main/docs/features/batch_invariance.md
+2026-11-26 | 面试 | 并行工具调用的调度：按效果分组并发、每个调用都要有结果、结果放同一条消息、并发前扣预算 | parallel tool use, tool_use_id, is_error, disable_parallel_tool_use, asyncio.gather | https://platform.claude.com/docs/en/agents-and-tools/tool-use/parallel-tool-use
+2026-11-26 | 面试 | 人工确认沦为橡皮图章：拒绝基础概率、展示后果而非理由、确认数据回收调整规则 | approval fatigue, rubber-stamping, human-in-the-loop, 告警疲劳 | 通用原理；https://www.anthropic.com/research/agents-judgment-calls
