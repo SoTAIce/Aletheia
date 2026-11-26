@@ -1784,6 +1784,16 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "scheduled-tasks-001",
+      "name": "Scheduled read-only tasks in the web backend, with per-run web metering and blocked-task expiry",
+      "description": "docs/scheduled_tasks_plan.md, D-101 and D-102. D-101: RunManager wraps each web run in a RunMeter (the route call now counts), WEB_RUN_MAX_TOKENS / WEB_RUN_MAX_SECONDS (unlimited by default); blocked tasks expire after BLOCKED_TASK_TTL_SECONDS (24 h). D-102: schedules.toml (at, days, goal, optional workspace, required max_tokens) runs while python -m app.api is up; each slot goes through RunManager.start_scheduled into session schedule-<name> with request id schedule-<name>-<YYYYMMDDHHMM> (archive replay prevents reruns), single loop, read-only, no ask_user, its own budget, confirmations denied at once. Fingerprint confirmation at startup; only the latest missed slot within 12 h is caught up.",
+      "status": "done",
+      "dependencies": [
+        "batch-run-001"
+      ],
+      "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium) in two runs; checked by Claude, one change in the second (workspace needs workspace choice). init.ps1 2435 passed, 28 skipped; goldens unchanged. Not committed. No live model run."
+    },
+    {
       "id": "history-compression-001",
       "name": "Background summaries: web history compression, startup probe, settings in .env",
       "description": "docs/history_compression_plan.md, D-100. python -m app.api gains --compress-history (off by default), sharing open_history_compressor with the CLI. When on, startup lists the local models (3 s, no transcript) and turns compression off for the run with a Chinese notice if the server or model is missing. SUMMARY_MODEL_BASE_URL and SUMMARY_MODEL replace the hard-coded Ollama endpoint and model, loopback only. /api/health reports history_compression; the page and --show-limits show it. The summarizer profile role is deferred.",
