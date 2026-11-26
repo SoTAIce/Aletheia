@@ -34,6 +34,7 @@ class LLMCompressor(ConversationCompressor):
         temperature: float = 0.1,
         max_output_tokens: int = 512,
         *, max_input_tokens: int = 8192,
+        extra_body: dict | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -49,6 +50,7 @@ class LLMCompressor(ConversationCompressor):
         if type(max_input_tokens) is not int or max_input_tokens < 1:
             raise ValueError('max_input_tokens must be a positive integer')
         self._max_input_tokens = max_input_tokens
+        self._extra_body = dict(extra_body) if extra_body is not None else None
 
     async def compress(
         self,
@@ -66,7 +68,7 @@ class LLMCompressor(ConversationCompressor):
         # prompt text, lifecycle metadata and message framing, not just bodies.
         if ConversationMemory._estimate_text_tokens(SYSTEM_PROMPT + prompt) + 16 > self._max_input_tokens:
             raise ValueError('summary input exceeds token budget')
-        response = await self._client.chat.completions.create(
+        request = dict(
             model=self._model,
             messages=[
                 {
@@ -78,6 +80,9 @@ class LLMCompressor(ConversationCompressor):
             temperature=self._temperature,
             max_tokens=self._max_output_tokens,
         )
+        if self._extra_body is not None:
+            request["extra_body"] = self._extra_body
+        response = await self._client.chat.completions.create(**request)
         # Summaries run in the background, outside any request: booked to the process ledger
         # (docs/cost_measurement_plan.md).
         from app.agent.run_meter import record_auxiliary, usage_tokens

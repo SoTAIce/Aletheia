@@ -98,6 +98,7 @@ D-088 个性化人设（[方案](persona_plan.md)，第一步，含默认选项�
 - 个人命令（D-090，[方案](personal_commands_plan.md)）：每个人设一套任务模板，`/review app/api` 这样运行。命令文件在人设目录下的 `commands/<人设编号>/`，第一次用时复制六个预置命令（`app/services/command_presets/`）。对话里记用户输入的那一行，拼好的模板作为约束跟在人设指令后面；命令可以固定执行模式，`write = false` 强制只读，`write = true` 在只读时不开始，命令从不打开写入。命令行 `/commands`，网页输入 `/` 补全、顶栏“命令”面板。
 - 网页计量和阻塞过期（D-101，[方案](scheduled_tasks_plan.md)）：网页每次运行一个计量器（选模式那次调用也计入），可设 `WEB_RUN_MAX_TOKENS`、`WEB_RUN_MAX_SECONDS`；阻塞任务 `BLOCKED_TASK_TTL_SECONDS`（默认 24 小时）后过期。
 - 定时任务（D-102，同一方案）：`schedules.toml` 写只读任务（时间、星期、目标、必填令牌上限），网页后端开着时到点跑，结果进 `schedule-<name>` 会话；启动时按指纹确认，重启后同一时间点不重跑，只补 12 小时内最近一次。没有用真实模型验证。
+- 摘要档案角色（D-103，[方案](summarizer_role_plan.md)）：`models.toml` 的 `[roles]` 可以写 `summarizer`，让后台摘要用档案里的模型（可以是远端，启动会提示原文发往哪个主机）；没写时照旧用本机 Ollama，不回落到 `main`。摘要仍不计入令牌上限（D-080）。没有用真实模型验证。
 - 后台摘要（D-100，[方案](history_compression_plan.md)）：网页后端也能用 `--compress-history` 开历史压缩；开了时启动先检查本机摘要模型，不可用就提示并关掉这次的压缩；摘要模型的地址和名字用 `SUMMARY_MODEL_BASE_URL`、`SUMMARY_MODEL` 设置，只许本机地址。网页健康接口和顶栏显示压缩状态。`summarizer` 档案角色暂缓。没有用真实 Ollama 验证。
 - 工具按需加载（D-099，[方案](tool_loading_plan.md)）：用户 MCP 工具超过 10 个时不进工具清单，模型用 `find_tools` 找、`call_tool` 调；工具清单和前两条消息整个任务不变（稳定区），已加载工具的定义每轮放在请求末尾、不进历史（波动区）。`delegate` 改为一直列出；`read_context_artifact` 可按 `pattern` 找。没有用真实模型验证。
 - 引用核对（D-098，[方案](citation_check_plan.md)）：知识库引用编号整个任务连续，同一片段沿用原编号；单一循环交付前检查答案里的 `[ref:n]` 是否存在，无效就退回改一次，还错就照常交付并标出（只查编号存在，不查内容）。结果带 `citations` 和 `citation_problems`，网页可点开来源卡片，命令行列出来源。补了检索链测试。没有用真实模型验证。

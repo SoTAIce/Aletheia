@@ -66,11 +66,15 @@ async def serve(args) -> int:
     if config.workspace_choice and not choice:
         print('工作目录选择已关闭：非本机地址需要先配置 WORKSPACE_ALLOWED_ROOTS。', flush=True)
     async with AsyncExitStack() as stack:
+        from app.models.model_profile import ModelProfileError
         try:
             compressor, history_compression = await open_history_compressor(
                 getattr(args, 'compress_history', False), stack)
         except SummaryModelError as exc:
             print(f'SummaryModelError: {exc}')
+            return 2
+        except ModelProfileError as exc:
+            print(f'ModelProfileError: {exc}')
             return 2
         except ValueError as exc:
             print(f'HistoryCompressionError: {exc}')

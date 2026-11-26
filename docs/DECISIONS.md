@@ -1196,3 +1196,20 @@
 - 约束：网页没开就不跑；定时会话的历史会越来越长；服务商加的隐藏令牌会让预算比估算早用完；没有用真实模型验证；没有定时任务文件时行为不变，黄金对照文件没有变化。
 - 来源：用户 2026-11-25“写方案”“按推荐定”（第 8 节八条）。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对并改了一处（`workspace` 和工作目录选择的启动检查）。
 - 记录：[方案](scheduled_tasks_plan.md)；代码在 `app/api/schedules.py`、`app/api/runs.py`、`app/api/__main__.py`；测试在 `tests/test_schedules.py`。
+
+## D-103 2026-11-25 后台摘要的 `summarizer` 档案角色：可以用远端模型写摘要，没写就照旧用本机 Ollama
+
+- 起因：D-100 让后台摘要只能用本机回环地址，`summarizer` 档案角色暂缓。用户 2026-11-25 让写方案，用远端的便宜模型做摘要，并给以后的工作摘要、记忆抽取留一个角色。详见 [方案](summarizer_role_plan.md)。
+- 决策：
+  - `models.toml` 的 `[roles]` 可以写 `summarizer`。它是可选角色（`OPTIONAL_ROLES`），不放进 `ROLES`，**不回落到 `main`**；`ModelProfiles.summarizer` 和 `summarizer_profile()`；指向不存在的档案或密钥变量为空时报 `ModelProfileError`。`used()`、`describe()`、`RoleModels` 不变。
+  - 摘要只用档案的地址、密钥、模型名、超时，`enable_thinking` 写了才经 `extra_body` 发送；输入 8192、输出 512、温度 0.1 和提示词不变。
+  - `open_history_compressor`：没开 `--compress-history` 时不读档案；有 `summarizer` 时跳过回环校验，档案地址不是本机时启动打印“会话原文会发往 `<主机>`”，`.env` 里明确写了 `SUMMARY_MODEL_*` 时提示这次不用；可用性检查照旧列一次模型（3 秒），提示不提 Ollama。档案出错时命令行和网页都以 `ModelProfileError` 退出码 2 拒绝。
+  - `--show-limits` 的“后台摘要”一行在档案来源时写档案名和模型名，不写地址。
+- 被否方案：没写时回落到 `main`（加一个档案文件就会把会话原文发往远端）；远端时另加确认参数（写 `summarizer` 并开 `--compress-history` 已经是明确选择）；放开 `SUMMARY_MODEL_BASE_URL` 的回环限制；档案来源跳过可用性检查；摘要失败时从档案回落到本机。
+- 约束：
+  - 摘要仍不走钩子、不计入每次运行的令牌上限、不进审计（D-080 不变），远端摘要的用量只记在进程账本里；
+  - 没有档案文件、或档案没写 `summarizer` 时行为逐字不变，黄金对照文件没有变化；
+  - 有的中转服务没有 `/models`，检查会判为不可用；
+  - 没有用真实模型验证。
+- 来源：用户 2026-11-25 “后台摘要可以开始写方案了”，第 8 节七条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对没有改动。
+- 记录：[方案](summarizer_role_plan.md)；代码在 `app/models/model_profile.py`、`app/core/dependencies.py`、`app/agent/__main__.py`、`app/services/memory_compression/llm_compressor.py`；测试在 `tests/test_summarizer_role.py`。

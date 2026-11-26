@@ -85,6 +85,7 @@ def _finite(value: Any) -> bool:
 
 
 ROLES = ('main', 'route', 'member', 'explorer')
+OPTIONAL_ROLES = ('summarizer',)
 # Taken from the default profile when a profile in the file leaves them out. Capabilities and prices
 # belong to one model and provider, so they are never inherited (plan section 10.1).
 INHERITED = ('context_tokens', 'max_output_tokens', 'timeout_seconds', 'temperature', 'json_mode')
@@ -100,6 +101,7 @@ class ModelProfiles:
     """Profiles by name and the profile of each role (stage 4d-2)."""
     profiles: dict
     roles: dict
+    summarizer: str | None = None
 
     def __post_init__(self) -> None:
         if set(self.roles) != set(ROLES):
@@ -107,6 +109,8 @@ class ModelProfiles:
         for role, name in self.roles.items():
             if name not in self.profiles:
                 raise ValueError(f'role {role} names an unknown profile')
+        if self.summarizer is not None and (not isinstance(self.summarizer, str) or self.summarizer not in self.profiles):
+            raise ValueError('role summarizer names an unknown profile')
 
     @classmethod
     def single(cls, profile: ModelProfile) -> 'ModelProfiles':
@@ -115,6 +119,9 @@ class ModelProfiles:
 
     def role(self, role: str) -> ModelProfile:
         return self.profiles[self.roles[role]]
+
+    def summarizer_profile(self) -> ModelProfile | None:
+        return None if self.summarizer is None else self.profiles[self.summarizer]
 
     def used(self) -> tuple[ModelProfile, ...]:
         """The profiles some role uses, main first, each once."""
@@ -164,9 +171,10 @@ def load_profiles(path, default: ModelProfile, settings: Any = None) -> ModelPro
             profiles[name] = ModelProfile(name=name, **values)
         except (TypeError, ValueError) as exc:
             raise ModelProfileError(f'档案 {name!r} 的取值不对：{exc}') from None
-    extra = set(raw_roles) - set(ROLES)
+    all_roles = ROLES + OPTIONAL_ROLES
+    extra = set(raw_roles) - set(all_roles)
     if extra:
-        raise ModelProfileError(f'[roles] 里有不认识的角色：{", ".join(sorted(extra))}（只认 {", ".join(ROLES)}）')
+        raise ModelProfileError(f'[roles] 里有不认识的角色：{", ".join(sorted(extra))}（只认 {", ".join(all_roles)}）')
     if 'main' not in raw_roles:
         raise ModelProfileError('[roles] 必须写 main')
     roles = {}
@@ -175,8 +183,19 @@ def load_profiles(path, default: ModelProfile, settings: Any = None) -> ModelPro
         if not isinstance(name, str) or name not in profiles:
             raise ModelProfileError(f'角色 {role} 指向不存在的档案 {name!r}')
         roles[role] = name
-    result = ModelProfiles(profiles, roles)
-    for profile in result.used():
+    summarizer = None
+    if 'summarizer' in raw_roles:
+        name = raw_roles['summarizer']
+        if not isinstance(name, str) or name not in profiles:
+            raise ModelProfileError(f'角色 summarizer 指向不存在的档案 {name!r}')
+        summarizer = name
+    result = ModelProfiles(profiles, roles, summarizer=summarizer)
+    used_profiles = result.used()
+    for profile in used_profiles:
         if not profile.api_key(settings):
             raise ModelProfileError(f'档案 {profile.name!r} 的密钥变量 {profile.api_key_env} 是空的')
+    summary = result.summarizer_profile()
+    if summary is not None and summary not in used_profiles:
+        if not summary.api_key(settings):
+            raise ModelProfileError(f'档案 {summary.name!r} 的密钥变量 {summary.api_key_env} 是空的')
     return result

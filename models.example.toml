@@ -31,3 +31,7 @@ main = "main"
 route = "cheap"
 member = "cheap"
 explorer = "cheap"
+# Optional: profile for background history summaries (--compress-history). Left out, it uses
+# local Ollama (SUMMARY_MODEL_*) and never falls back to main. A remote base_url sends
+# conversation transcripts there; summaries are excluded from per-run token limits (D-080).
+# summarizer = "cheap"

@@ -32,6 +32,7 @@ class RunLimits:
     blocked_task_ttl_seconds: float = 86400.0
     web_run_max_tokens: int | None = None
     web_run_max_seconds: float | None = None
+    summary_profile: str | None = None
 
     @classmethod
     def current(cls, *, loop=None, team=None, explore=None, max_executions=16,
@@ -40,14 +41,23 @@ class RunLimits:
         from app.agent.delegation import ExploreOptions
         from app.agent.hooks import GATE_TIMEOUT_SECONDS
         from app.agent.route_selection import DEFAULT_TIMEOUT_SECONDS
+        from app.models.model_profile import ModelProfileError
         if settings is None:
             from app.config import config as settings
+        try:
+            summarizer = settings.model_profiles().summarizer_profile()
+        except ModelProfileError:
+            summarizer = None
+        summary_profile = summarizer.name if summarizer is not None else None
+        summary_model = (summarizer.model if summarizer is not None
+                         else settings.summary_model.strip() or 'qwen3:4b-instruct')
         return cls(loop or LoopOptions(timeout_seconds=settings.agent_task_timeout_seconds), team,
                    explore or ExploreOptions(), max_executions, settings.agent_model_profile.timeout_seconds,
                    DEFAULT_TIMEOUT_SECONDS, GATE_TIMEOUT_SECONDS, max_total_tokens, max_seconds,
-                   settings.summary_model.strip() or 'qwen3:4b-instruct',
+                   summary_model,
                    settings.blocked_task_ttl_seconds,
-                   settings.web_run_max_tokens, settings.web_run_max_seconds)
+                   settings.web_run_max_tokens, settings.web_run_max_seconds,
+                   summary_profile)
 
     def deadlines(self) -> dict[str, float]:
         """The task deadline of each mode that can run."""
@@ -105,6 +115,8 @@ class RunLimits:
         if summary_model is None:
             from app.config import config
             summary_model = config.summary_model.strip() or 'qwen3:4b-instruct'
+        summary_label = (f'档案 {self.summary_profile}，模型 {summary_model}'
+                         if self.summary_profile is not None else f'本机 {summary_model}')
         rows += [
             ('调研成员', '每个成员的时限（--delegate）', seconds(explore.member_timeout_seconds)),
             ('调研成员', '委派次数 / 每个成员的调用次数', f'{explore.max_delegations} / {explore.member_tool_calls}'),
@@ -118,7 +130,7 @@ class RunLimits:
             ('工具加载', '每个任务最多加载的延迟工具', f'{MAX_LOADED_TOOLS} 个'),
             ('工具加载', '波动区定义总长度上限', f'{MAX_VOLATILE_CHARS:,} 字符'),
             ('后台摘要', '历史压缩模型（--compress-history）',
-             f'本机 {summary_model}，单次 {summary_timeout:g} 秒，最多试 {summary_attempts} 次'),
+             f'{summary_label}，单次 {summary_timeout:g} 秒，最多试 {summary_attempts} 次'),
             ('网页', '每次运行的令牌上限（WEB_RUN_MAX_TOKENS）',
              '不限' if self.web_run_max_tokens is None else str(self.web_run_max_tokens)),
             ('网页', '每次运行的时限（WEB_RUN_MAX_SECONDS）', seconds(self.web_run_max_seconds)),

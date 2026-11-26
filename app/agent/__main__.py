@@ -621,15 +621,29 @@ class SummaryModelError(Exception):
 
 
 async def open_history_compressor(enabled: bool, stack: AsyncExitStack) -> tuple[object | None, str]:
-    """Open and probe the local history compressor; returns (compressor | None, status)."""
+    """Open and probe the history compressor (profile or local); returns (compressor | None, status)."""
     if not enabled:
         return None, 'off'
     if not config.conversation_storage_dir:
         raise ValueError('--compress-history requires CONVERSATION_STORAGE_DIR')
+    profile = config.model_profiles().summarizer_profile()
+    from app.core.dependencies import check_conversation_compressor, open_conversation_compressor
+    if profile is not None:
+        if 'summary_model_base_url' in config.model_fields_set or 'summary_model' in config.model_fields_set:
+            print(f'历史压缩：已用档案 {profile.name}，SUMMARY_MODEL_BASE_URL / SUMMARY_MODEL 这次不用。', flush=True)
+        from urllib.parse import urlparse
+        host = urlparse(profile.base_url).hostname
+        if host not in ('127.0.0.1', '::1', 'localhost'):
+            print(f'历史压缩：会话原文会发往 {host or ""}（档案 {profile.name}）。', flush=True)
+        compressor = await stack.enter_async_context(open_conversation_compressor(profile, config))
+        problem = await check_conversation_compressor(compressor, source='profile')
+        if problem:
+            print(f'{problem}，这次不压缩历史。', flush=True)
+            return None, 'unavailable'
+        return compressor, 'on'
     problem = config.summary_model_problem()
     if problem:
         raise SummaryModelError(problem)
-    from app.core.dependencies import check_conversation_compressor, open_conversation_compressor
     compressor = await stack.enter_async_context(open_conversation_compressor())
     problem = await check_conversation_compressor(compressor)
     if problem:
@@ -640,10 +654,14 @@ async def open_history_compressor(enabled: bool, stack: AsyncExitStack) -> tuple
 
 async def open_cli_service(args, stack: AsyncExitStack) -> CliSession | int:
     """Run startup checks and open RagAgentService in stack; returns exit code 2 on refusal."""
+    from app.models.model_profile import ModelProfileError
     try:
         compressor, _ = await open_history_compressor(getattr(args, 'compress_history', False), stack)
     except SummaryModelError as exc:
         print(f'SummaryModelError: {exc}')
+        return 2
+    except ModelProfileError as exc:
+        print(f'ModelProfileError: {exc}')
         return 2
     write_root = args.write_root or config.mcp_filesystem_write_root or None
     sandbox = getattr(args, 'sandbox', False)
