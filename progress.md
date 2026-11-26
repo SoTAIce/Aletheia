@@ -43,7 +43,7 @@
 | 3.2 | 按规则的权限控制 | 7.2 | 已实施（2026-11-22，D-094，`docs/permission_rules_plan.md`，未提交）：第 8 节按推荐定，Gemini 实施、Claude 核对并改了三处；`init.ps1` 2226 passed；没有用真实模型验证 |
 | 3.3 | 接入用户自己的 MCP 服务器 | 7.1 | 已实施（2026-11-22，D-095，`docs/user_mcp_plan.md`，未提交）：第 8 节按推荐定，Gemini 实施、Claude 核对并改了一处；`init.ps1` 2269 passed；没有用真实模型验证 |
 | 3.4 | 项目说明文件 | 1.1 的另一半 | 已实施（2026-11-23，D-096，`docs/project_instructions_plan.md`，未提交）：第 8 节七条按推荐定，Gemini 实施、Claude 核对没有改动；`init.ps1` 2283 passed；没有用真实模型验证 |
-| 3.5 | 其余：批处理、引用核对、新模型角色、定时任务、更多文档格式等 | 见想法清单第 9 节 | 已重排（`docs/batch_run_plan.md` 第 1 节）。第一项批处理已实施（2026-11-23，D-097，未提交）：第 8 节七条按推荐定，Gemini 实施、Claude 核对没有改动；没有用真实模型验证。第二项引用核对已实施（2026-11-23，D-098，`docs/citation_check_plan.md`，未提交）：第 8 节八条按推荐定，连同检索链测试；Gemini 实施、Claude 核对没有改动；没有用真实模型验证。插进来一项工具按需加载（2026-11-24，D-099，`docs/tool_loading_plan.md`，用户提出，未提交）：Gemini 实施、Claude 核对没有改动；没有用真实模型验证。第 3 项改做后台摘要（2026-11-25，D-100，`docs/history_compression_plan.md`，未提交）：用户本机有 Ollama，`summarizer` 档案角色暂缓，改为网页接上历史压缩、启动检查、设置挪进 `.env`；Gemini 实施、Claude 核对改了一处；没有用真实 Ollama 验证。第 4 项定时任务已实施（2026-11-25，`docs/scheduled_tasks_plan.md`，未提交）：前置的网页计量和阻塞过期记为 D-101，定时任务记为 D-102；分两次由 Gemini 实施，Claude 核对，丙改了一处；没有用真实模型验证。下一项是只读 Git 工具和变更报告（排序第 5 项） |
+| 3.5 | 其余：批处理、引用核对、新模型角色、定时任务、更多文档格式等 | 见想法清单第 9 节 | 已重排（`docs/batch_run_plan.md` 第 1 节）。第一项批处理已实施（2026-11-23，D-097，未提交）：第 8 节七条按推荐定，Gemini 实施、Claude 核对没有改动；没有用真实模型验证。第二项引用核对已实施（2026-11-23，D-098，`docs/citation_check_plan.md`，未提交）：第 8 节八条按推荐定，连同检索链测试；Gemini 实施、Claude 核对没有改动；没有用真实模型验证。插进来一项工具按需加载（2026-11-24，D-099，`docs/tool_loading_plan.md`，用户提出，未提交）：Gemini 实施、Claude 核对没有改动；没有用真实模型验证。第 3 项改做后台摘要（2026-11-25，D-100，`docs/history_compression_plan.md`，未提交）：用户本机有 Ollama，`summarizer` 档案角色暂缓，改为网页接上历史压缩、启动检查、设置挪进 `.env`；Gemini 实施、Claude 核对改了一处；没有用真实 Ollama 验证。第 4 项定时任务已实施（2026-11-25，`docs/scheduled_tasks_plan.md`，未提交）：前置的网页计量和阻塞过期记为 D-101，定时任务记为 D-102；分两次由 Gemini 实施，Claude 核对，丙改了一处；没有用真实模型验证。插进来一项摘要档案角色（2026-11-25，D-103，`docs/summarizer_role_plan.md`，未提交）：`summarizer` 可选角色，不回落到 `main`；Gemini 实施、Claude 核对没有改动；没有用真实模型验证。下一项只读 Git 工具和变更报告（排序第 5 项）用户说“先不做” |
 
 ## 已确认基线（历史，未重新测量）
 
@@ -53,6 +53,12 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-25 — summarizer-role-001：后台摘要的 `summarizer` 档案角色（D-103）
+
+- 用户“后台摘要可以开始写方案了”，方案 `docs/summarizer_role_plan.md` 第 8 节七条按推荐定。
+- 由 Gemini（`D:\tools\agy\agy.exe`，`gemini-4-neon-medium`）实施，前台跑完 `init.ps1` 并写了报告；Claude 核对没有改动。
+- `init.ps1` 2451 passed、28 skipped；黄金对照文件不变；`data/` 下没有新文件，没有遗留的无关文件；用户未提交的文件没有被碰过。没有连接 Ollama 或服务商。未提交。
 
 ### 2026-11-25 — scheduled-tasks-001：网页计量、阻塞过期、定时任务（D-101、D-102）
 

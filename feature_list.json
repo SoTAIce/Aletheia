@@ -1784,6 +1784,16 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "summarizer-role-001",
+      "name": "Background summaries: optional summarizer profile role",
+      "description": "docs/summarizer_role_plan.md, D-103. models.toml [roles] may name summarizer (OPTIONAL_ROLES, outside ROLES, never falls back to main). With --compress-history the summary client then uses that profile's base_url, key, model, timeout and enable_thinking (via extra_body); summary limits and prompt unchanged. A non-loopback host prints where transcripts go; the /models probe still runs. Without the role nothing changes. Summaries stay outside hooks and per-run token limits (D-080).",
+      "status": "done",
+      "dependencies": [
+        "history-compression-001"
+      ],
+      "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked by Claude without changes. init.ps1 2451 passed, 28 skipped; goldens unchanged. Not committed. Not run against a real model."
+    },
+    {
       "id": "scheduled-tasks-001",
       "name": "Scheduled read-only tasks in the web backend, with per-run web metering and blocked-task expiry",
       "description": "docs/scheduled_tasks_plan.md, D-101 and D-102. D-101: RunManager wraps each web run in a RunMeter (the route call now counts), WEB_RUN_MAX_TOKENS / WEB_RUN_MAX_SECONDS (unlimited by default); blocked tasks expire after BLOCKED_TASK_TTL_SECONDS (24 h). D-102: schedules.toml (at, days, goal, optional workspace, required max_tokens) runs while python -m app.api is up; each slot goes through RunManager.start_scheduled into session schedule-<name> with request id schedule-<name>-<YYYYMMDDHHMM> (archive replay prevents reruns), single loop, read-only, no ask_user, its own budget, confirmations denied at once. Fingerprint confirmation at startup; only the latest missed slot within 12 h is caught up.",
