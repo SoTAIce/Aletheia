@@ -1784,6 +1784,16 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "summary-fit-001",
+      "name": "Background summaries: limits from the summary model window, over-long summaries",
+      "description": "docs/summary_fit_plan.md, D-105. SUMMARY_MODEL_CONTEXT_TOKENS (default 4096, Ollama's default; profiles use context_tokens) sets the output cap min(1536, window//4), the estimated input cap (window - cap - 64)/1.5 and the batch budget min(6000, input - 600). Input over the cap raises SummaryInputTooLargeError, handled like SummaryTooLongError (halve or skip). The prompt always asks for concision; a summary over max(400, 0.5 x source) raises SummaryNotShorterError, retried once and accepted on the second try.",
+      "status": "done",
+      "dependencies": [
+        "summary-quality-001"
+      ],
+      "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked by Claude without changes. init.ps1 2483 passed, 28 skipped; goldens unchanged. Retested with local Ollama (4096 window): single-turn summaries 188-199 tokens in 3 runs; legacy turns summarized one per batch. Accept-on-second-try covered offline only. Not committed."
+    },
+    {
       "id": "summary-quality-001",
       "name": "Background summaries: output cap, summary language, truncated batches",
       "description": "docs/summary_quality_plan.md, D-104. LLMCompressor default output cap 1536 (DEFAULT_MAX_OUTPUT_TOKENS). When Han characters are at least 30% of Han plus ASCII letters, the user message asks for a Simplified Chinese body with the English headings kept. finish_reason length raises SummaryTooLongError; ConversationMemory then halves the batch, or skips a single turn, so one failing batch no longer stops later summaries. In memory only; scheduler and archive format unchanged.",
