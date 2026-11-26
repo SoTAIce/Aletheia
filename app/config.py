@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     # Archived by default; an explicit empty value keeps the in-memory mode.
     # Relative paths are anchored at the project root, not the working directory.
     conversation_storage_dir: str = Field(default="data/conversations", validate_default=True)
+    # Background history compression (D-100): local Ollama by default; loopback only.
+    summary_model_base_url: str = "http://127.0.0.1:11434/v1"
+    summary_model: str = "qwen3:4b-instruct"
     # Personas (docs/persona_plan.md): one directory per user of named instructions and run
     # defaults. Empty turns the feature off; relative paths are anchored like the archive.
     personas_dir: str = Field(default="data/personas", validate_default=True)
@@ -261,6 +264,29 @@ class Settings(BaseSettings):
     def debug(self) -> bool:
         """Backward-compatible alias for existing ``config.debug`` callers."""
         return self.app_debug
+
+    def summary_model_problem(self) -> str | None:
+        """Validate local summary model settings when --compress-history is enabled (D-100)."""
+        from urllib.parse import urlparse
+
+        if not (self.summary_model or "").strip():
+            return "SUMMARY_MODEL 不能为空"
+        base_url = (self.summary_model_base_url or "").strip()
+        if not base_url:
+            return "SUMMARY_MODEL_BASE_URL 不能为空"
+        parsed = urlparse(base_url)
+        if parsed.scheme not in ("http", "https"):
+            return "SUMMARY_MODEL_BASE_URL 只支持 http 或 https 本机地址"
+        try:
+            _ = parsed.port
+        except ValueError:
+            return "SUMMARY_MODEL_BASE_URL 端口不合法"
+        if parsed.hostname not in ("127.0.0.1", "::1", "localhost"):
+            return (
+                "SUMMARY_MODEL_BASE_URL 必须是本机回环地址（127.0.0.1、::1 或 localhost）；"
+                "摘要会把会话原文发出去，远端模型要等 summarizer 档案角色"
+            )
+        return None
 
     @property
     def mcp_servers(self) -> dict[str, dict[str, Any]]:

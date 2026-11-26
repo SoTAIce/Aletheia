@@ -28,6 +28,7 @@ class RunLimits:
     gate_seconds: float
     max_total_tokens: int | None = None
     max_seconds: float | None = None
+    summary_model: str | None = None
 
     @classmethod
     def current(cls, *, loop=None, team=None, explore=None, max_executions=16,
@@ -40,7 +41,8 @@ class RunLimits:
             from app.config import config as settings
         return cls(loop or LoopOptions(timeout_seconds=settings.agent_task_timeout_seconds), team,
                    explore or ExploreOptions(), max_executions, settings.agent_model_profile.timeout_seconds,
-                   DEFAULT_TIMEOUT_SECONDS, GATE_TIMEOUT_SECONDS, max_total_tokens, max_seconds)
+                   DEFAULT_TIMEOUT_SECONDS, GATE_TIMEOUT_SECONDS, max_total_tokens, max_seconds,
+                   settings.summary_model.strip() or 'qwen3:4b-instruct')
 
     def deadlines(self) -> dict[str, float]:
         """The task deadline of each mode that can run."""
@@ -82,8 +84,17 @@ class RunLimits:
                 ('团队', '委派次数 / 负责人轮数', f'{team.max_delegations} / {team.max_lead_turns}'),
                 ('团队', '成员工具轮数 / 调用次数', f'{team.worker_tool_rounds} / {team.worker_tool_calls}'),
             ]
+        import inspect
         from app.agent.batch import DEFAULT_ITEM_MAX_SECONDS, DEFAULT_ITEM_MAX_TOKENS
         from app.agent.tool_loading import DEFER_THRESHOLD, MAX_LOADED_TOOLS, MAX_VOLATILE_CHARS
+        from app.services.summary_scheduler import SummaryScheduler
+        summary_params = inspect.signature(SummaryScheduler.__init__).parameters
+        summary_timeout = summary_params['timeout_seconds'].default
+        summary_attempts = summary_params['max_attempts'].default
+        summary_model = self.summary_model
+        if summary_model is None:
+            from app.config import config
+            summary_model = config.summary_model.strip() or 'qwen3:4b-instruct'
         rows += [
             ('调研成员', '每个成员的时限（--delegate）', seconds(explore.member_timeout_seconds)),
             ('调研成员', '委派次数 / 每个成员的调用次数', f'{explore.max_delegations} / {explore.member_tool_calls}'),
@@ -96,6 +107,8 @@ class RunLimits:
             ('工具加载', '用户工具延迟加载阈值', f'超过 {DEFER_THRESHOLD} 个时启用'),
             ('工具加载', '每个任务最多加载的延迟工具', f'{MAX_LOADED_TOOLS} 个'),
             ('工具加载', '波动区定义总长度上限', f'{MAX_VOLATILE_CHARS:,} 字符'),
+            ('后台摘要', '历史压缩模型（--compress-history）',
+             f'本机 {summary_model}，单次 {summary_timeout:g} 秒，最多试 {summary_attempts} 次'),
         ]
         return rows
 

@@ -96,6 +96,7 @@ D-088 个性化人设（[方案](persona_plan.md)，第一步，含默认选项�
 - 命令行 `/persona`、`/btw`、`--persona` 在 `app/agent/persona_commands.py`；网页有 `/api/personas` 一组接口和“人设”面板，输入框里的 `/persona`、`/btw` 由页面拦下。
 - 记忆分区（D-089，[方案](persona_memory_plan.md)）：每条长期记忆有归属，`persona_id` 为空是公共的。召回时只查公共的和当前人设的，“默认”人设只看公共的；过滤在 PostgreSQL 一侧做，Milvus 结构不变。`/remember` 记到当前人设下（`--shared` 记成公共的）；删除人设时它的记忆一起删，有记忆时先确认。
 - 个人命令（D-090，[方案](personal_commands_plan.md)）：每个人设一套任务模板，`/review app/api` 这样运行。命令文件在人设目录下的 `commands/<人设编号>/`，第一次用时复制六个预置命令（`app/services/command_presets/`）。对话里记用户输入的那一行，拼好的模板作为约束跟在人设指令后面；命令可以固定执行模式，`write = false` 强制只读，`write = true` 在只读时不开始，命令从不打开写入。命令行 `/commands`，网页输入 `/` 补全、顶栏“命令”面板。
+- 后台摘要（D-100，[方案](history_compression_plan.md)）：网页后端也能用 `--compress-history` 开历史压缩；开了时启动先检查本机摘要模型，不可用就提示并关掉这次的压缩；摘要模型的地址和名字用 `SUMMARY_MODEL_BASE_URL`、`SUMMARY_MODEL` 设置，只许本机地址。网页健康接口和顶栏显示压缩状态。`summarizer` 档案角色暂缓。没有用真实 Ollama 验证。
 - 工具按需加载（D-099，[方案](tool_loading_plan.md)）：用户 MCP 工具超过 10 个时不进工具清单，模型用 `find_tools` 找、`call_tool` 调；工具清单和前两条消息整个任务不变（稳定区），已加载工具的定义每轮放在请求末尾、不进历史（波动区）。`delegate` 改为一直列出；`read_context_artifact` 可按 `pattern` 找。没有用真实模型验证。
 - 引用核对（D-098，[方案](citation_check_plan.md)）：知识库引用编号整个任务连续，同一片段沿用原编号；单一循环交付前检查答案里的 `[ref:n]` 是否存在，无效就退回改一次，还错就照常交付并标出（只查编号存在，不查内容）。结果带 `citations` 和 `citation_problems`，网页可点开来源卡片，命令行列出来源。补了检索链测试。没有用真实模型验证。
 - 批处理（D-097，[方案](batch_run_plan.md)）：`python -m app.agent.batch 清单.jsonl --out 结果.jsonl --max-tokens N`，或 `--each-file GLOB --goal 模板`。每项只读、不能追问、一个新会话，按顺序跑；整批令牌上限必填，开头确认（`--confirm-batch`）；结果按行追加，再跑同一清单只跑没完成的。方案第 1 节是 3.5 其余功能的排序。没有用真实模型验证。

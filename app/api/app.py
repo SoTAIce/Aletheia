@@ -155,7 +155,7 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
                max_concurrent_runs: int = 2, event_retention_seconds: float = 1800.0,
                shutdown_timeout_seconds: float = 30.0, clock=None,
                approval_tools: frozenset[str] = frozenset(), approval_wait_seconds: float = 300.0,
-               folder_picker=None, mcp_servers=()) -> FastAPI:
+               folder_picker=None, mcp_servers=(), history_compression: str = 'off') -> FastAPI:
     """An empty access_token disables authentication; the launcher only allows that on loopback."""
     options = {} if clock is None else {'clock': clock}
     runs = RunManager(service, user_id=user_id, max_concurrent=max_concurrent_runs,
@@ -339,7 +339,8 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
                 'active_runs': runs.active_count, 'options': run_options(),
                 'approval_tools': sorted(approval_tools),
                 'permission_rules': len(rules) if rules else 0,
-                'mcp_servers': [{'name': item['name'], 'tools': item['tools']} for item in mcp_servers]}
+                'mcp_servers': [{'name': item['name'], 'tools': item['tools']} for item in mcp_servers],
+                'history_compression': history_compression}
 
     @app.get('/api/sessions', dependencies=guarded)
     async def sessions(limit: int = 50):

@@ -208,7 +208,8 @@ async def test_the_token_is_required_everywhere(tmp_path):
                           'approval_tools': [],                                          # D-061
                           'permission_rules': 0,                                         # D-094
                           'mcp_servers': [],                                             # D-095
-                          'project_instructions': False}                                 # D-096
+                          'project_instructions': False,                                 # D-096
+                          'history_compression': 'off'}                                  # D-100
 
 
 async def test_unknown_runs_and_paths_have_codes(tmp_path):

@@ -9,7 +9,8 @@ import asyncio
 import ipaddress
 from contextlib import AsyncExitStack
 
-from app.agent.__main__ import deadline_problem, profile_problem, sandbox_problem, team_options_for
+from app.agent.__main__ import (SummaryModelError, deadline_problem, open_history_compressor,
+                                  profile_problem, sandbox_problem, team_options_for)
 from app.config import config
 from app.services.rag_agent_service import RagAgentService
 from app.tools.tool_loader import local_mcp_servers
@@ -65,6 +66,15 @@ async def serve(args) -> int:
     if config.workspace_choice and not choice:
         print('工作目录选择已关闭：非本机地址需要先配置 WORKSPACE_ALLOWED_ROOTS。', flush=True)
     async with AsyncExitStack() as stack:
+        try:
+            compressor, history_compression = await open_history_compressor(
+                getattr(args, 'compress_history', False), stack)
+        except SummaryModelError as exc:
+            print(f'SummaryModelError: {exc}')
+            return 2
+        except ValueError as exc:
+            print(f'HistoryCompressionError: {exc}')
+            return 2
         memory = None
         if config.longterm_memory_dsn:
             from app.services.longterm_memory_setup import open_longterm_memory
@@ -123,6 +133,7 @@ async def serve(args) -> int:
             workspace_policy=policy, default_workspace=write_root or filesystem_root,
             include_knowledge=not args.no_knowledge, execution_mode=args.execution_mode,
             single_runner=args.single_runner, delegate=args.delegate,
+            conversation_compressor=compressor,
             team_options=team_options,
             longterm_memory=memory, longterm_recall_limit=config.longterm_recall_limit,
             permission_rules=permission_rules,
@@ -139,7 +150,8 @@ async def serve(args) -> int:
                          approval_wait_seconds=config.web_approval_timeout_seconds,
                          # The system folder window opens on the server's screen, so only for loopback.
                          folder_picker=FolderPicker() if choice and is_loopback(host) else None,
-                         mcp_servers=mcp_health_info)
+                         mcp_servers=mcp_health_info,
+                         history_compression=history_compression)
         server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_config=None,
                                                access_log=False, server_header=False))
         print(f'Aletheia 网页后端：http://{host}:{port}（写文件：{"开启" if write_root else "关闭"}，'
@@ -167,6 +179,8 @@ def build_parser():
                         help='one agent loop; plan mode was removed (D-076)')
     parser.add_argument('--delegate', action='store_true',
                         help='Let the single loop delegate wide read-only research (off by default)')
+    parser.add_argument('--compress-history', action='store_true',
+                        help='Generate archived stage summaries using the local compressor')
     return parser
 
 

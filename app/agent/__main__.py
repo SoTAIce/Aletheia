@@ -616,14 +616,35 @@ class CliSession:
         self.write_root = write_root
 
 
+class SummaryModelError(Exception):
+    """Raised when SUMMARY_MODEL_BASE_URL or SUMMARY_MODEL fails loopback/config checks."""
+
+
+async def open_history_compressor(enabled: bool, stack: AsyncExitStack) -> tuple[object | None, str]:
+    """Open and probe the local history compressor; returns (compressor | None, status)."""
+    if not enabled:
+        return None, 'off'
+    if not config.conversation_storage_dir:
+        raise ValueError('--compress-history requires CONVERSATION_STORAGE_DIR')
+    problem = config.summary_model_problem()
+    if problem:
+        raise SummaryModelError(problem)
+    from app.core.dependencies import check_conversation_compressor, open_conversation_compressor
+    compressor = await stack.enter_async_context(open_conversation_compressor())
+    problem = await check_conversation_compressor(compressor)
+    if problem:
+        print(f'{problem}，这次不压缩历史。', flush=True)
+        return None, 'unavailable'
+    return compressor, 'on'
+
+
 async def open_cli_service(args, stack: AsyncExitStack) -> CliSession | int:
     """Run startup checks and open RagAgentService in stack; returns exit code 2 on refusal."""
-    compressor = None
-    if getattr(args, 'compress_history', False):
-        if not config.conversation_storage_dir:
-            raise ValueError('--compress-history requires CONVERSATION_STORAGE_DIR')
-        from app.core.dependencies import open_conversation_compressor
-        compressor = await stack.enter_async_context(open_conversation_compressor())
+    try:
+        compressor, _ = await open_history_compressor(getattr(args, 'compress_history', False), stack)
+    except SummaryModelError as exc:
+        print(f'SummaryModelError: {exc}')
+        return 2
     write_root = args.write_root or config.mcp_filesystem_write_root or None
     sandbox = getattr(args, 'sandbox', False)
     problem = sandbox_problem(write_root, sandbox)

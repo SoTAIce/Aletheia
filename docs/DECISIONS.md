@@ -1155,3 +1155,19 @@
   - 唯一改变的现有行为是 `--delegate` 时 `delegate` 一直列出；黄金对照文件没有改。
 - 来源：用户 2026-11-23“写成方案”，2026-11-24“按推荐定”（第 8 节八条）。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对，没有改动。
 - 记录：[方案](tool_loading_plan.md)；代码在 `app/agent/tool_loading.py`、`app/agent/agent_loop.py`；测试在 `tests/test_tool_loading.py`。
+
+## D-100 2026-11-25 后台摘要：网页也能开历史压缩，启动时检查本机摘要模型，模型设置挪进 `.env`
+
+- 起因：3.5 排序第 3 项原来是“新的模型角色（后台摘要）”。用户 2026-11-25 说明本机已经装了 Ollama，于是改做三件更实在的事：网页后端没有历史压缩；摘要模型不可用时只在后台失败，用户看不到；摘要模型的地址和名字写死在代码里。详见 [方案](history_compression_plan.md)。
+- 决策：
+  - `python -m app.api` 加 `--compress-history`（默认关），和命令行共用 `open_history_compressor`（`app/agent/__main__.py`），返回压缩器和状态 `off`、`on`、`unavailable`。
+  - 开了历史压缩时，启动时用压缩器的客户端列一次模型（3 秒时限，不发对话内容），按完整模型名比较；连不上或没有这个模型时打印中文提示、这次关掉历史压缩，照常启动。提示里只有 `主机:端口` 和异常类型名。
+  - 新设置 `SUMMARY_MODEL_BASE_URL`（默认 `http://127.0.0.1:11434/v1`）和 `SUMMARY_MODEL`（默认 `qwen3:4b-instruct`）。`Settings.summary_model_problem()` 只许回环地址和 `http`/`https`，不是字段校验器；不合格时命令行和网页都以 `SummaryModelError` 退出码 2 拒绝。
+  - `GET /api/health` 多 `history_compression`，网页顶栏多一行“历史压缩：开启 / 关闭 / 不可用”；`--show-limits` 多“后台摘要”一行（只有模型名）。
+- 被否方案：`summarizer` 档案角色（用户本机有 Ollama，暂缓，见方案第 6 节）；摘要模型不可用时拒绝启动（一个可选功能不该让网页起不来）；允许远端摘要地址（对话原文会离开本机）。
+- 约束：
+  - 摘要仍不走钩子、不计入令牌上限、不进审计（D-080 不变）；运行中 Ollama 掉线照旧由调度器重试后放弃；
+  - 没开 `--compress-history` 时行为不变，黄金对照文件没有变化；
+  - 没有用真实 Ollama 验证。
+- 来源：用户 2026-11-25 选了网页接入、可用性检查、设置挪进 `.env` 三项，第 8 节八条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对并改了一处（提示行立即输出）。
+- 记录：[方案](history_compression_plan.md)；代码在 `app/agent/__main__.py`、`app/core/dependencies.py`、`app/config.py`、`app/api/__main__.py`；测试在 `tests/test_history_compression_setup.py`。

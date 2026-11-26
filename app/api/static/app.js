@@ -430,12 +430,17 @@ $('login-form').addEventListener('submit', async (event) => {
 
 // ---- status ---------------------------------------------------------------------------
 
+const COMPRESSION_LABELS = {on: '开启', off: '关闭', unavailable: '不可用'};
+
 async function refreshHealth() {
   const health = await api('/api/health');
   $('status-write').textContent = health.write_enabled ? '开启' : '关闭';
   $('dot-write').className = 'dot' + (health.write_enabled ? ' warn' : '');
   $('status-memory').textContent = health.longterm_memory ? '可用' : '未开启';
   $('dot-memory').className = 'dot' + (health.longterm_memory ? ' on' : '');
+  const compression = health.history_compression || 'off';
+  $('status-compression').textContent = COMPRESSION_LABELS[compression] || '关闭';
+  $('dot-compression').className = 'dot' + (compression === 'on' ? ' on' : (compression === 'unavailable' ? ' warn' : ''));
   $('status-runs').textContent = String(health.active_runs);
   $('dot-runs').className = 'dot' + (health.active_runs ? ' busy' : '');
   $('toggle-memory').hidden = !health.longterm_memory;

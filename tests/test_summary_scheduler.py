@@ -132,6 +132,10 @@ async def test_compressor_client_and_cli_use_explicit_lifetimes(monkeypatch, tmp
     class Client:
         def __init__(self, **kwargs):
             assert kwargs['max_retries'] == 0
+            self.base_url = kwargs.get('base_url', 'http://127.0.0.1:11434/v1')
+            async def list_models():
+                return SimpleNamespace(data=[SimpleNamespace(id=dependencies.conversation_compressor._model)])
+            self.models = SimpleNamespace(list=list_models)
         async def __aenter__(self):
             return self
         async def __aexit__(self, *exc):
