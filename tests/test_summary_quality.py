@@ -18,10 +18,12 @@ from app.models.conversation_memory import (
 from app.services.conversation_archive import ConversationArchive
 from app.services.memory_compression.llm_compressor import (
     CHINESE_BODY_NOTE,
+    CONCISE_NOTE,
     DEFAULT_MAX_OUTPUT_TOKENS,
     SUMMARY_HEADINGS,
     SYSTEM_PROMPT,
     LLMCompressor,
+    SummaryInputTooLargeError,
     SummaryTooLongError,
     _mostly_chinese,
 )
@@ -114,7 +116,7 @@ async def test_language_detection_and_prompt_formatting():
     assert zh_prompt.endswith(CHINESE_BODY_NOTE)
     assert mixed_prompt.endswith(CHINESE_BODY_NOTE)
 
-    # English batch prompt is byte-for-byte identical to the pre-change format,
+    # English batch prompt includes the concise note and omits the Chinese note,
     # even when previous_summary is in Chinese.
     expected_en_prompt = (
         "Previous summary:\n"
@@ -122,6 +124,7 @@ async def test_language_detection_and_prompt_formatting():
         "New conversation turns:\n"
         f"{comp._format_turns(english_turns)}\n\n"
         "Return only the summary with these exact headings:\n" + "\n".join(SUMMARY_HEADINGS)
+        + CONCISE_NOTE
     )
     en_prompt = comp._build_prompt("之前的中文摘要", english_turns)
     assert en_prompt == expected_en_prompt
@@ -144,7 +147,7 @@ async def test_input_budget_counts_chinese_instruction_line():
     prompt = comp._build_prompt(None, turns)
     needed = ConversationMemory._estimate_text_tokens(SYSTEM_PROMPT + prompt) + 16
     tight = LLMCompressor(_fake_client(), "m", max_input_tokens=needed - 1)
-    with pytest.raises(ValueError, match="summary input exceeds token budget"):
+    with pytest.raises(SummaryInputTooLargeError, match="summary input exceeds token budget"):
         await tight.compress(None, turns)
 
 
@@ -355,4 +358,5 @@ def test_show_limits_includes_summary_output_cap_row():
         i for i, (layer, name, _) in enumerate(rows)
         if (layer, name) == ("后台摘要", "历史压缩模型（--compress-history）")
     )
-    assert rows[idx + 1] == ("后台摘要", "单次摘要输出上限", f"{DEFAULT_MAX_OUTPUT_TOKENS} 令牌")
+    assert rows[idx + 1] == ("后台摘要", "摘要模型窗口（SUMMARY_MODEL_CONTEXT_TOKENS 或档案）", "4096 令牌")
+    assert rows[idx + 2] == ("后台摘要", "单次摘要输出上限", "1024 令牌")

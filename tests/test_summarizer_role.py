@@ -226,7 +226,8 @@ async def test_open_conversation_compressor_with_profile_uses_selected_fields(mo
         assert comp._model == "sum-model"
         assert comp._temperature == 0.1
         assert comp._max_output_tokens == 1536
-        assert comp._max_input_tokens == 8192
+        assert comp._max_input_tokens == 41600
+        assert comp.batch_token_budget == 6000
         await comp.compress(None, _sample_turns())
     assert captured[-1] == {
         "base_url": "https://summary.example.com/v1",

@@ -33,6 +33,7 @@ class RunLimits:
     web_run_max_tokens: int | None = None
     web_run_max_seconds: float | None = None
     summary_profile: str | None = None
+    summary_context_tokens: int | None = None
 
     @classmethod
     def current(cls, *, loop=None, team=None, explore=None, max_executions=16,
@@ -51,13 +52,15 @@ class RunLimits:
         summary_profile = summarizer.name if summarizer is not None else None
         summary_model = (summarizer.model if summarizer is not None
                          else settings.summary_model.strip() or 'qwen3:4b-instruct')
+        summary_context_tokens = (summarizer.context_tokens if summarizer is not None
+                                  else settings.summary_model_context_tokens)
         return cls(loop or LoopOptions(timeout_seconds=settings.agent_task_timeout_seconds), team,
                    explore or ExploreOptions(), max_executions, settings.agent_model_profile.timeout_seconds,
                    DEFAULT_TIMEOUT_SECONDS, GATE_TIMEOUT_SECONDS, max_total_tokens, max_seconds,
                    summary_model,
                    settings.blocked_task_ttl_seconds,
                    settings.web_run_max_tokens, settings.web_run_max_seconds,
-                   summary_profile)
+                   summary_profile, summary_context_tokens)
 
     def deadlines(self) -> dict[str, float]:
         """The task deadline of each mode that can run."""
@@ -118,6 +121,11 @@ class RunLimits:
             summary_model = config.summary_model.strip() or 'qwen3:4b-instruct'
         summary_label = (f'档案 {self.summary_profile}，模型 {summary_model}'
                          if self.summary_profile is not None else f'本机 {summary_model}')
+        summary_context = self.summary_context_tokens
+        if summary_context is None:
+            from app.config import config
+            summary_context = config.summary_model_context_tokens
+        summary_output_cap = min(DEFAULT_MAX_OUTPUT_TOKENS, summary_context // 4)
         rows += [
             ('调研成员', '每个成员的时限（--delegate）', seconds(explore.member_timeout_seconds)),
             ('调研成员', '委派次数 / 每个成员的调用次数', f'{explore.max_delegations} / {explore.member_tool_calls}'),
@@ -132,7 +140,8 @@ class RunLimits:
             ('工具加载', '波动区定义总长度上限', f'{MAX_VOLATILE_CHARS:,} 字符'),
             ('后台摘要', '历史压缩模型（--compress-history）',
              f'{summary_label}，单次 {summary_timeout:g} 秒，最多试 {summary_attempts} 次'),
-            ('后台摘要', '单次摘要输出上限', f'{DEFAULT_MAX_OUTPUT_TOKENS} 令牌'),
+            ('后台摘要', '摘要模型窗口（SUMMARY_MODEL_CONTEXT_TOKENS 或档案）', f'{summary_context} 令牌'),
+            ('后台摘要', '单次摘要输出上限', f'{summary_output_cap} 令牌'),
             ('网页', '每次运行的令牌上限（WEB_RUN_MAX_TOKENS）',
              '不限' if self.web_run_max_tokens is None else str(self.web_run_max_tokens)),
             ('网页', '每次运行的时限（WEB_RUN_MAX_SECONDS）', seconds(self.web_run_max_seconds)),

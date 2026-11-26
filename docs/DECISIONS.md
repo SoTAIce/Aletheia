@@ -1228,3 +1228,20 @@
   - 已用本机 Ollama 复测：截断和语言两个问题都消失了。另外发现两个问题，这次没改：摘要有时几乎和原文一样长；Ollama 默认 4096 的上下文放不下多轮的旧对话批次（方案第 10 节）。
 - 来源：用户 2026-11-25 “写方案”，第 8 节六条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对没有改动。
 - 记录：[方案](summary_quality_plan.md)；代码在 `app/services/memory_compression/llm_compressor.py`、`app/models/conversation_memory.py`；测试在 `tests/test_summary_quality.py`。
+
+## D-105 2026-11-26 后台摘要：按摘要模型的窗口算上限和批次，摘要过长时重试一次再收下
+
+- 起因：D-104 本机复测发现两个问题：摘要有时几乎和原文一样长（把数据记录逐条抄进去）；Ollama 默认只开 4096 的上下文，多轮批次的请求被拒，而且这种失败不减半，会话卡住。补充测量：OpenAI 兼容接口不能按请求放大 Ollama 的窗口；本机令牌估算比实际少 26%～34%。详见 [方案](summary_fit_plan.md)。
+- 决策：
+  - 新设置 `SUMMARY_MODEL_CONTEXT_TOKENS`（默认 4096，小于 2048 启动拒绝）；档案路径用档案的 `context_tokens`。
+  - `LLMCompressor(context_tokens=...)` 由窗口算：输出上限 `min(1536, 窗口 // 4)`；输入上限 `(窗口 - 输出上限 - 64) / 1.5`；批次预算 `min(6000, 输入上限 - 600)`，`ConversationMemory` 从压缩器的 `batch_token_budget` 取。不传 `context_tokens` 时和以前一样。
+  - 输入超限改抛 `SummaryInputTooLargeError`，和 `SummaryTooLongError` 共用父类 `SummaryBatchTooLargeError`，都按 D-104 减半或跳过。
+  - 提示词总是多一句“简洁，不要逐条抄数据行、记录、日志或代码”。摘要估算超过 `max(400, 0.5 × 原文估算)` 时抛 `SummaryNotShorterError`（带摘要正文）；同一批第一次照常失败、重试，第二次还过长就收下并记一条警告（只有类型名）。不减半、不跳过。
+  - `--show-limits` 多一行“摘要模型窗口”，“单次摘要输出上限”按窗口算。
+- 被否方案：自动读 Ollama 实际开的窗口（`/api/ps` 只在加载后才有，且是 Ollama 专用）；自动改 Ollama 的环境变量；按服务商错误文字判断超窗口；改全项目共用的估算算法；过长时第二次也拒绝并跳过（会丢掉这一轮的摘要）。
+- 约束：
+  - 黄金对照文件没有变化；调度器、归档格式、摘要进上下文的预算不变；不改用户的 `.env` 和 Ollama 设置；
+  - 想一批多摘几轮，用户可以在启动 Ollama 前设 `OLLAMA_CONTEXT_LENGTH=16384` 并写同样的 `SUMMARY_MODEL_CONTEXT_TOKENS`；
+  - 已用本机 Ollama 复测：单轮摘要 3 次都在 200 令牌以内，旧对话不再被拒；“过长后收下”这条路只有离线测试覆盖。
+- 来源：用户 2026-11-25 “写方案修”，第 8 节八条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对没有改动。
+- 记录：[方案](summary_fit_plan.md)；代码在 `app/services/memory_compression/llm_compressor.py`、`app/models/conversation_memory.py`、`app/core/dependencies.py`、`app/config.py`；测试在 `tests/test_summary_fit.py`。

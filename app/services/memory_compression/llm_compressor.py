@@ -27,12 +27,37 @@ SYSTEM_PROMPT = (
 
 
 DEFAULT_MAX_OUTPUT_TOKENS = 1536
+TOKEN_ESTIMATE_MARGIN = 1.5
+PROMPT_OVERHEAD_TOKENS = 600
+MAX_BATCH_TOKENS = 6000
+MIN_SUMMARY_ALLOWANCE = 400
+MAX_SUMMARY_RATIO = 0.5
 
+CONCISE_NOTE = (
+    '\n\nBe concise: keep decisions, facts and open questions; '
+    'do not copy data rows, records, logs or code verbatim.'
+)
 CHINESE_BODY_NOTE = '\n\nWrite the body text in Simplified Chinese; keep the headings exactly as given in English.'
 
 
-class SummaryTooLongError(RuntimeError):
+class SummaryBatchTooLargeError(RuntimeError):
+    """Raised when a summary batch exceeds input or output token limits."""
+
+
+class SummaryTooLongError(SummaryBatchTooLargeError):
     """Raised when the compression model hits its output token limit."""
+
+
+class SummaryInputTooLargeError(SummaryBatchTooLargeError):
+    """Raised when the estimated summary input exceeds the model input limit."""
+
+
+class SummaryNotShorterError(RuntimeError):
+    """Raised when a generated summary is too long relative to the source turns."""
+
+    def __init__(self, summary: str) -> None:
+        super().__init__("summary is not shorter than the target")
+        self.summary = summary
 
 
 def _mostly_chinese(turns: Sequence[ConversationTurn]) -> bool:
@@ -57,6 +82,7 @@ class LLMCompressor(ConversationCompressor):
         temperature: float = 0.1,
         max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         *, max_input_tokens: int = 8192,
+        context_tokens: int | None = None,
         extra_body: dict | None = None,
     ) -> None:
         if not model.strip():
@@ -69,11 +95,26 @@ class LLMCompressor(ConversationCompressor):
         self._client = client
         self._model = model
         self._temperature = temperature
-        self._max_output_tokens = max_output_tokens
-        if type(max_input_tokens) is not int or max_input_tokens < 1:
-            raise ValueError('max_input_tokens must be a positive integer')
-        self._max_input_tokens = max_input_tokens
+        self._context_tokens = context_tokens
+        if context_tokens is None:
+            self._max_output_tokens = max_output_tokens
+            if type(max_input_tokens) is not int or max_input_tokens < 1:
+                raise ValueError('max_input_tokens must be a positive integer')
+            self._max_input_tokens = max_input_tokens
+        else:
+            if type(context_tokens) is not int or context_tokens < 2048:
+                raise ValueError('context_tokens must be an integer >= 2048')
+            self._max_output_tokens = min(max_output_tokens, context_tokens // 4)
+            self._max_input_tokens = int(
+                (context_tokens - self._max_output_tokens - 64) / TOKEN_ESTIMATE_MARGIN
+            )
         self._extra_body = dict(extra_body) if extra_body is not None else None
+
+    @property
+    def batch_token_budget(self) -> int | None:
+        if self._context_tokens is None:
+            return None
+        return min(MAX_BATCH_TOKENS, self._max_input_tokens - PROMPT_OVERHEAD_TOKENS)
 
     async def compress(
         self,
@@ -90,7 +131,7 @@ class LLMCompressor(ConversationCompressor):
         # Mixed-language estimate, separate from the output cap. Includes all
         # prompt text, lifecycle metadata and message framing, not just bodies.
         if ConversationMemory._estimate_text_tokens(SYSTEM_PROMPT + prompt) + 16 > self._max_input_tokens:
-            raise ValueError('summary input exceeds token budget')
+            raise SummaryInputTooLargeError('summary input exceeds token budget')
         request = dict(
             model=self._model,
             messages=[
@@ -129,6 +170,10 @@ class LLMCompressor(ConversationCompressor):
             raise RuntimeError("compression model returned an empty summary")
         if any(summary.splitlines().count(heading) != 1 for heading in SUMMARY_HEADINGS):
             raise RuntimeError('compression model omitted or duplicated required summary sections')
+        summary_tokens = ConversationMemory._estimate_text_tokens(summary)
+        source_tokens = ConversationMemory._estimate_text_tokens(self._format_turns(turns))
+        if summary_tokens > max(MIN_SUMMARY_ALLOWANCE, MAX_SUMMARY_RATIO * source_tokens):
+            raise SummaryNotShorterError(summary.strip())
         return summary.strip()
 
     def _build_prompt(
@@ -143,6 +188,7 @@ class LLMCompressor(ConversationCompressor):
             "New conversation turns:\n"
             f"{turns_text}\n\n"
             "Return only the summary with these exact headings:\n" + '\n'.join(SUMMARY_HEADINGS)
+            + CONCISE_NOTE
         )
         if _mostly_chinese(turns):
             prompt += CHINESE_BODY_NOTE

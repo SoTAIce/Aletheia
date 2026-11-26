@@ -21,6 +21,7 @@ ollama_client = AsyncOpenAI(
 conversation_compressor = LLMCompressor(
     client=ollama_client,
     model=config.summary_model.strip() or _DEFAULT_SUMMARY_MODEL,
+    context_tokens=config.summary_model_context_tokens,
 )
 
 
@@ -43,15 +44,16 @@ def _summary_host_port(raw_url: object) -> str:
 async def open_conversation_compressor(profile=None, settings=None):
     """Owned client for background work; scheduler controls retries."""
     if profile is None:
-        base_url = config.summary_model_base_url.strip()
-        model = config.summary_model.strip()
+        cfg = settings or config
+        base_url = cfg.summary_model_base_url.strip()
+        model = cfg.summary_model.strip()
         async with AsyncOpenAI(
             base_url=base_url,
             api_key="ollama",
             timeout=120.0,
             max_retries=0,
         ) as client:
-            yield LLMCompressor(client=client, model=model)
+            yield LLMCompressor(client=client, model=model, context_tokens=cfg.summary_model_context_tokens)
         return
     extra_body = {"enable_thinking": profile.enable_thinking} if profile.enable_thinking is not None else None
     async with AsyncOpenAI(
@@ -60,7 +62,12 @@ async def open_conversation_compressor(profile=None, settings=None):
         timeout=profile.timeout_seconds,
         max_retries=0,
     ) as client:
-        yield LLMCompressor(client=client, model=profile.model, extra_body=extra_body)
+        yield LLMCompressor(
+            client=client,
+            model=profile.model,
+            context_tokens=profile.context_tokens,
+            extra_body=extra_body,
+        )
 
 
 async def check_conversation_compressor(

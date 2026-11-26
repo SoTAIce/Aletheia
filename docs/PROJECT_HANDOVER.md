@@ -98,7 +98,8 @@ D-088 个性化人设（[方案](persona_plan.md)，第一步，含默认选项�
 - 个人命令（D-090，[方案](personal_commands_plan.md)）：每个人设一套任务模板，`/review app/api` 这样运行。命令文件在人设目录下的 `commands/<人设编号>/`，第一次用时复制六个预置命令（`app/services/command_presets/`）。对话里记用户输入的那一行，拼好的模板作为约束跟在人设指令后面；命令可以固定执行模式，`write = false` 强制只读，`write = true` 在只读时不开始，命令从不打开写入。命令行 `/commands`，网页输入 `/` 补全、顶栏“命令”面板。
 - 网页计量和阻塞过期（D-101，[方案](scheduled_tasks_plan.md)）：网页每次运行一个计量器（选模式那次调用也计入），可设 `WEB_RUN_MAX_TOKENS`、`WEB_RUN_MAX_SECONDS`；阻塞任务 `BLOCKED_TASK_TTL_SECONDS`（默认 24 小时）后过期。
 - 定时任务（D-102，同一方案）：`schedules.toml` 写只读任务（时间、星期、目标、必填令牌上限），网页后端开着时到点跑，结果进 `schedule-<name>` 会话；启动时按指纹确认，重启后同一时间点不重跑，只补 12 小时内最近一次。没有用真实模型验证。
-- 摘要质量（D-104，[方案](summary_quality_plan.md)）：摘要输出上限 1536；中文对话要求写中文；被截断的批次下次减半，单轮还截断就跳过，不再卡住后面。已用本机 Ollama 复测；遗留两个问题：摘要有时几乎和原文一样长，Ollama 默认 4096 的上下文放不下多轮批次（方案第 10 节）。
+- 摘要窗口（D-105，[方案](summary_fit_plan.md)）：摘要的输出上限、输入上限和批次大小按 `SUMMARY_MODEL_CONTEXT_TOKENS`（默认 4096，Ollama 的默认值）或档案的 `context_tokens` 算；输入超限也减半；摘要过长时重试一次，第二次还过长就收下。已用本机 Ollama 复测。
+- 摘要质量（D-104，[方案](summary_quality_plan.md)）：摘要输出上限 1536；中文对话要求写中文；被截断的批次下次减半，单轮还截断就跳过，不再卡住后面。已用本机 Ollama 复测；复测时发现的两个遗留问题已由 D-105 处理。
 - 摘要档案角色（D-103，[方案](summarizer_role_plan.md)）：`models.toml` 的 `[roles]` 可以写 `summarizer`，让后台摘要用档案里的模型（可以是远端，启动会提示原文发往哪个主机）；没写时照旧用本机 Ollama，不回落到 `main`。摘要仍不计入令牌上限（D-080）。没有用真实模型验证。
 - 后台摘要（D-100，[方案](history_compression_plan.md)）：网页后端也能用 `--compress-history` 开历史压缩；开了时启动先检查本机摘要模型，不可用就提示并关掉这次的压缩；摘要模型的地址和名字用 `SUMMARY_MODEL_BASE_URL`、`SUMMARY_MODEL` 设置，只许本机地址。网页健康接口和顶栏显示压缩状态。`summarizer` 档案角色暂缓。没有用真实 Ollama 验证。
 - 工具按需加载（D-099，[方案](tool_loading_plan.md)）：用户 MCP 工具超过 10 个时不进工具清单，模型用 `find_tools` 找、`call_tool` 调；工具清单和前两条消息整个任务不变（稳定区），已加载工具的定义每轮放在请求末尾、不进历史（波动区）。`delegate` 改为一直列出；`read_context_artifact` 可按 `pattern` 找。没有用真实模型验证。

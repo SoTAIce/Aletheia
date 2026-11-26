@@ -81,6 +81,7 @@ class Settings(BaseSettings):
     # Background history compression (D-100): local Ollama by default; loopback only.
     summary_model_base_url: str = "http://127.0.0.1:11434/v1"
     summary_model: str = "qwen3:4b-instruct"
+    summary_model_context_tokens: int = 4096
     # Personas (docs/persona_plan.md): one directory per user of named instructions and run
     # defaults. Empty turns the feature off; relative paths are anchored like the archive.
     personas_dir: str = Field(default="data/personas", validate_default=True)
@@ -307,6 +308,8 @@ class Settings(BaseSettings):
                 "SUMMARY_MODEL_BASE_URL 必须是本机回环地址（127.0.0.1、::1 或 localhost）；"
                 "摘要会把会话原文发出去，远端模型要等 summarizer 档案角色"
             )
+        if self.summary_model_context_tokens < 2048:
+            return "SUMMARY_MODEL_CONTEXT_TOKENS 不能小于 2048"
         return None
 
     @property

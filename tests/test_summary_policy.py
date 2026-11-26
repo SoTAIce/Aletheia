@@ -6,7 +6,7 @@ import pytest
 
 from app.models.conversation_memory import ConversationMemory, ConversationMessage, ConversationTurn, MessageRole, TurnStatus
 from app.services.conversation_archive import ConversationArchive
-from app.services.memory_compression.llm_compressor import LLMCompressor
+from app.services.memory_compression.llm_compressor import LLMCompressor, SummaryInputTooLargeError
 
 
 async def closed(memory, identity, task, status=TurnStatus.COMPLETED, text='goal'):
@@ -74,6 +74,6 @@ async def test_compressor_rejects_input_over_budget_without_model_call():
     create = AsyncMock()
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     compressor = LLMCompressor(client, 'unchanged-model', max_input_tokens=200)
-    with pytest.raises(ValueError, match='budget'):
+    with pytest.raises(SummaryInputTooLargeError, match='budget'):
         await compressor.compress(None, [ConversationTurn([ConversationMessage(MessageRole.USER, 'x' * 1000)])])
     create.assert_not_awaited()
