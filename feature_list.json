@@ -1784,6 +1784,14 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "history-compression-001",
+      "name": "Background summaries: web history compression, startup probe, settings in .env",
+      "description": "docs/history_compression_plan.md, D-100. python -m app.api gains --compress-history (off by default), sharing open_history_compressor with the CLI. When on, startup lists the local models (3 s, no transcript) and turns compression off for the run with a Chinese notice if the server or model is missing. SUMMARY_MODEL_BASE_URL and SUMMARY_MODEL replace the hard-coded Ollama endpoint and model, loopback only. /api/health reports history_compression; the page and --show-limits show it. The summarizer profile role is deferred.",
+      "status": "done",
+      "dependencies": [],
+      "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked by Claude with one change (flush the notice). init.ps1 2382 passed, 28 skipped; goldens unchanged. Not committed. Not run against a real Ollama."
+    },
+    {
       "id": "tool-loading-001",
       "name": "On-demand tool loading: fixed tool list, loaded definitions in a volatile tail",
       "description": "docs/tool_loading_plan.md, D-099. When a task has more than 10 user MCP tools, they leave the tool list; find_tools (BM25 with Chinese bigrams, top 5, auto-load, at most 10 per task and 8000 chars) and call_tool (alias validated against the input schema, dispatched under the real tool name) take their place. The tool list and first two messages stay byte-identical for the whole task; loaded definitions go in a trailing host SystemMessage rebuilt each request and never stored in history. delegate is now always listed and refused when not allowed. read_context_artifact gains pattern/context.",
