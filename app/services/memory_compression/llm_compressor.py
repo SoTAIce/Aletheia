@@ -26,13 +26,36 @@ SYSTEM_PROMPT = (
 )
 
 
+DEFAULT_MAX_OUTPUT_TOKENS = 1536
+
+CHINESE_BODY_NOTE = '\n\nWrite the body text in Simplified Chinese; keep the headings exactly as given in English.'
+
+
+class SummaryTooLongError(RuntimeError):
+    """Raised when the compression model hits its output token limit."""
+
+
+def _mostly_chinese(turns: Sequence[ConversationTurn]) -> bool:
+    han = 0
+    latin = 0
+    for turn in turns:
+        for message in turn.messages:
+            for ch in message.content:
+                if '\u4e00' <= ch <= '\u9fff':
+                    han += 1
+                elif ch.isascii() and ch.isalpha():
+                    latin += 1
+    total = han + latin
+    return total > 0 and han / total >= 0.3
+
+
 class LLMCompressor(ConversationCompressor):
     def __init__(
         self,
         client: AsyncOpenAI,
         model: str,
         temperature: float = 0.1,
-        max_output_tokens: int = 512,
+        max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
         *, max_input_tokens: int = 8192,
         extra_body: dict | None = None,
     ) -> None:
@@ -92,6 +115,8 @@ class LLMCompressor(ConversationCompressor):
         if not choices or len(choices) != 1:
             raise RuntimeError("compression model must return exactly one choice")
         choice = choices[0]
+        if getattr(choice, "finish_reason", None) == "length":
+            raise SummaryTooLongError("compression model hit the output limit")
         message = getattr(choice, "message", None)
         if (getattr(choice, "finish_reason", None) != "stop"
                 or getattr(message, "role", None) != "assistant"
@@ -112,13 +137,16 @@ class LLMCompressor(ConversationCompressor):
         turns: Sequence[ConversationTurn],
     ) -> str:
         turns_text = self._format_turns(turns)
-        return (
+        prompt = (
             "Previous summary:\n"
             f"{previous_summary or 'None'}\n\n"
             "New conversation turns:\n"
             f"{turns_text}\n\n"
             "Return only the summary with these exact headings:\n" + '\n'.join(SUMMARY_HEADINGS)
         )
+        if _mostly_chinese(turns):
+            prompt += CHINESE_BODY_NOTE
+        return prompt
 
     @staticmethod
     def _format_turns(turns: Sequence[ConversationTurn]) -> str:

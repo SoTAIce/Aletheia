@@ -107,6 +107,8 @@ class ConversationMemory(BaseMemory):
         if summary_batch_size <= 0 or summary_token_budget <= 0:
             raise ValueError("summary batch size and token budget must be positive")
         self._summary_batch_size = summary_batch_size
+        self._batch_limit = summary_batch_size
+        self._skipped_turn_ids: set[str] = set()
         self._summary_token_budget = summary_token_budget
         self._background_compression = background_compression
         self._summary_suspended = False
@@ -199,6 +201,8 @@ class ConversationMemory(BaseMemory):
                 return
             self._summary_index = tuple(entries)
             self._summary_suspended = False
+            self._batch_limit = self._summary_batch_size
+            self._skipped_turn_ids.clear()
             self._turns = deque(turns)
             self._compression_buffer.clear()
             self._compression_buffer_tokens = 0
@@ -383,6 +387,8 @@ class ConversationMemory(BaseMemory):
         """Clear active turns, pending compression data, and the summary."""
         self._revision += 1
         self._summary_index = ()
+        self._batch_limit = self._summary_batch_size
+        self._skipped_turn_ids.clear()
         self._turns.clear()
         self._compression_buffer.clear()
         self._compression_buffer_tokens = 0
@@ -394,11 +400,12 @@ class ConversationMemory(BaseMemory):
     async def _refresh_pending_locked(self) -> None:
         if self._archive is None or self._compressor is None:
             return
-        covered = {turn_id for entry in self._summary_index for turn_id in entry.source_turn_ids}
+        covered = ({turn_id for entry in self._summary_index for turn_id in entry.source_turn_ids}
+                   | self._skipped_turn_ids)
         revision = self._revision
         turns, tokens = await asyncio.to_thread(
             self._archive.pending_summary_turns, covered, self._max_turns,
-            self._summary_batch_size, self._summary_token_budget,
+            self._batch_limit, self._summary_token_budget,
         )
         if revision != self._revision:
             return
@@ -458,11 +465,22 @@ class ConversationMemory(BaseMemory):
                     self._archive.commit_summary(entry, expected_turns=snapshot)
                     self._summary_index = (*self._summary_index, entry)
                     self._summary = body.strip()
+                    self._batch_limit = self._summary_batch_size
                     covered = set(entry.source_turn_ids)
                     self._compression_buffer = deque(t for t in self._compression_buffer if t.turn_id not in covered)
                     self._compression_buffer_tokens = sum(self._estimate_turn_tokens(t) for t in self._compression_buffer)
                 return True
-            except Exception:
+            except Exception as exc:
+                from app.services.memory_compression.llm_compressor import SummaryTooLongError
+                if isinstance(exc, SummaryTooLongError) and revision == self._revision:
+                    async with nullcontext() if lock_held else self._lock:
+                        if revision == self._revision:
+                            if len(snapshot) > 1:
+                                self._batch_limit = max(1, len(snapshot) // 2)
+                            elif len(snapshot) == 1:
+                                self._skipped_turn_ids.add(snapshot[0].turn_id)
+                                logger.warning('Summary skipped one turn that exceeds the output limit ({})',
+                                               type(exc).__name__)
                 logger.exception('Stage summary failed; archived originals were retained')
                 if raise_errors:
                     raise

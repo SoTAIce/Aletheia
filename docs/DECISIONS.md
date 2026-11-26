@@ -1213,3 +1213,18 @@
   - 没有用真实模型验证。
 - 来源：用户 2026-11-25 “后台摘要可以开始写方案了”，第 8 节七条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对没有改动。
 - 记录：[方案](summarizer_role_plan.md)；代码在 `app/models/model_profile.py`、`app/core/dependencies.py`、`app/agent/__main__.py`、`app/services/memory_compression/llm_compressor.py`；测试在 `tests/test_summarizer_role.py`。
+
+## D-104 2026-11-25 后台摘要：输出上限 1536、中文对话要求写中文、被截断的批次减半或跳过
+
+- 起因：2026-11-25 用本机 Ollama 实测（用户授权）：4 轮中文对话的摘要写满 512 被截断、判为失败；上限放宽后正文写成英文。读代码确认：最老的一批失败后，调度器跳过它，但下次选批次还是同一批，这个会话在这个进程里再也不会有新摘要。详见 [方案](summary_quality_plan.md)。
+- 决策：
+  - `LLMCompressor` 默认输出上限改为 `DEFAULT_MAX_OUTPUT_TOKENS = 1536`；`--show-limits` 多一行“单次摘要输出上限”。
+  - 宿主数这一批的汉字和 ASCII 字母，汉字占 30% 以上时在用户消息末尾加一句要求简体中文正文、小标题照旧用英文；否则请求逐字不变。`SYSTEM_PROMPT` 和六个小标题不变。
+  - `finish_reason == 'length'` 时抛 `SummaryTooLongError`（`RuntimeError` 的子类）。`ConversationMemory` 收到它时：批次多于 1 轮，下一批的轮数上限减半；只有 1 轮，就把这一轮记为跳过（只记类型名），后面的轮次继续。上限和跳过集合只在内存里，成功提交后上限复位，`clear`/`restore` 时都复位。
+  - 调度器、归档格式、摘要进上下文的预算都不改。
+- 被否方案：按输入长度动态算输出上限；通用语言识别；把跳过的轮次写进归档；其他失败（连不上、超时、小标题不对）也减半。
+- 约束：
+  - 英文对话的摘要请求除 `max_tokens` 外逐字不变，黄金对照文件没有变化；
+  - 已用本机 Ollama 复测：截断和语言两个问题都消失了。另外发现两个问题，这次没改：摘要有时几乎和原文一样长；Ollama 默认 4096 的上下文放不下多轮的旧对话批次（方案第 10 节）。
+- 来源：用户 2026-11-25 “写方案”，第 8 节六条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对没有改动。
+- 记录：[方案](summary_quality_plan.md)；代码在 `app/services/memory_compression/llm_compressor.py`、`app/models/conversation_memory.py`；测试在 `tests/test_summary_quality.py`。

@@ -107,6 +107,7 @@ class RunLimits:
         import inspect
         from app.agent.batch import DEFAULT_ITEM_MAX_SECONDS, DEFAULT_ITEM_MAX_TOKENS
         from app.agent.tool_loading import DEFER_THRESHOLD, MAX_LOADED_TOOLS, MAX_VOLATILE_CHARS
+        from app.services.memory_compression.llm_compressor import DEFAULT_MAX_OUTPUT_TOKENS
         from app.services.summary_scheduler import SummaryScheduler
         summary_params = inspect.signature(SummaryScheduler.__init__).parameters
         summary_timeout = summary_params['timeout_seconds'].default
@@ -131,6 +132,7 @@ class RunLimits:
             ('工具加载', '波动区定义总长度上限', f'{MAX_VOLATILE_CHARS:,} 字符'),
             ('后台摘要', '历史压缩模型（--compress-history）',
              f'{summary_label}，单次 {summary_timeout:g} 秒，最多试 {summary_attempts} 次'),
+            ('后台摘要', '单次摘要输出上限', f'{DEFAULT_MAX_OUTPUT_TOKENS} 令牌'),
             ('网页', '每次运行的令牌上限（WEB_RUN_MAX_TOKENS）',
              '不限' if self.web_run_max_tokens is None else str(self.web_run_max_tokens)),
             ('网页', '每次运行的时限（WEB_RUN_MAX_SECONDS）', seconds(self.web_run_max_seconds)),

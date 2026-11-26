@@ -122,6 +122,15 @@ async def test_full_agent_lifecycle_with_background_summary_faults(tmp_path, mod
                 assert result.content == summary_body
                 first_request = model.generate.call_args_list[-2].args[0]
                 assert any(ref in (m.content or '') for m in first_request)   # the summary is offered up front
+            elif mode == 'truncated':
+                # Truncation halves the batch and skips single turns that still exceed
+                # the output limit (docs/summary_quality_plan.md), stopping once all
+                # pending turns have been tried.
+                await wait_until(lambda: not memory.get_compression_buffer() and not service._summary_scheduler._active)
+                count_after = create_mock.await_count
+                assert count_after > 2
+                await asyncio.sleep(.04)
+                assert create_mock.await_count == count_after
             else:
                 await wait_until(lambda: create_mock.await_count == 2)
                 await wait_until(lambda: not service._summary_scheduler._active)
