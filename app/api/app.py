@@ -155,20 +155,34 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
                max_concurrent_runs: int = 2, event_retention_seconds: float = 1800.0,
                shutdown_timeout_seconds: float = 30.0, clock=None,
                approval_tools: frozenset[str] = frozenset(), approval_wait_seconds: float = 300.0,
-               folder_picker=None, mcp_servers=(), history_compression: str = 'off') -> FastAPI:
+               max_run_tokens: int | None = None, max_run_seconds: float | None = None,
+               folder_picker=None, mcp_servers=(), history_compression: str = 'off',
+               schedules=(), schedule_clock=None) -> FastAPI:
     """An empty access_token disables authentication; the launcher only allows that on loopback."""
     options = {} if clock is None else {'clock': clock}
     runs = RunManager(service, user_id=user_id, max_concurrent=max_concurrent_runs,
                       retention_seconds=event_retention_seconds, approval_tools=frozenset(approval_tools),
-                      approval_wait_seconds=approval_wait_seconds, **options)
+                      approval_wait_seconds=approval_wait_seconds,
+                      max_run_tokens=max_run_tokens, max_run_seconds=max_run_seconds, **options)
+    enabled_schedules = tuple(s for s in schedules if s.enabled)
+    scheduler = None
+    if enabled_schedules:
+        from app.api.schedules import Scheduler
+        sched_opts = {} if schedule_clock is None else {'clock': schedule_clock}
+        scheduler = Scheduler(runs, enabled_schedules, **sched_opts)
 
     @asynccontextmanager
     async def lifespan(app):
+        if scheduler is not None:
+            scheduler.start()
         yield
+        if scheduler is not None:
+            await scheduler.aclose()
         await runs.aclose(shutdown_timeout_seconds)
 
     app = FastAPI(title='Aletheia', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.runs = runs
+    app.state.scheduler = scheduler
 
     @app.middleware('http')
     async def security_headers(request, call_next):
@@ -340,7 +354,8 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
                 'approval_tools': sorted(approval_tools),
                 'permission_rules': len(rules) if rules else 0,
                 'mcp_servers': [{'name': item['name'], 'tools': item['tools']} for item in mcp_servers],
-                'history_compression': history_compression}
+                'history_compression': history_compression,
+                'schedules': scheduler.status() if scheduler is not None else []}
 
     @app.get('/api/sessions', dependencies=guarded)
     async def sessions(limit: int = 50):

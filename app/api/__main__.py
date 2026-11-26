@@ -116,6 +116,33 @@ async def serve(args) -> int:
                 print(f'UserMcpError: {exc}')
                 return 2
             mcp_health_info = tuple({'name': s.name, 'tools': len(probed[s.name].tools)} for s in user_mcp_servers)
+        from app.api.schedules import ScheduleError, confirm_schedules, format_schedule_table
+        try:
+            all_schedules = config.schedules()
+        except ScheduleError as exc:
+            print(f'ScheduleError: {exc}')
+            return 2
+        enabled_schedules = tuple(s for s in all_schedules if s.enabled)
+        if enabled_schedules:
+            if not config.conversation_storage_dir:
+                print('ScheduleError: 启用定时任务需要开启对话归档（CONVERSATION_STORAGE_DIR），以防止重启后重复运行。')
+                return 2
+            for sched in enabled_schedules:
+                if sched.workspace:
+                    if not choice:
+                        # The service refuses a chosen directory unless workspace choice is offered.
+                        print(f'ScheduleError: 定时任务 {sched.name} 写了 workspace，但网页没有开启工作目录选择'
+                              '（WORKSPACE_CHOICE；非本机地址还要配置 WORKSPACE_ALLOWED_ROOTS）；'
+                              '去掉 workspace 就用网页的默认目录。')
+                        return 2
+                    check = policy.check(sched.workspace)
+                    if check.problem is not None:
+                        print(f'ScheduleError: 定时任务 {sched.name} 的工作目录不合格：{check.message}')
+                        return 2
+            problem = confirm_schedules(all_schedules, confirmed=getattr(args, 'confirm_schedules', False))
+            if problem:
+                print(f'ScheduleError: {problem}')
+                return 2
         startup_deny = (*policy.closed_folders(),
                         *(permission_rules.deny_paths_for(filesystem_root, write_root) if permission_rules else ()))
         from app.services.project_instructions import InstructionsTrust
@@ -148,14 +175,19 @@ async def serve(args) -> int:
                          shutdown_timeout_seconds=config.web_shutdown_timeout_seconds,
                          approval_tools=config.web_approval_tool_names,
                          approval_wait_seconds=config.web_approval_timeout_seconds,
+                         max_run_tokens=config.web_run_max_tokens,
+                         max_run_seconds=config.web_run_max_seconds,
                          # The system folder window opens on the server's screen, so only for loopback.
                          folder_picker=FolderPicker() if choice and is_loopback(host) else None,
                          mcp_servers=mcp_health_info,
-                         history_compression=history_compression)
+                         history_compression=history_compression,
+                         schedules=enabled_schedules)
         server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_config=None,
                                                access_log=False, server_header=False))
         print(f'Aletheia 网页后端：http://{host}:{port}（写文件：{"开启" if write_root else "关闭"}，'
               f'执行方式：单一循环）', flush=True)
+        if enabled_schedules:
+            print(format_schedule_table(enabled_schedules), flush=True)
         await server.serve()
     return 0
 
@@ -171,6 +203,8 @@ def build_parser():
                         help='Confirm a --filesystem-root/--write-root on the system drive (C:) without a prompt (D-074)')
     parser.add_argument('--confirm-mcp', action='store_true',
                         help='Confirm user MCP servers from MCP_SERVERS_FILE without a prompt (D-095)')
+    parser.add_argument('--confirm-schedules', action='store_true',
+                        help='Confirm scheduled tasks from SCHEDULES_FILE without a prompt (D-102)')
     parser.add_argument('--no-instructions', action='store_true',
                         help='Do not read project instructions files from the working directory (D-096)')
     parser.add_argument('--no-knowledge', action='store_true', help='Disable RAG when no knowledge store is configured')

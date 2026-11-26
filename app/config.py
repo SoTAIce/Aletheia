@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     # The single loop's task deadline, enforced once by LoopRun (stage 5b). It replaced
     # AGENT_STEP_TIMEOUT_SECONDS, which the loop and the team always widened away; that name is no longer read.
     agent_task_timeout_seconds: float = Field(default=480.0, gt=0, allow_inf_nan=False)
+    # How long a blocked task (waiting on ask_user) stays resumable in memory (D-101).
+    blocked_task_ttl_seconds: float = Field(default=86400.0, gt=0, le=30 * 86400, allow_inf_nan=False)
     # With the sandbox, the single loop is reminded once to run the tests when it answers after
     # changing files without a passing run; the answer is then marked unverified (D-087).
     agent_remind_to_run: bool = True
@@ -107,6 +109,9 @@ class Settings(BaseSettings):
     # Optional TOML file of user MCP servers (D-095, docs/user_mcp_plan.md).
     # Empty: no user servers. The default name may be absent; a path set explicitly must exist.
     mcp_servers_file: str = "mcp.toml"
+    # Optional TOML file of scheduled tasks (D-102, docs/scheduled_tasks_plan.md).
+    # Empty: no schedules. The default name may be absent; a path set explicitly must exist.
+    schedules_file: str = "schedules.toml"
 
     # Hooks (D-060): one audit file per run in the conversation's archive directory, and an
     # optional token allowance per conversation (empty means no limit).
@@ -128,6 +133,8 @@ class Settings(BaseSettings):
         return frozenset(name.strip() for name in self.web_approval_tools.split(",") if name.strip())
     web_user_id: str = Field(default="local", min_length=1, max_length=256)
     web_max_concurrent_runs: int = Field(default=2, ge=1, le=32)
+    web_run_max_tokens: int | None = Field(default=None, ge=1)
+    web_run_max_seconds: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     web_event_retention_seconds: float = Field(default=1800.0, gt=0, allow_inf_nan=False)
     web_shutdown_timeout_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
 
@@ -248,6 +255,20 @@ class Settings(BaseSettings):
                 return None
             raise UserMcpError(f'找不到用户 MCP 配置文件 {path}（MCP_SERVERS_FILE）')
         return load_user_mcp(path)
+
+    def schedules(self):
+        """Scheduled tasks from SCHEDULES_FILE (D-102), or () when absent/empty.
+        A bad or explicitly missing file raises ScheduleError."""
+        from app.api.schedules import ScheduleError, load_schedules
+        name = (self.schedules_file or '').strip()
+        if not name:
+            return ()
+        path = Path(name)
+        if not path.is_file():
+            if 'schedules_file' not in self.model_fields_set and not path.exists():
+                return ()
+            raise ScheduleError(f'找不到定时任务配置文件 {path}（SCHEDULES_FILE）')
+        return load_schedules(path)
 
     @property
     def agent_model_window_tokens(self) -> int:

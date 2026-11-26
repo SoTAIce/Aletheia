@@ -1171,3 +1171,28 @@
   - 没有用真实 Ollama 验证。
 - 来源：用户 2026-11-25 选了网页接入、可用性检查、设置挪进 `.env` 三项，第 8 节八条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对并改了一处（提示行立即输出）。
 - 记录：[方案](history_compression_plan.md)；代码在 `app/agent/__main__.py`、`app/core/dependencies.py`、`app/config.py`、`app/api/__main__.py`；测试在 `tests/test_history_compression_setup.py`。
+
+## D-101 2026-11-25 网页每次运行一个计量器；阻塞任务 24 小时后过期
+
+- 起因：定时任务（排序第 4 项）的两项前置，设计审查 2.6、2.7 节。网页运行外面没有计量器，`LoopRun` 自己建一个不限额的，选执行模式那次调用不进用量和对话令牌上限，网页也设不了单次预算；`ask_user` 阻塞的任务一直留在内存里。详见 [方案](scheduled_tasks_plan.md) 3.1、3.2 节。
+- 决策：
+  - `RunManager._execute` 用 `metering(RunMeter(...))` 包住 `query_result`；新设置 `WEB_RUN_MAX_TOKENS`、`WEB_RUN_MAX_SECONDS`，默认不限，超了按 `budget` 失败。续跑是新的一次运行、新的计量器。
+  - 阻塞的任务记下阻塞时间，`BLOCKED_TASK_TTL_SECONDS`（默认 86400）后在 `query_result`、`resumable` 时顺手清掉；续跑开始时先移出计时，所以续跑中不会被清；续跑后又阻塞重新计时。过期后网页照现有的 `task_not_resumable` 说明，归档不改。
+  - `--show-limits` 多三行。
+- 约束：网页 `auto` 模式下的用量开始包括选模式那次调用；会话锁和会话对象仍不回收；没有用真实模型验证；黄金对照文件没有变化。
+- 来源：用户 2026-11-25“按推荐定”（方案第 8 节）。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对，没有改动。
+- 记录：[方案](scheduled_tasks_plan.md)；代码在 `app/api/runs.py`、`app/services/rag_agent_service.py`；测试在 `tests/test_web_metering.py`、`tests/test_blocked_task_expiry.py`。
+
+## D-102 2026-11-25 定时任务：网页后端里到点跑只读任务
+
+- 起因：3.5 排序第 4 项，想法出自用户的 `docs/agent_feature_ideas.md` 4.1 节；前置是 D-101。详见 [方案](scheduled_tasks_plan.md) 3.3 节。
+- 决策：
+  - 配置 `schedules.toml`（`SCHEDULES_FILE`，模板 `schedules.example.toml`），读法照 `permissions.toml`。每个 `[[schedule]]`：`name`、`at`（`HH:MM`，本机时区）、`days`（`daily`、`weekdays` 或星期列表）、`goal`、可选 `workspace`、必填 `max_tokens`、`max_seconds`（默认 300，1～3600）、`enabled`；最多 20 个。不用 cron 表达式。
+  - 启动时：有启用的任务就要求 `CONVERSATION_STORAGE_DIR`；写了 `workspace` 的要求网页开着工作目录选择，并按 `WorkspacePolicy` 检查；每个任务按指纹确认一次（终端 `y` 或 `--confirm-schedules`，存 `data/schedules_confirmed.json`）；打印任务表，不打目标。
+  - 只在网页后端里跑：`Scheduler`（`app/api/schedules.py`）挂在应用生命周期上，每次最多睡 60 秒再看时钟；启动时和醒来晚了，只补 12 小时内最近一次错过的时间点。
+  - 每次到点经 `RunManager.start_scheduled` 提交：会话 `schedule-<name>`，请求编号 `schedule-<name>-<YYYYMMDDHHMM>`（重启后同一时间点由归档回放，不重跑）；单一循环、只读、不用长期记忆、`allow_ask_user=False`；计量器用任务自己的预算；需要确认的工具调用由 `DenyAsker` 立即拒绝。会话忙或并发满时每 60 秒重试，最多 10 次，然后记“跳过”。
+  - `GET /api/health` 多 `schedules`（名字、下次时间、上次状态，不带目标）；网页顶栏“定时任务 N 个”，定时会话带“定时”标签；`accepted` 事件带 `schedule`。
+- 被否方案：cron 表达式（要加依赖或自己写解析器）；写入类定时任务（要“预先批准”）；每次运行一个新会话；用系统计划任务跑批处理（结果不在网页上）。
+- 约束：网页没开就不跑；定时会话的历史会越来越长；服务商加的隐藏令牌会让预算比估算早用完；没有用真实模型验证；没有定时任务文件时行为不变，黄金对照文件没有变化。
+- 来源：用户 2026-11-25“写方案”“按推荐定”（第 8 节八条）。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对并改了一处（`workspace` 和工作目录选择的启动检查）。
+- 记录：[方案](scheduled_tasks_plan.md)；代码在 `app/api/schedules.py`、`app/api/runs.py`、`app/api/__main__.py`；测试在 `tests/test_schedules.py`。

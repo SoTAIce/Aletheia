@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import re
+import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -161,6 +162,8 @@ class RagAgentService:
         permission_rules=None, asker=None,
         user_mcp_servers=(),
         instructions_trust=None,
+        blocked_task_ttl_seconds: float | None = None,
+        clock=time.monotonic,
     ) -> None:
         self.streaming = streaming
         self.model = model
@@ -241,7 +244,13 @@ class RagAgentService:
         self._conversations: dict[object, ConversationMemory] = {}
         self._locks: dict[object, asyncio.Lock] = {}
         self._tasks: dict[tuple[object, str], LoopRun] = {}
+        self._blocked_at: dict[tuple[object, str], float] = {}
         self._pending_outcomes: dict[tuple[object, str], tuple] = {}
+        ttl = config.blocked_task_ttl_seconds if blocked_task_ttl_seconds is None else blocked_task_ttl_seconds
+        if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl) or ttl <= 0:
+            raise ValueError("blocked_task_ttl_seconds must be positive and finite")
+        self._blocked_task_ttl_seconds = float(ttl)
+        self._clock = clock
         self._summary_scheduler = SummaryScheduler(self._conversations)
         self._closed = False
         if type(longterm_recall_limit) is not int or not 1 <= longterm_recall_limit <=100:
@@ -556,6 +565,17 @@ class RagAgentService:
         self._tasks.pop((key, task_id), None)
         self._routes.pop((key, task_id), None)
         self._task_options.pop((key, task_id), None)
+        self._blocked_at.pop((key, task_id), None)
+
+    def _expire_blocked(self) -> None:
+        """Drop blocked tasks whose wait has exceeded the TTL; never touches tasks being resumed."""
+        now = self._clock()
+        expired = [
+            item for item, blocked_at in list(self._blocked_at.items())
+            if now - blocked_at > self._blocked_task_ttl_seconds
+        ]
+        for key, task_id in expired:
+            self._forget_task(key, task_id)
 
     @staticmethod
     def _validate_input(question: str, session_id: str) -> None:
@@ -601,6 +621,7 @@ class RagAgentService:
             question, session_id, user_id, request_id, resume_task_id, question_id, execution_mode,
             allow_writes, use_memory, single_runner, hooks, workspace, workspace_confirmed, attachments,
             output_schema)
+        self._expire_blocked()
         stamp = datetime.now(timezone.utc)
         key = self._session_key(user_id, session_id)
         async with self._locks.setdefault(key, asyncio.Lock()):
@@ -750,6 +771,8 @@ class RagAgentService:
                 raise ValueError('question_id is not an unresolved blocking question of this task')
             memory = runtime.memory
             options = self._task_options.get((key, resume_task_id))
+            # Untrack before running so concurrent expiry checks cannot evict an in-progress resume.
+            self._blocked_at.pop((key, resume_task_id), None)
         else:
             memory = None
             options = None
@@ -895,6 +918,7 @@ class RagAgentService:
                 self._pending_outcomes[outcome_key] = (TurnStatus(result.status.value), result.content, archived)
                 if result.status is TaskStatus.BLOCKED:
                     self._tasks[(key, task.task_id)] = runtime
+                    self._blocked_at[(key, task.task_id)] = self._clock()
                 else:
                     self._forget_task(key, task.task_id)
         return result
@@ -925,11 +949,13 @@ class RagAgentService:
         return turn.status is TurnStatus.BLOCKED and turn.task_id is not None and self._live_blocked(key, turn.task_id)
 
     def _live_blocked(self, key, task_id: str) -> bool:
+        self._expire_blocked()
         runtime = self._tasks.get((key, task_id))
         return runtime is not None and runtime.memory.task_state.status is TaskStatus.BLOCKED
 
     def resumable(self, session_id: str, task_id: str, *, user_id: str | None = None) -> bool:
         """Whether this process still holds that blocked task, so an answer can resume it (D-046)."""
+        self._expire_blocked()
         return self._live_blocked(self._session_key(user_id, session_id), task_id)
 
     async def list_sessions(self, *, user_id: str | None = None, limit: int = 50) -> list[dict]:

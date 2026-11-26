@@ -1,0 +1,32 @@
+# 定时任务配置示例（复制为 schedules.toml 使用，或通过 SCHEDULES_FILE 指定路径）。
+#
+# 说明：
+# - 只在网页后端（python -m app.api）运行期间按本机时间触发；网页关闭时不会运行，
+#   下次启动时若最近一次错过的时间点在 12 小时内会自动补跑一次，更早的跳过。
+# - 所有定时任务均固定为只读（allow_writes=false）、不追问（allow_ask_user=false）、
+#   不使用长期记忆、单一循环执行；需要人工确认的工具调用会立即拒绝。
+# - max_tokens 为必填正整数（单次运行的令牌上限）；max_seconds 可选，默认 300（范围 1～3600）。
+# - 启用定时任务需要开启对话归档（CONVERSATION_STORAGE_DIR），以防止重启后同一时间点重复运行。
+# - 首次启用或修改任务内容后，启动网页后端时会在终端逐项列出并要求输入 y 确认
+#   （或加 --confirm-schedules）；确认记录保存在 data/schedules_confirmed.json。
+# - 最多配置 20 个 [[schedule]]，name 只能含字母、数字、-、_，长度 1～40 且不能重复。
+# - days 支持 "daily"、"weekdays" 或星期列表（["mon","tue","wed","thu","fri","sat","sun"] 的子集）。
+
+[[schedule]]
+name = "daily-log-summary"
+at = "09:00"
+days = "weekdays"
+goal = "检查工作目录中最近 24 小时新增或更新的日志文件，按模块汇总主要错误与告警，给出简短结论。"
+# workspace = "D:/logs/my-service"  # 可选：指定该任务的只读工作目录；不写则用网页默认目录
+max_tokens = 20000
+max_seconds = 300
+enabled = true
+
+[[schedule]]
+name = "weekly-changes"
+at = "10:00"
+days = ["mon"]
+goal = "回顾工作目录中上周的文档与变更记录，整理一份不超过 10 条的周报要点。"
+max_tokens = 30000
+max_seconds = 300
+enabled = true

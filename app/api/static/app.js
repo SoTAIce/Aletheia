@@ -443,6 +443,12 @@ async function refreshHealth() {
   $('dot-compression').className = 'dot' + (compression === 'on' ? ' on' : (compression === 'unavailable' ? ' warn' : ''));
   $('status-runs').textContent = String(health.active_runs);
   $('dot-runs').className = 'dot' + (health.active_runs ? ' busy' : '');
+  const schedules = Array.isArray(health.schedules) ? health.schedules : [];
+  const schedulesWrap = $('status-schedules-wrap');
+  if (schedulesWrap) {
+    schedulesWrap.hidden = schedules.length === 0;
+    $('status-schedules').textContent = `${schedules.length} 个`;
+  }
   $('toggle-memory').hidden = !health.longterm_memory;
   state.personasOn = Boolean(health.personas);
   state.instructionsOn = Boolean(health.project_instructions);
@@ -543,7 +549,14 @@ function renderSessions() {
     if (name !== group) { group = name; list.append(el('div', 'session-group', name)); }
     const button = el('button', 'session-item' + (s.session_id === state.session ? ' active' : ''));
     button.type = 'button';
-    button.append(el('span', 'title', firstLine(s.last_message, 80) || '（空会话）'), el('span', 'time', timeText(s.updated_at)));
+    const meta = el('span', 'time', timeText(s.updated_at));
+    if (typeof s.session_id === 'string' && s.session_id.startsWith('schedule-')) {
+      const row = el('span', 'session-meta');
+      row.append(el('span', 'tag schedule-tag', '定时'), meta);
+      button.append(el('span', 'title', firstLine(s.last_message, 80) || '（空会话）'), row);
+    } else {
+      button.append(el('span', 'title', firstLine(s.last_message, 80) || '（空会话）'), meta);
+    }
     button.addEventListener('click', () => openSession(s.session_id));
     list.append(button);
   }

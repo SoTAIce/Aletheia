@@ -29,6 +29,9 @@ class RunLimits:
     max_total_tokens: int | None = None
     max_seconds: float | None = None
     summary_model: str | None = None
+    blocked_task_ttl_seconds: float = 86400.0
+    web_run_max_tokens: int | None = None
+    web_run_max_seconds: float | None = None
 
     @classmethod
     def current(cls, *, loop=None, team=None, explore=None, max_executions=16,
@@ -42,7 +45,9 @@ class RunLimits:
         return cls(loop or LoopOptions(timeout_seconds=settings.agent_task_timeout_seconds), team,
                    explore or ExploreOptions(), max_executions, settings.agent_model_profile.timeout_seconds,
                    DEFAULT_TIMEOUT_SECONDS, GATE_TIMEOUT_SECONDS, max_total_tokens, max_seconds,
-                   settings.summary_model.strip() or 'qwen3:4b-instruct')
+                   settings.summary_model.strip() or 'qwen3:4b-instruct',
+                   settings.blocked_task_ttl_seconds,
+                   settings.web_run_max_tokens, settings.web_run_max_seconds)
 
     def deadlines(self) -> dict[str, float]:
         """The task deadline of each mode that can run."""
@@ -65,6 +70,10 @@ class RunLimits:
         """(层, 限额, 值) for the --show-limits table; host-authored text only."""
         def seconds(value):
             return '不限' if value is None else f'{value:g} 秒'
+        def hours_or_seconds(value: float) -> str:
+            if value >= 3600 and value % 3600 == 0:
+                return f'{int(value // 3600)} 小时'
+            return seconds(value)
         loop, explore = self.loop, self.explore
         from app.services.project_instructions import MAX_INSTRUCTION_CHARS
         rows = [
@@ -72,6 +81,7 @@ class RunLimits:
             ('任务', '单一循环工具轮数 / 调用次数', f'{loop.max_tool_rounds} / {loop.max_tool_calls}'),
             ('任务', '原地打转：连续几轮后提醒，再几轮后收尾', stall_text(loop)),
             ('任务', '一个任务最多执行次数（含阻塞后续跑）', str(self.max_executions)),
+            ('任务', '阻塞任务保留时间（BLOCKED_TASK_TTL_SECONDS）', hours_or_seconds(self.blocked_task_ttl_seconds)),
             ('任务', '令牌预算（--max-tokens）', '不限' if self.max_total_tokens is None else str(self.max_total_tokens)),
             ('任务', '时间预算（--max-seconds）', seconds(self.max_seconds)),
             ('任务', '项目说明文件上限', f'{MAX_INSTRUCTION_CHARS} 字符'),
@@ -109,6 +119,9 @@ class RunLimits:
             ('工具加载', '波动区定义总长度上限', f'{MAX_VOLATILE_CHARS:,} 字符'),
             ('后台摘要', '历史压缩模型（--compress-history）',
              f'本机 {summary_model}，单次 {summary_timeout:g} 秒，最多试 {summary_attempts} 次'),
+            ('网页', '每次运行的令牌上限（WEB_RUN_MAX_TOKENS）',
+             '不限' if self.web_run_max_tokens is None else str(self.web_run_max_tokens)),
+            ('网页', '每次运行的时限（WEB_RUN_MAX_SECONDS）', seconds(self.web_run_max_seconds)),
         ]
         return rows
 

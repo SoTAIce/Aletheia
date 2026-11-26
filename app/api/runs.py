@@ -11,6 +11,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+from app.agent.run_meter import RunMeter, metering
 from app.models.taskstate import TaskStatus
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ class Run:
     finished_at: float | None = None
     task: asyncio.Task | None = None
     approvals: dict = field(default_factory=dict)   # approval_id -> future awaiting the user (D-061)
+    scheduled: dict | None = None                   # metadata and budget for a scheduled run (D-102)
     _changed: asyncio.Event = field(default_factory=asyncio.Event)
 
     def add(self, event: dict) -> None:
@@ -134,10 +136,12 @@ class RunManager:
 
     def __init__(self, service, *, user_id: str, max_concurrent: int, retention_seconds: float,
                  clock=time.monotonic, approval_tools: frozenset[str] = frozenset(),
-                 approval_wait_seconds: float = 300.0) -> None:
+                 approval_wait_seconds: float = 300.0,
+                 max_run_tokens: int | None = None, max_run_seconds: float | None = None) -> None:
         self._service, self._user_id = service, user_id
         self._approval_tools, self._approval_wait = frozenset(approval_tools), approval_wait_seconds
         self._max_concurrent, self._retention = max_concurrent, retention_seconds
+        self._max_run_tokens, self._max_run_seconds = max_run_tokens, max_run_seconds
         self._clock = clock
         self._runs: dict[str, Run] = {}
         self._active_by_session: dict[str, str] = {}
@@ -168,6 +172,32 @@ class RunManager:
 
         options are the resolved choices of a new task; a resume ignores them and keeps the
         task's own (D-051). requested is what the client sent, compared for a repeated request_id."""
+        return self._start(
+            session_id, content, request_id,
+            resume_task_id=resume_task_id, question_id=question_id,
+            options=options, requested=requested, attachments=attachments,
+        )
+
+    def start_scheduled(self, schedule, planned_at) -> tuple[Run, bool]:
+        """Start one unattended read-only scheduled run (D-102); shares limits and deduplication."""
+        session_id = f'schedule-{schedule.name}'
+        request_id = f'schedule-{schedule.name}-{planned_at:%Y%m%d%H%M}'
+        options = {'mode': 'single', 'runner': 'loop', 'write': False, 'memory': False}
+        if schedule.workspace:
+            options['workspace'] = schedule.workspace
+            options['workspace_confirmed'] = True
+        scheduled = {
+            'name': schedule.name,
+            'planned_at': planned_at.isoformat(),
+            'max_tokens': schedule.max_tokens,
+            'max_seconds': schedule.max_seconds,
+        }
+        return self._start(session_id, schedule.goal, request_id, options=options, scheduled=scheduled)
+
+    def _start(self, session_id: str, content: str, request_id: str, *,
+               resume_task_id: str | None = None, question_id: str | None = None,
+               options: dict | None = None, requested: dict | None = None,
+               attachments=(), scheduled: dict | None = None) -> tuple[Run, bool]:
         if self._closing:
             raise ApiError(503, 'shutting_down', '服务正在关闭。')
         self._prune()
@@ -187,10 +217,14 @@ class RunManager:
         if resume_task_id is not None:
             options = self._service.task_options(session_id, resume_task_id, user_id=self._user_id)
         run = Run(request_id, session_id, content, resume_task_id, question_id, dict(requested or {}),
-                  dict(options) if options is not None else None, attachments=tuple(attachments))
+                  dict(options) if options is not None else None, attachments=tuple(attachments),
+                  scheduled=dict(scheduled) if scheduled is not None else None)
         self._runs[request_id] = run
         self._active_by_session[session_id] = request_id
-        run.add({'type': 'accepted', 'run_id': request_id, 'session_id': session_id})
+        accepted = {'type': 'accepted', 'run_id': request_id, 'session_id': session_id}
+        if scheduled is not None:
+            accepted['schedule'] = {'name': scheduled['name'], 'planned_at': scheduled['planned_at']}
+        run.add(accepted)
         run.task = asyncio.create_task(self._execute(run), name=f'web-run-{request_id}')
         return run, True
 
@@ -210,26 +244,43 @@ class RunManager:
             choices['output_schema'] = run.requested['output_schema']  # D-093
         rules = getattr(self._service, 'permission_rules', None)
         has_user_mcp = bool(getattr(self._service, 'user_mcp_servers', ()))
-        if rules or has_user_mcp:
-            # Rule-based tool control with the web approval list as the unmatched default (D-094),
-            # and external user MCP tools always asked when unmatched (D-095).
+        if run.scheduled is not None:
+            # Unattended scheduled run: never ask the user, deny any confirmation immediately,
+            # and enforce the schedule's own token/time budget (D-102).
             from app.agent.hooks import HookSet
             from app.agent.permission_rules import PermissionRules, RuleGate
-            from app.api.approvals import WebAsker
-            # The service gives the gate the task's checked working directory (a resumed task keeps its own).
-            asker = WebAsker(run, self._approval_wait)
+            from app.api.approvals import DenyAsker
+            choices['allow_ask_user'] = False
             choices['hooks'] = HookSet(gates=[RuleGate(
                 rules if rules is not None else PermissionRules(()),
-                asker=asker, default_ask_tools=self._approval_tools, ask_external=has_user_mcp)])
-        elif self._approval_tools:
-            # Side-effect tools wait for the person on the page (D-061).
-            from app.agent.hooks import HookSet
-            from app.api.approvals import ApprovalGate
-            choices['hooks'] = HookSet(gates=[ApprovalGate(run, self._approval_tools, self._approval_wait)])
+                asker=DenyAsker(), default_ask_tools=self._approval_tools, ask_external=has_user_mcp)])
+            meter = RunMeter(
+                max_total_tokens=run.scheduled['max_tokens'],
+                timeout_seconds=run.scheduled['max_seconds'],
+            )
+        else:
+            if rules or has_user_mcp:
+                # Rule-based tool control with the web approval list as the unmatched default (D-094),
+                # and external user MCP tools always asked when unmatched (D-095).
+                from app.agent.hooks import HookSet
+                from app.agent.permission_rules import PermissionRules, RuleGate
+                from app.api.approvals import WebAsker
+                # The service gives the gate the task's checked working directory (a resumed task keeps its own).
+                asker = WebAsker(run, self._approval_wait)
+                choices['hooks'] = HookSet(gates=[RuleGate(
+                    rules if rules is not None else PermissionRules(()),
+                    asker=asker, default_ask_tools=self._approval_tools, ask_external=has_user_mcp)])
+            elif self._approval_tools:
+                # Side-effect tools wait for the person on the page (D-061).
+                from app.agent.hooks import HookSet
+                from app.api.approvals import ApprovalGate
+                choices['hooks'] = HookSet(gates=[ApprovalGate(run, self._approval_tools, self._approval_wait)])
+            meter = RunMeter(max_total_tokens=self._max_run_tokens, timeout_seconds=self._max_run_seconds)
         try:
-            result = await self._service.query_result(
-                run.content, run.session_id, user_id=self._user_id, request_id=run.run_id,
-                resume_task_id=run.resume_task_id, question_id=run.question_id, on_event=run.add, **choices)
+            with metering(meter):
+                result = await self._service.query_result(
+                    run.content, run.session_id, user_id=self._user_id, request_id=run.run_id,
+                    resume_task_id=run.resume_task_id, question_id=run.question_id, on_event=run.add, **choices)
         except asyncio.CancelledError:
             run.finish('cancelled', {'type': 'cancelled', 'message': CANCELLED_MESSAGE}, self._clock())
         except Exception as exc:

@@ -64,6 +64,14 @@ class WebAsker:
             return Decision.deny(f'the user did not allow this call{suffix}', rule=rule)
 
 
+class DenyAsker:
+    """Immediately deny any tool call that asks for user confirmation (unattended runs, D-102)."""
+
+    async def ask(self, event: dict, *, rule: int | None = None) -> Decision:
+        suffix = f' (permission rule {rule})' if rule is not None else ''
+        return Decision.deny(f'scheduled run cannot ask the user for confirmation{suffix}', rule=rule)
+
+
 class ApprovalGate:
     """A before_tool gate that asks the person on the page about the listed tools.
 
