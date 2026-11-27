@@ -17,19 +17,22 @@ class SummaryScheduler:
 
     def __init__(self, memories: Mapping[object, ConversationMemory], *, max_concurrency=2,
                  max_pending=64, timeout_seconds=30.0, max_wait_seconds=300.0,
-                 scan_interval_seconds=30.0, retry_delay_seconds=1.0, max_attempts=2):
+                 scan_interval_seconds=30.0, retry_delay_seconds=1.0, max_attempts=2,
+                 cooldown_seconds=600.0):
         for name, value in [('max_concurrency', max_concurrency), ('max_pending', max_pending),
                             ('max_attempts', max_attempts)]:
             if type(value) is not int or value < 1:
                 raise ValueError(f'{name} must be a positive integer')
         for name, value in [('timeout_seconds', timeout_seconds), ('max_wait_seconds', max_wait_seconds),
-                            ('scan_interval_seconds', scan_interval_seconds), ('retry_delay_seconds', retry_delay_seconds)]:
+                            ('scan_interval_seconds', scan_interval_seconds), ('retry_delay_seconds', retry_delay_seconds),
+                            ('cooldown_seconds', cooldown_seconds)]:
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise ValueError(f'{name} must be finite and positive')
         self._memories = memories
         self._concurrency, self._capacity = max_concurrency, max_pending
         self._timeout, self._max_wait = timeout_seconds, max_wait_seconds
         self._interval, self._retry_delay, self._max_attempts = scan_interval_seconds, retry_delay_seconds, max_attempts
+        self._cooldown = cooldown_seconds
         self._pending: dict[object, tuple[float, float]] = {}
         self._active: dict[object, tuple[asyncio.Task, float]] = {}
         self._failures: dict[object, tuple[tuple, int, float]] = {}
@@ -85,20 +88,34 @@ class SummaryScheduler:
         memory = self._memories.get(key)
         if memory is None or not memory.background_summary_enabled:
             return None
-        signature, attempts, _ = self._failures.get(key, (None, 0, 0.0))
-        if signature == memory.summary_work_key and attempts >= self._max_attempts:
-            return None
+        started_key = memory.summary_work_key
+        signature, attempts, not_before = self._failures.get(key, (None, 0, 0.0))
+        if signature == started_key and attempts >= self._max_attempts:
+            if time.monotonic() < not_before:
+                return None
+            self._failures.pop(key, None)
+            signature, attempts = None, 0
         try:
             async with asyncio.timeout(self._timeout):
                 committed = await memory.compress_pending(
                     force=time.monotonic() - since >= self._max_wait, raise_errors=True)
         except Exception as exc:
             signature_now = memory.summary_work_key
+            if started_key[1] and signature_now != started_key:
+                self._failures.pop(key, None)
+                logger.warning('Summary generation deferred (%s), batch updated',
+                               type(exc).__name__)
+                return self._retry_delay if memory.get_compression_buffer() else None
             attempts = attempts + 1 if signature == signature_now else 1
-            self._failures[key] = signature_now, attempts, time.monotonic() + self._retry_delay
+            delay = self._retry_delay if attempts < self._max_attempts else self._cooldown
+            self._failures[key] = signature_now, attempts, time.monotonic() + delay
             logger.warning('Summary generation deferred (%s), attempt %s/%s',
                            type(exc).__name__, attempts, self._max_attempts)
-            return self._retry_delay if attempts < self._max_attempts else None
+            if attempts >= self._max_attempts:
+                logger.warning('Summary generation paused for %g seconds after %s attempts (%s)',
+                               self._cooldown, attempts, type(exc).__name__)
+                return None
+            return self._retry_delay
         if committed:
             self._failures.pop(key, None)
             return 0.0  # Examine the next batch; at most one batch per work item.

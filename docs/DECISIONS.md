@@ -1245,3 +1245,18 @@
   - 已用本机 Ollama 复测：单轮摘要 3 次都在 200 令牌以内，旧对话不再被拒；“过长后收下”这条路只有离线测试覆盖。
 - 来源：用户 2026-11-25 “写方案修”，第 8 节八条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对没有改动。
 - 记录：[方案](summary_fit_plan.md)；代码在 `app/services/memory_compression/llm_compressor.py`、`app/models/conversation_memory.py`、`app/core/dependencies.py`、`app/config.py`；测试在 `tests/test_summary_fit.py`。
+
+## D-106 2026-11-26 后台摘要：内容不合格第二次就减半或跳过，试满后冷却 10 分钟再试，失败日志只写类型名
+
+- 起因：2026-11-26 真实端到端测试（用户授权；网页后端开 `--compress-history`，本机 Ollama 写摘要，真实主模型答题）：前 4 批摘要成功，第 5 批连续两次小标题不对，调度器放弃后这个会话剩下的旧轮次再也没有摘要。原因是批次标识只在清空会话时变，下次选出的还是同一批。连接类失败也一样，Ollama 中途退出再启动后要重启网页后端才恢复。详见 [方案](summary_stall_plan.md)。
+- 决策：
+  - 候选数不对、不完整或被拒绝、空摘要、小标题缺失或重复，改抛 `SummaryContentError`。`ConversationMemory` 记下同一批第一次内容不合格；第二次多轮减半、单轮跳过（只记类型名）。提交成功、清空、恢复时复位。
+  - `SummaryScheduler(cooldown_seconds=600)`：同一批试满 2 次后冷却 10 分钟，到期清零计数再试；批次因减半或跳过变了，立即清零计数接着处理。`--show-limits` 多一行“摘要失败后的冷却”。
+  - 摘要失败的两处日志从 `logger.exception` 改成只写类型名的警告，不带调用栈和服务商错误原文（D-033）。
+- 被否方案：把跳过的轮次写进归档；区分 5xx 和 400；换温度或提示词重试；在网页上提示跳过的轮次。
+- 约束：
+  - D-104、D-105 的截断、输入超限、过长三种处理不变；归档格式、选批次规则、提示词、黄金对照文件不变；
+  - 排查摘要失败时日志里只有类型名；
+  - 已做端到端复测（方案第 10 节）：积压的 7 轮全部摘要完；新增的跳过和冷却在真实运行里没有被触发，只有离线测试覆盖。
+- 来源：用户 2026-11-26 “写方案”，第 8 节六条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对没有改动。
+- 记录：[方案](summary_stall_plan.md)；代码在 `app/services/summary_scheduler.py`、`app/models/conversation_memory.py`、`app/services/memory_compression/llm_compressor.py`；测试在 `tests/test_summary_stall.py`。

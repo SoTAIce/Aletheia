@@ -110,6 +110,7 @@ class ConversationMemory(BaseMemory):
         self._batch_limit = summary_batch_size
         self._skipped_turn_ids: set[str] = set()
         self._long_summary_batch: tuple[str, ...] | None = None
+        self._content_failed_batch: tuple[str, ...] | None = None
         compressor_budget = getattr(compressor, "batch_token_budget", None)
         self._summary_token_budget = (
             min(summary_token_budget, compressor_budget)
@@ -210,6 +211,7 @@ class ConversationMemory(BaseMemory):
             self._batch_limit = self._summary_batch_size
             self._skipped_turn_ids.clear()
             self._long_summary_batch = None
+            self._content_failed_batch = None
             self._turns = deque(turns)
             self._compression_buffer.clear()
             self._compression_buffer_tokens = 0
@@ -397,6 +399,7 @@ class ConversationMemory(BaseMemory):
         self._batch_limit = self._summary_batch_size
         self._skipped_turn_ids.clear()
         self._long_summary_batch = None
+        self._content_failed_batch = None
         self._turns.clear()
         self._compression_buffer.clear()
         self._compression_buffer_tokens = 0
@@ -472,7 +475,8 @@ class ConversationMemory(BaseMemory):
                     body = exc.summary
                     logger.warning('Summary accepted although longer than the target ({})', type(exc).__name__)
                 if not isinstance(body, str) or not body.strip():
-                    raise ValueError('compressor returned an empty summary')
+                    from app.services.memory_compression.llm_compressor import SummaryContentError
+                    raise SummaryContentError('compressor returned an empty summary')
                 if revision != self._revision:
                     return False
                 entry = await asyncio.to_thread(
@@ -492,22 +496,43 @@ class ConversationMemory(BaseMemory):
                     self._summary = body.strip()
                     self._batch_limit = self._summary_batch_size
                     self._long_summary_batch = None
+                    self._content_failed_batch = None
                     covered = set(entry.source_turn_ids)
                     self._compression_buffer = deque(t for t in self._compression_buffer if t.turn_id not in covered)
                     self._compression_buffer_tokens = sum(self._estimate_turn_tokens(t) for t in self._compression_buffer)
                 return True
             except Exception as exc:
-                from app.services.memory_compression.llm_compressor import SummaryBatchTooLargeError
+                from app.services.memory_compression.llm_compressor import (
+                    SummaryBatchTooLargeError,
+                    SummaryContentError,
+                )
                 if isinstance(exc, SummaryBatchTooLargeError) and revision == self._revision:
                     async with nullcontext() if lock_held else self._lock:
                         if revision == self._revision:
                             if len(snapshot) > 1:
                                 self._batch_limit = max(1, len(snapshot) // 2)
+                                await self._refresh_pending_locked()
                             elif len(snapshot) == 1:
                                 self._skipped_turn_ids.add(snapshot[0].turn_id)
                                 logger.warning('Summary skipped one turn that exceeds the batch limit ({})',
                                                type(exc).__name__)
-                logger.exception('Stage summary failed; archived originals were retained')
+                                await self._refresh_pending_locked()
+                elif isinstance(exc, SummaryContentError) and revision == self._revision:
+                    async with nullcontext() if lock_held else self._lock:
+                        if revision == self._revision:
+                            if batch_ids != self._content_failed_batch:
+                                self._content_failed_batch = batch_ids
+                            else:
+                                self._content_failed_batch = None
+                                if len(snapshot) > 1:
+                                    self._batch_limit = max(1, len(snapshot) // 2)
+                                    await self._refresh_pending_locked()
+                                elif len(snapshot) == 1:
+                                    self._skipped_turn_ids.add(snapshot[0].turn_id)
+                                    logger.warning('Summary skipped one turn after repeated invalid output ({})',
+                                                   type(exc).__name__)
+                                    await self._refresh_pending_locked()
+                logger.warning('Stage summary failed ({}); archived originals were retained', type(exc).__name__)
                 if raise_errors:
                     raise
                 return False
@@ -531,9 +556,10 @@ class ConversationMemory(BaseMemory):
                 previous_summary=self._summary,
                 turns=snapshot,
             )
-        except Exception:
-            logger.exception(
-                "Conversation memory compression failed; pending turns were retained"
+        except Exception as exc:
+            logger.warning(
+                "Conversation memory compression failed ({}); pending turns were retained",
+                type(exc).__name__,
             )
             return False
 

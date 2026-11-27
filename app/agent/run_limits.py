@@ -115,6 +115,7 @@ class RunLimits:
         summary_params = inspect.signature(SummaryScheduler.__init__).parameters
         summary_timeout = summary_params['timeout_seconds'].default
         summary_attempts = summary_params['max_attempts'].default
+        summary_cooldown = summary_params['cooldown_seconds'].default
         summary_model = self.summary_model
         if summary_model is None:
             from app.config import config
@@ -142,6 +143,7 @@ class RunLimits:
              f'{summary_label}，单次 {summary_timeout:g} 秒，最多试 {summary_attempts} 次'),
             ('后台摘要', '摘要模型窗口（SUMMARY_MODEL_CONTEXT_TOKENS 或档案）', f'{summary_context} 令牌'),
             ('后台摘要', '单次摘要输出上限', f'{summary_output_cap} 令牌'),
+            ('后台摘要', '摘要失败后的冷却', f'{summary_cooldown:g} 秒'),
             ('网页', '每次运行的令牌上限（WEB_RUN_MAX_TOKENS）',
              '不限' if self.web_run_max_tokens is None else str(self.web_run_max_tokens)),
             ('网页', '每次运行的时限（WEB_RUN_MAX_SECONDS）', seconds(self.web_run_max_seconds)),

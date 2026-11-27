@@ -60,6 +60,10 @@ class SummaryNotShorterError(RuntimeError):
         self.summary = summary
 
 
+class SummaryContentError(RuntimeError):
+    """Raised when the compression model returns malformed, empty, or refused output."""
+
+
 def _mostly_chinese(turns: Sequence[ConversationTurn]) -> bool:
     han = 0
     latin = 0
@@ -154,7 +158,7 @@ class LLMCompressor(ConversationCompressor):
 
         choices = getattr(response, "choices", None)
         if not choices or len(choices) != 1:
-            raise RuntimeError("compression model must return exactly one choice")
+            raise SummaryContentError("compression model must return exactly one choice")
         choice = choices[0]
         if getattr(choice, "finish_reason", None) == "length":
             raise SummaryTooLongError("compression model hit the output limit")
@@ -164,12 +168,12 @@ class LLMCompressor(ConversationCompressor):
                 or getattr(message, "refusal", None)
                 or getattr(message, "tool_calls", None)
                 or getattr(message, "function_call", None)):
-            raise RuntimeError("compression model returned an incomplete or refused summary")
+            raise SummaryContentError("compression model returned an incomplete or refused summary")
         summary = getattr(message, "content", None)
         if not isinstance(summary, str) or not summary.strip():
-            raise RuntimeError("compression model returned an empty summary")
+            raise SummaryContentError("compression model returned an empty summary")
         if any(summary.splitlines().count(heading) != 1 for heading in SUMMARY_HEADINGS):
-            raise RuntimeError('compression model omitted or duplicated required summary sections')
+            raise SummaryContentError('compression model omitted or duplicated required summary sections')
         summary_tokens = ConversationMemory._estimate_text_tokens(summary)
         source_tokens = ConversationMemory._estimate_text_tokens(self._format_turns(turns))
         if summary_tokens > max(MIN_SUMMARY_ALLOWANCE, MAX_SUMMARY_RATIO * source_tokens):
