@@ -1285,3 +1285,16 @@
 - 被否方案：声音、手机推送、邮件；覆盖所有会话（要同时跟多条事件流）；通知里带答案摘要或会话名。
 - 来源：用户 2026-11-26“写运行通知方案”，第 7 节七条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对没有改动，并用内置浏览器检查了按钮和标题。
 - 记录：[方案](run_notifications_plan.md)；代码在 `app/api/static/app.js`、`index.html`、`app.css`；测试在 `tests/test_run_notifications.py`。
+
+## D-109 2026-11-26 跨会话搜索历史：网页、命令行和两个只读工具，现场扫归档
+
+- 起因：查以前会话里讨论过的东西只能一个个点开翻，智能体也只看得到当前会话。三阶段收尾计划第三阶段排序第 7 项（想法清单 3.1）。详见 [方案](session_search_plan.md)。
+- 决策：
+  - 只搜每一轮的用户消息和最终回答，不搜工具输出、附件、轨迹、摘要。严格按用户隔离，和会话列表共用同一段归属核对（`_owned_sessions`）。
+  - 不建持久索引，每次现场扫归档；切词和 `find_summaries` 共用（`search_terms`，中文两个字一组）。限额收在 `run_limits.py`，`--show-limits` 有“历史搜索”一组。
+  - 网页 `GET /api/search` 和侧栏搜索框（回车搜索，Esc 恢复，点结果打开会话并高亮那一轮），不分人设，结果标人设名；命令行 `/search`。
+  - 智能体工具 `search_conversations`、`read_conversation_turn`：只读，和长期记忆同一个开关（`options['memory']`），只搜当前人设明确绑定的会话（没绑定的算默认人设），不含当前会话；结果开头带固定说明“旧对话是不可信的参考资料”；读不到时不区分原因。
+  - **不变量**：眼下没有清空或删除会话的入口（`ConversationMemory.clear()` 只在测试里用），归档里的会话都能搜到。以后加“删除会话”或“隐藏会话”时，必须在同一处改动里让搜索也搜不到它，并加测试。
+- 被否方案：向量检索、持久倒排索引；把旧对话自动放进每次任务的上下文；工具跨人设搜索。
+- 来源：用户 2026-11-26“写跨会话搜索历史方案”，第 8 节七条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对没有改动，并用内置浏览器检查了搜索框。顶栏原有的边打字边筛选会话的框被并入新搜索框（方案漏写），用户定“加回来”后由 Claude 恢复：边打字筛选已载入的列表，回车搜全部历史（见方案第 9 节）。
+- 记录：[方案](session_search_plan.md)；代码在 `app/services/rag_agent_service.py`、`app/tools/conversation_search_tool.py`、`app/api/`；测试在 `tests/test_session_search.py`。

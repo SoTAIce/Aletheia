@@ -40,11 +40,6 @@
     <header class="topbar">
       <button id="open-sessions" class="icon-btn narrow-only" type="button" aria-label="会话列表"><svg><use href="#i-menu"/></svg></button>
       <a class="wordmark" href="/" aria-label="Aletheia 首页"><svg class="logo"><use href="#i-logo"/></svg><span>Aletheia</span></a>
-      <label class="search">
-        <svg><use href="#i-search"/></svg>
-        <input id="session-search" type="search" placeholder="搜索会话">
-        <kbd>Ctrl K</kbd>
-      </label>
       <nav class="topnav">
         <span class="status"><span id="dot-write" class="dot"></span>写文件 <b id="status-write"></b></span>
         <span class="status"><span id="dot-memory" class="dot"></span>长期记忆 <b id="status-memory"></b></span>
@@ -65,6 +60,10 @@
         <h2>会话</h2>
         <button id="close-sessions" class="icon-btn narrow-only" type="button" aria-label="收起"><svg><use href="#i-close"/></svg></button>
       </div>
+      <label class="sidenav-search">
+        <svg><use href="#i-search"/></svg>
+        <input id="session-search" type="search" placeholder="筛选会话，回车搜索全部历史" title="边打字边按最后一条消息筛选；按回车搜索所有会话的全文；Esc 清空" maxlength="200">
+      </label>
       <nav id="session-list" class="session-list" aria-label="会话"></nav>
     </aside>
 

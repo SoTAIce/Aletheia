@@ -26,7 +26,15 @@ from app.agent.runtime import AgentRunResult
 from app.config import config
 from app.models.conversation_memory import (
     ConversationMemory, ConversationMessage, ConversationTurn, MessageRole, TurnStatus,
-    finish_conversation_write as _durable,
+    finish_conversation_write as _durable, search_terms,
+)
+from app.agent.run_limits import (
+    SESSION_SEARCH_MAX_QUERY_CHARS,
+    SESSION_SEARCH_MAX_SESSIONS,
+    SESSION_SEARCH_MAX_TURNS,
+    SESSION_SEARCH_SNIPPET_CHARS,
+    SESSION_SEARCH_TURN_CHARS,
+    SESSION_SEARCH_WEB_LIMIT,
 )
 from app.agent.step_models import StepExecutionReceipt, ToolCall, ToolResult
 from app.models.taskstate import TaskStatus
@@ -103,6 +111,26 @@ def _turn_view(turn: ConversationTurn, resumable: bool) -> dict:
 def _check_limit(limit) -> None:
     if type(limit) is not int or not 1 <= limit <= 200:
         raise ValueError('limit must be an integer between 1 and 200')
+
+
+def _make_snippet(text: str, folded: str, hits: list[str], max_chars: int) -> str:
+    """Extract up to max_chars centered on the earliest hit, adding ellipses when trimmed."""
+    if len(text) <= max_chars:
+        return text
+    pos = min(folded.find(term) for term in hits)
+    pos = min(max(pos, 0), len(text))
+    half = max_chars // 2
+    start = max(0, pos - half)
+    end = start + max_chars
+    if end > len(text):
+        end = len(text)
+        start = max(0, end - max_chars)
+    snippet = text[start:end]
+    if start > 0:
+        snippet = '…' + snippet
+    if end < len(text):
+        snippet = snippet + '…'
+    return snippet
 
 
 MODES = ('single', 'team', 'auto')
@@ -653,7 +681,8 @@ class RagAgentService:
                     chosen, command_text, output_contract=output_contract, on_event=on_event)
                 result = await self._execute(
                     conversation, key, user_id, session_id, question, hooks, on_event, outcome_key,
-                    task, memory, runtime, options, context_manager, output_contract=output_contract)
+                    task, memory, runtime, options, context_manager, output_contract=output_contract,
+                    persona=chosen)
             except StaleExecutionError:
                 await self._settle_stale(conversation, outcome_key)
                 raise
@@ -876,11 +905,28 @@ class RagAgentService:
         return context_manager
 
     async def _execute(self, conversation, key, user_id, session_id, question, hooks, on_event, outcome_key,
-                       task, memory, runtime, options, context_manager, output_contract=None):
+                       task, memory, runtime, options, context_manager, output_contract=None, persona=None):
         """Open the models and tools, run the task through the assembler and record its outcome."""
         cache_key = self._prompt_cache_key(self._archive_label(user_id, session_id))
         workspace = options.get('workspace') or self._default_workspace
         run_hooks, audit = await self._run_hooks(key, conversation, hooks, workspace=workspace)
+        local_tools: list = []
+        if conversation.archive:
+            local_tools.append(ContextArchiveTool(conversation.archive, context_manager.tool_result_chars))
+            if options.get('memory'):
+                from app.services.personas import DEFAULT_ID
+                from app.tools.conversation_search_tool import ConversationSearchTools
+                if persona is not None:
+                    active_persona_id = persona.persona_id
+                elif self._personas is not None:
+                    active_persona_id = (await asyncio.to_thread(
+                        self._personas.bound_persona_id, user_id, session_id)) or DEFAULT_ID
+                else:
+                    active_persona_id = DEFAULT_ID
+                local_tools.extend(ConversationSearchTools(
+                    self, user_id=user_id, persona_id=active_persona_id,
+                    exclude_session=session_id, max_chars=context_manager.tool_result_chars,
+                ).tools())
         async with self._role_models(cache_key, run_hooks) as models:
             model = models.main
             def _on_user_mcp_unavailable(server_name: str, error_type: str) -> None:
@@ -894,8 +940,7 @@ class RagAgentService:
                 on_user_server_unavailable=_on_user_mcp_unavailable if self._user_mcp_servers else None,
                 conversation=conversation,
                 knowledge_search=self._knowledge_search, include_knowledge=self._include_knowledge,
-                local_tools=(ContextArchiveTool(conversation.archive, context_manager.tool_result_chars),)
-                            if conversation.archive else (),
+                local_tools=tuple(local_tools),
                 context_manager=context_manager,
             ) as registry:
                 runtime, result = await self._run_assembler.run(
@@ -958,6 +1003,25 @@ class RagAgentService:
         self._expire_blocked()
         return self._live_blocked(self._session_key(user_id, session_id), task_id)
 
+    def _owned_sessions(self, user_id: str | None) -> list[tuple[str, str]]:
+        """Archived (session_id, label) pairs verified to belong to user_id."""
+        if not self._memory_directory:
+            return []
+        root = self._archive_root(user_id)
+        owned = []
+        for label in ConversationArchive.session_ids(root):
+            if user_id is None:
+                session_id = label
+            else:
+                try:
+                    kind, owner, session_id = json.loads(label)
+                except (ValueError, TypeError):
+                    continue
+                if kind != 'user' or owner != user_id or self._archive_label(user_id, session_id) != label:
+                    continue
+            owned.append((session_id, label))
+        return owned
+
     async def list_sessions(self, *, user_id: str | None = None, limit: int = 50) -> list[dict]:
         """This user's sessions, newest first, with the latest user message (D-045)."""
         self._validate_identity(user_id)
@@ -965,16 +1029,7 @@ class RagAgentService:
         sessions = []
         if self._memory_directory:
             root = self._archive_root(user_id)
-            for label in await asyncio.to_thread(ConversationArchive.session_ids, root):
-                if user_id is None:
-                    session_id = label
-                else:
-                    try:
-                        kind, owner, session_id = json.loads(label)
-                    except (ValueError, TypeError):
-                        continue
-                    if kind != 'user' or owner != user_id or self._archive_label(user_id, session_id) != label:
-                        continue
+            for session_id, label in await asyncio.to_thread(self._owned_sessions, user_id):
                 try:
                     turns = await asyncio.to_thread(ConversationArchive(root, label).load_turns, 1)
                 except ValueError as exc:
@@ -996,6 +1051,146 @@ class RagAgentService:
                  'updated_at': (turn.finished_at or turn.created_at).isoformat(),
                  'last_message': turn.messages[0].content[:200]}
                 for session_id, turn in sessions[:limit]]
+
+    async def search_sessions(
+        self, query: str, *, user_id: str | None = None, limit: int = SESSION_SEARCH_WEB_LIMIT,
+        persona_id: str | None = None, exclude_session: str | None = None,
+    ) -> dict:
+        """Scan this user's archived sessions for matching user/assistant turns (D-109)."""
+        self._validate_identity(user_id)
+        if not isinstance(query, str):
+            raise ValueError('query must be a string')
+        stripped = query.strip()
+        if not stripped or len(stripped) > SESSION_SEARCH_MAX_QUERY_CHARS:
+            raise ValueError(f'query must be 1 to {SESSION_SEARCH_MAX_QUERY_CHARS} characters')
+        if type(limit) is not int or not 1 <= limit <= SESSION_SEARCH_WEB_LIMIT:
+            raise ValueError(f'limit must be an integer between 1 and {SESSION_SEARCH_WEB_LIMIT}')
+        terms = search_terms(stripped)
+        if not terms or not self._memory_directory:
+            return {'results': [], 'truncated': False}
+
+        def scan() -> dict:
+            from app.agent.persona_commands import memory_label
+            from app.services.personas import DEFAULT_ID
+            root = self._archive_root(user_id)
+            store = self._personas
+            scanned_sessions = 0
+            scanned_turns = 0
+            truncated = False
+            matches = []
+            for session_id, label in self._owned_sessions(user_id):
+                if exclude_session is not None and session_id == exclude_session:
+                    continue
+                effective_persona = None
+                if store is not None:
+                    effective_persona = store.bound_persona_id(user_id, session_id) or DEFAULT_ID
+                    if persona_id is not None and effective_persona != persona_id:
+                        continue
+                if scanned_sessions >= SESSION_SEARCH_MAX_SESSIONS:
+                    truncated = True
+                    break
+                scanned_sessions += 1
+                try:
+                    turns = ConversationArchive(root, label).load_turns()
+                except (ValueError, OSError) as exc:
+                    logger.warning('Skipping unreadable session archive during search: %s', type(exc).__name__)
+                    continue
+                for turn in turns:
+                    if scanned_turns >= SESSION_SEARCH_MAX_TURNS:
+                        truncated = True
+                        break
+                    scanned_turns += 1
+                    parts = [m.content for m in turn.messages
+                             if m.role in (MessageRole.USER, MessageRole.ASSISTANT)]
+                    if not parts:
+                        continue
+                    text = '\n'.join(parts)
+                    folded = text.casefold()
+                    hits = [term for term in terms if term in folded]
+                    if not hits:
+                        continue
+                    stamp = turn.finished_at or turn.created_at
+                    snippet = _make_snippet(text, folded, hits, SESSION_SEARCH_SNIPPET_CHARS)
+                    matches.append((len(hits), stamp, session_id, turn, effective_persona, snippet))
+                if truncated:
+                    break
+            matches.sort(key=lambda item: (item[0], item[1]), reverse=True)
+            persona_names: dict[str, str | None] = {}
+            results = []
+            for _, _, session_id, turn, effective_persona, snippet in matches[:limit]:
+                if store is None or effective_persona is None:
+                    persona_name = None
+                elif effective_persona in persona_names:
+                    persona_name = persona_names[effective_persona]
+                else:
+                    label_name = memory_label(store, user_id, effective_persona)
+                    persona_name = None if label_name == '已删除的人设' else label_name
+                    persona_names[effective_persona] = persona_name
+                results.append({
+                    'session_id': session_id,
+                    'turn_id': turn.turn_id,
+                    'created_at': turn.created_at.isoformat(),
+                    'status': turn.status.value if turn.status is not None else None,
+                    'persona_name': persona_name,
+                    'snippet': snippet,
+                })
+            return {'results': results, 'truncated': truncated}
+
+        return await asyncio.to_thread(scan)
+
+    async def read_session_turn(
+        self, session_id: str, turn_id: str, *, user_id: str | None = None,
+        persona_id: str | None = None, offset: int = 0,
+    ) -> dict | None:
+        """Read one turn's user and assistant messages from an owned session; None if unavailable (D-109)."""
+        self._validate_identity(user_id)
+        if type(offset) is not int or offset < 0:
+            raise ValueError('offset must be a nonnegative integer')
+        if (not isinstance(session_id, str) or not session_id.strip()
+                or not isinstance(turn_id, str) or not turn_id.strip()
+                or not self._memory_directory):
+            return None
+
+        def read() -> dict | None:
+            from app.services.personas import DEFAULT_ID
+            root = self._archive_root(user_id)
+            label = self._archive_label(user_id, session_id)
+            try:
+                if not ConversationArchive.exists(root, label):
+                    return None
+            except (ValueError, OSError):
+                return None
+            if persona_id is not None and self._personas is not None:
+                effective = self._personas.bound_persona_id(user_id, session_id) or DEFAULT_ID
+                if effective != persona_id:
+                    return None
+            try:
+                turn = ConversationArchive(root, label).read_turn(turn_id)
+            except (KeyError, ValueError, OSError):
+                return None
+            blocks = []
+            for message in turn.messages:
+                if message.role is MessageRole.USER:
+                    blocks.append(f'用户：{message.content}')
+                elif message.role is MessageRole.ASSISTANT:
+                    blocks.append(f'助手：{message.content}')
+            full_text = '\n\n'.join(blocks)
+            chunk = full_text[offset:offset + SESSION_SEARCH_TURN_CHARS]
+            next_offset = (
+                offset + SESSION_SEARCH_TURN_CHARS
+                if offset + SESSION_SEARCH_TURN_CHARS < len(full_text) else None
+            )
+            return {
+                'session_id': session_id,
+                'turn_id': turn.turn_id,
+                'created_at': turn.created_at.isoformat(),
+                'status': turn.status.value if turn.status is not None else None,
+                'text': chunk,
+                'offset': offset,
+                'next_offset': next_offset,
+            }
+
+        return await asyncio.to_thread(read)
 
     async def session_turns(self, session_id: str, *, user_id: str | None = None, limit: int = 20) -> list[dict]:
         """The latest turns of one session, oldest first; an unknown session has none (D-045)."""

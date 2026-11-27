@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.agent.run_limits import SESSION_SEARCH_WEB_LIMIT
 from app.api.runs import ApiError, RunManager, service_error
 from app.services.workspace import system_drive
 
@@ -360,6 +361,10 @@ def create_app(service, *, user_id: str, access_token: str = '', memory=None, wr
     @app.get('/api/sessions', dependencies=guarded)
     async def sessions(limit: int = 50):
         return {'sessions': await call(service.list_sessions(user_id=user_id, limit=limit))}
+
+    @app.get('/api/search', dependencies=guarded)
+    async def search(q: str = '', limit: int = SESSION_SEARCH_WEB_LIMIT):
+        return await call(service.search_sessions(q, user_id=user_id, limit=limit))
 
     @app.get('/api/sessions/{session_id}/turns', dependencies=guarded)
     async def turns(session_id: str, limit: int = 20):

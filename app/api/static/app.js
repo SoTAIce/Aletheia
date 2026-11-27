@@ -109,6 +109,7 @@ const EXAMPLES = [
 
 const $ = (id) => document.getElementById(id);
 const state = {token: '', session: null, sessions: [], turns: [], waiting: null, run: null,
+               search: null,                  // D-109: {query, results, truncated} when showing search results
                caps: null, options: null,    // caps: health.options; options: what the next run asks for
                place: null, attachments: [], // place: chosen working directory; attachments: uploaded files
                instructionsOn: false, instructions: null,            // D-096: project instructions
@@ -612,6 +613,8 @@ async function loadSessions() {
 }
 
 function renderSessions() {
+  if (state.search !== null) { renderSearchResults(); return; }
+  // Typing filters the loaded list by its last message; Enter searches every archived turn (D-109).
   const term = $('session-search').value.trim().toLowerCase();
   const list = $('session-list');
   list.replaceChildren();
@@ -633,7 +636,62 @@ function renderSessions() {
     button.addEventListener('click', () => openSession(s.session_id));
     list.append(button);
   }
-  if (!shown.length) list.append(el('p', 'side-empty', term ? '没有匹配的会话。' : '还没有会话。发一条消息，它就会出现在这里。'));
+  if (!shown.length) list.append(el('p', 'side-empty', term ? '没有匹配的会话。按回车搜索全部历史。' : '还没有会话。发一条消息，它就会出现在这里。'));
+}
+
+function renderSearchResults() {
+  const list = $('session-list');
+  list.replaceChildren();
+  const found = state.search;
+  if (!found || !found.results.length) {
+    list.append(el('p', 'side-empty', '没有找到'));
+  } else {
+    for (const item of found.results) {
+      const button = el('button', 'session-item search-result' + (item.session_id === state.session ? ' active' : ''));
+      button.type = 'button';
+      const meta = el('span', 'session-meta search-meta');
+      meta.append(el('span', 'time', timeText(item.created_at)));
+      if (item.persona_name) meta.append(el('span', 'tag', item.persona_name));
+      if (item.status) meta.append(tag(item.status));
+      button.append(meta, el('span', 'search-snippet', item.snippet || ''));
+      button.addEventListener('click', () => openSearchResult(item.session_id, item.turn_id));
+      list.append(button);
+    }
+  }
+  if (found && found.truncated) {
+    list.append(el('p', 'side-empty', '只搜了最近的一部分会话'));
+  }
+}
+
+async function runSessionSearch() {
+  const q = $('session-search').value.trim();
+  if (!q) { clearSessionSearch(); return; }
+  try {
+    const data = await api('/api/search?q=' + encodeURIComponent(q) + '&limit=20');
+    state.search = {query: q, results: Array.isArray(data.results) ? data.results : [], truncated: Boolean(data.truncated)};
+    renderSearchResults();
+  } catch (e) {
+    if (e.status !== 401) toast(e.message);
+  }
+}
+
+function clearSessionSearch() {
+  $('session-search').value = '';
+  state.search = null;
+  renderSessions();
+}
+
+async function openSearchResult(sessionId, turnId) {
+  await openSession(sessionId);
+  if (!turnId) return;
+  for (const node of $('conversation').querySelectorAll('.turn')) {
+    if (node.dataset.turnId === turnId) {
+      node.scrollIntoView({behavior: 'smooth', block: 'center'});
+      node.classList.add('turn-highlight');
+      setTimeout(() => node.classList.remove('turn-highlight'), 2000);
+      break;
+    }
+  }
 }
 
 async function openSession(sessionId) {
@@ -1287,7 +1345,7 @@ function renderTurns() {
     conversation.append(documentFrame());
     renderByline();
     state.turns.forEach((turn, n) => {
-      const box = turnBlock(turn.user, turn.created_at, n);
+      const box = turnBlock(turn.user, turn.created_at, n, turn.turn_id);
       if (turn.status !== 'received') box.append(agentPart(turn));
       turnsBox().append(box);
     });
@@ -1313,9 +1371,10 @@ function speaker(name, kind, iso, status) {
   return row;
 }
 
-function turnBlock(text, iso, index) {
+function turnBlock(text, iso, index, turnId) {
   const box = el('section', 'turn');
   box.id = 'turn-' + index;
+  if (turnId) box.dataset.turnId = turnId;
   const card = el('div', 'user-card');
   card.append(speaker('你', 'user', iso), el('p', 'question-text', text));
   box.append(card);
@@ -1924,7 +1983,20 @@ $('toggle-memory').addEventListener('click', () => {
   loadMemories().catch((e) => toast(e.message));
 });
 $('close-memory').addEventListener('click', closePanels);
-$('session-search').addEventListener('input', renderSessions);
+$('session-search').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter' && !event.isComposing) {
+    event.preventDefault();
+    runSessionSearch();
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    clearSessionSearch();
+  }
+});
+$('session-search').addEventListener('input', () => {
+  state.search = null;    // editing the words leaves the full-text results
+  renderSessions();
+});
 $('new-session').addEventListener('click', newSession);
 $('opt-mode').addEventListener('change', (e) => setOption('mode', e.target.value));
 $('opt-runner').addEventListener('change', (e) => setOption('runner', e.target.value));
@@ -1978,7 +2050,7 @@ $('attach-input').addEventListener('change', (event) => {
 document.addEventListener('keydown', (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault();
-    if (narrow()) { $('open-sessions').click(); return; }
+    if (narrow()) $('open-sessions').click();
     $('session-search').focus();
   } else if (event.key === 'Escape') closePanels();
 });

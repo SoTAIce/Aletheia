@@ -314,6 +314,20 @@ class PersonaStore:
                 return DEFAULT_ID       # deleted by hand
             return chosen
 
+    def bound_persona_id(self, user_id, session_id: str) -> str | None:
+        """The persona explicitly bound to a session, or None when unbound (no 'last' fallback)."""
+        with self._lock:
+            chosen = self._state(user_id)['sessions'].get(session_id)
+            if chosen is None:
+                return None
+            if chosen != DEFAULT_ID:
+                try:
+                    if not self._path(user_id, chosen).exists():
+                        return DEFAULT_ID       # deleted by hand
+                except PersonaError:
+                    return DEFAULT_ID
+            return chosen
+
     def is_bound(self, user_id, session_id: str) -> bool:
         with self._lock:
             return session_id in self._state(user_id)['sessions']

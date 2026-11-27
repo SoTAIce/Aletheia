@@ -16,6 +16,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+SESSION_SEARCH_MAX_QUERY_CHARS = 200
+SESSION_SEARCH_MAX_SESSIONS = 500
+SESSION_SEARCH_MAX_TURNS = 5000
+SESSION_SEARCH_WEB_LIMIT = 20
+SESSION_SEARCH_TOOL_LIMIT = 10
+SESSION_SEARCH_SNIPPET_CHARS = 240
+SESSION_SEARCH_TURN_CHARS = 6000
+
 
 @dataclass(frozen=True, slots=True)
 class RunLimits:
@@ -153,6 +161,10 @@ class RunLimits:
             ('网页', '每次运行的令牌上限（WEB_RUN_MAX_TOKENS）',
              '不限' if self.web_run_max_tokens is None else str(self.web_run_max_tokens)),
             ('网页', '每次运行的时限（WEB_RUN_MAX_SECONDS）', seconds(self.web_run_max_seconds)),
+            ('历史搜索', '查询关键词上限', f'{SESSION_SEARCH_MAX_QUERY_CHARS} 字符'),
+            ('历史搜索', '单次扫描上限（会话 / 轮次）', f'{SESSION_SEARCH_MAX_SESSIONS} / {SESSION_SEARCH_MAX_TURNS}'),
+            ('历史搜索', '返回条数上限（网页 / 工具）', f'{SESSION_SEARCH_WEB_LIMIT} / {SESSION_SEARCH_TOOL_LIMIT}'),
+            ('历史搜索', '每条摘录 / 读一轮字符上限', f'{SESSION_SEARCH_SNIPPET_CHARS} / {SESSION_SEARCH_TURN_CHARS} 字符'),
         ]
         return rows
 

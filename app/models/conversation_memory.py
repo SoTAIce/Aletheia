@@ -7,6 +7,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import Enum
+import re
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -17,6 +18,20 @@ from .base_memory import BaseMemory
 if TYPE_CHECKING:
     from app.services.conversation_archive import ConversationArchive
     from app.services.memory_compression.base import ConversationCompressor
+
+
+def search_terms(text: str) -> set[str]:
+    """Tokenize text for lexical search: Unicode words for non-CJK, bigrams (or single char) for CJK."""
+    folded = text.casefold()
+    # Preserve prior Unicode word matching; only CJK sentence spans need
+    # additional segmentation rather than exact whole-sentence overlap.
+    non_cjk = re.sub(r'[\u3400-\u9fff]+', ' ', folded)
+    terms = set(re.findall(r'\w+', non_cjk))
+    for segment in re.findall(r'[\u3400-\u9fff]+', folded):
+        terms.update(segment[i:i + 2] for i in range(len(segment) - 1))
+        if len(segment) == 1:
+            terms.add(segment)
+    return terms
 
 
 async def finish_conversation_write(operation):
@@ -239,18 +254,9 @@ class ConversationMemory(BaseMemory):
         return self._revision
 
     def find_summaries(self, query: str, limit: int = 3) -> list[SummaryEntry]:
-        import re
         if not isinstance(query, str) or type(limit) is not int or limit < 0:
             raise ValueError("invalid summary query or limit")
-        text = query.casefold()
-        # Preserve prior Unicode word matching; only CJK sentence spans need
-        # additional segmentation rather than exact whole-sentence overlap.
-        non_cjk = re.sub(r'[\u3400-\u9fff]+', ' ', text)
-        terms = set(re.findall(r'\w+', non_cjk))
-        for segment in re.findall(r'[\u3400-\u9fff]+', text):
-            terms.update(segment[i:i+2] for i in range(len(segment)-1))
-            if len(segment) == 1:
-                terms.add(segment)
+        terms = search_terms(query)
         scored = [(sum(term in (entry.title + " " + entry.description).casefold()
                        for term in terms), index, entry)
                   for index, entry in enumerate(self._summary_index)]

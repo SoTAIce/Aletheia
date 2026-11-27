@@ -309,7 +309,7 @@ def report(result, write=print) -> None:
 
 INTERACTIVE_HELP = ('直接输入目标开始一个任务；任务等待回答时，直接输入回答即可继续。'
                     '命令：/help 显示帮助，/new 放弃正在等待回答的任务，/exit 退出（Ctrl+D、Ctrl+Z 回车同样退出）；'
-                    '/dir 查看工作目录，/dir 路径 更换工作目录；'
+                    '/dir 查看工作目录，/dir 路径 更换工作目录；/search 关键词 搜索历史会话；'
                     '长期记忆：/remember 内容 记住一条（记在当前人设下，加 --shared 记成公共的），'
                     '/memories 查看，/forget 编号 删除。' + PERSONA_HELP + COMMANDS_HELP)
 MEMORY_OFF = '长期记忆没有开启：在 .env 里设置 LONGTERM_MEMORY_DSN 后可用。'
@@ -457,6 +457,32 @@ async def _read_line(prompt):
     return await _terminal_reader.read_line(prompt)
 
 
+async def search_command(command: str, service, user_id, write=print) -> None:
+    """/search QUERY across this user's archived sessions (D-109)."""
+    _, _, query = command.partition(' ')
+    query = query.strip()
+    if not query:
+        write('用法：/search 关键词（搜索历史会话）')
+        return
+    try:
+        data = await service.search_sessions(query, user_id=user_id, limit=10)
+    except ValueError:
+        write('关键词不能为空，最多 200 字。')
+        return
+    except Exception as exc:
+        write(f'搜索历史失败：{type(exc).__name__}')
+        return
+    results = data.get('results') or []
+    if not results:
+        write('没有找到。')
+        return
+    for item in results:
+        snippet = ' '.join((item.get('snippet') or '').splitlines())
+        write(f"{item.get('created_at', '')}  {item.get('session_id', '')}  {snippet}")
+    if data.get('truncated'):
+        write('（只搜了最近的一部分会话）')
+
+
 async def dir_command(command, state, service, read_line, write=print, waiting=None, *,
                       declined=None, is_tty=None) -> None:
     """/dir shows the working directory; /dir PATH changes it for the next tasks (workspace-001).
@@ -530,6 +556,9 @@ async def interactive(service, args, read_line=None, write=print, memory=None, *
         if command == '/dir' or command.startswith('/dir '):
             await dir_command(command, place, service, read_line, write, waiting,
                               declined=declined, is_tty=is_tty)
+            continue
+        if command.split(' ', 1)[0] == '/search':
+            await search_command(command, service, user_id, write)
             continue
         if command.split(' ', 1)[0] in ('/remember', '/memories', '/forget'):
             await memory_command(command, memory, user_id, write,
