@@ -1784,6 +1784,16 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "summary-stall-001",
+      "name": "Background summaries: failed batches no longer stop later summaries",
+      "description": "docs/summary_stall_plan.md, D-106. Wrong choice count, incomplete or refused output, empty summary and missing or duplicated headings raise SummaryContentError; ConversationMemory halves the batch or skips a single turn on the second failure of the same batch. SummaryScheduler(cooldown_seconds=600) retries a batch again after a 10-minute cooldown instead of giving up for the process, and resets counts at once when the batch changes. Summary failure logs carry only the exception type.",
+      "status": "done",
+      "dependencies": [
+        "summary-fit-001"
+      ],
+      "evidence": "Found by a user-authorized end-to-end run (web backend with --compress-history, local Ollama, real main model, about 27k main-model tokens). Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked by Claude without changes. init.ps1 2503 passed, 28 skipped; goldens unchanged. Not committed; end-to-end retest awaits user consent."
+    },
+    {
       "id": "summary-fit-001",
       "name": "Background summaries: limits from the summary model window, over-long summaries",
       "description": "docs/summary_fit_plan.md, D-105. SUMMARY_MODEL_CONTEXT_TOKENS (default 4096, Ollama's default; profiles use context_tokens) sets the output cap min(1536, window//4), the estimated input cap (window - cap - 64)/1.5 and the batch budget min(6000, input - 600). Input over the cap raises SummaryInputTooLargeError, handled like SummaryTooLongError (halve or skip). The prompt always asks for concision; a summary over max(400, 0.5 x source) raises SummaryNotShorterError, retried once and accepted on the second try.",
