@@ -346,6 +346,7 @@ async def test_open_history_compressor_without_summarizer_uses_local_unchanged(m
     captured = []
     monkeypatch.setattr(cli.config, "conversation_storage_dir", str(tmp_path))
     monkeypatch.setattr(cli.config, "model_profiles_file", str(path))
+    monkeypatch.setattr(cli.config, "agent_model_api_key", "main-test-key")   # independent of .env
     monkeypatch.setattr(cli.config, "summary_model_base_url", "http://127.0.0.1:11434/v1")
     monkeypatch.setattr(cli.config, "summary_model", "qwen3:4b-instruct")
     monkeypatch.setattr(
@@ -399,6 +400,7 @@ async def test_open_history_compressor_profile_unavailable_degrades_cleanly(monk
     closed = []
     monkeypatch.setattr(cli.config, "conversation_storage_dir", str(tmp_path))
     monkeypatch.setattr(cli.config, "model_profiles_file", str(path))
+    monkeypatch.setattr(cli.config, "agent_model_api_key", "main-test-key")   # independent of .env
     monkeypatch.setattr(
         dependencies, "AsyncOpenAI",
         _fake_client_cls(error=httpx.ConnectError("secret-err"), closed=closed),
@@ -473,6 +475,7 @@ async def test_web_serve_with_summarizer_profile_passes_profile_compressor(monke
     monkeypatch.setattr(web_cli.config, "web_access_token", "tok")
     monkeypatch.setattr(web_cli.config, "conversation_storage_dir", str(tmp_path))
     monkeypatch.setattr(web_cli.config, "model_profiles_file", str(path))
+    monkeypatch.setattr(web_cli.config, "agent_model_api_key", "main-test-key")   # independent of .env
     monkeypatch.setattr(web_cli.config, "longterm_memory_dsn", "")
     monkeypatch.setattr(Settings, "permission_rules", lambda self: None)
     monkeypatch.setattr(Settings, "user_mcp_config", lambda self: None)
