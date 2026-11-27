@@ -1274,3 +1274,14 @@
 - 约束：发出的请求逐字节不变；列表为空、设置为 `warn` 时提示和原来一样。名字是服务商自己填的，认可列表只让提示在名字变化时出现，证明不了用的是哪个模型。`.env`、`models.toml` 由用户自己决定要不要写 `gpt-6.1-sol`。
 - 来源：用户 2026-11-26“写方案处理中转模型被替换的问题”，第 7 节六条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对没有改动。
 - 记录：[方案](model_substitution_plan.md)；代码在 `app/agent/provider_state.py`、`app/models/model_profile.py`、`app/agent/openai_compatible_tool_calling_model.py`、`app/agent/agent_loop.py`；测试在 `tests/test_model_substitution.py`。
+
+## D-108 2026-11-26 网页运行通知：页面不在前台时通知四种事件并改标题，文字固定
+
+- 起因：任务最长跑 8 分钟，用户切走后不知道任务什么时候完成、停下来问问题或等确认。三阶段收尾计划第三阶段排序第 6 项（想法清单 6.1）。详见 [方案](run_notifications_plan.md)。
+- 决策：
+  - 只在页面不在前台时，对完成、等你回答、失败、等你确认四种事件发浏览器通知并改标签页标题前缀；取消不通知。文字由前端写死，不带答案、问题、路径、预览或会话名。同一运行用同一个通知标签；点通知回到页面；回到前台恢复标题、关掉通知。
+  - 状态栏“通知”按钮，默认关，点击时才请求权限。开关存在 `sessionStorage`（`aletheia-notify`），只对这个标签页有效（D-047 不许用 `localStorage`）；浏览器给的权限本身会保留。地址不能用通知时按钮变灰，只有标题提示。
+  - 只覆盖当前会话正在跟踪的运行；定时任务不通知；后端不改。
+- 被否方案：声音、手机推送、邮件；覆盖所有会话（要同时跟多条事件流）；通知里带答案摘要或会话名。
+- 来源：用户 2026-11-26“写运行通知方案”，第 7 节七条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对没有改动，并用内置浏览器检查了按钮和标题。
+- 记录：[方案](run_notifications_plan.md)；代码在 `app/api/static/app.js`、`index.html`、`app.css`；测试在 `tests/test_run_notifications.py`。

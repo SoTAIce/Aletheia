@@ -7,6 +7,7 @@ const RUN_KEY = 'aletheia-runs';          // session id -> run id still being fo
 const OPTIONS_KEY = 'aletheia-options';   // this tab's choice of mode, runner, writes and memory
 const PLACES_KEY = 'aletheia-workspaces';  // session id -> {path, confirmed}: its working directory (D-074)
 const RECENT_KEY = 'aletheia-recent-dirs'; // directories used in this tab, newest first
+const NOTIFY_KEY = 'aletheia-notify';      // whether this tab sends browser notifications (D-108)
 const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_CHARS = 1000000;
 const SVG_NS = 'http://www.w3.org/2000/svg';   // a namespace name, not a resource that is loaded
@@ -18,6 +19,13 @@ const OUTCOME = {succeeded: ['done', 'i-check', '完成'], failed: ['fail', 'i-x
 const APPROVAL_ACTIONS = {write_file: '写入文件', edit_file: '修改文件', run_python: '运行 Python 代码', run_tests: '运行测试'};
 const APPROVAL_RESULTS = {allow: '已允许', allow_all: '已允许（本次运行都允许）', deny: '已拒绝',
                           timeout: '没有及时回答，已拒绝'};
+// Fixed run notification copy (D-108); never include model output or session data.
+const RUN_NOTICES = {
+  completed: ['任务完成', '（完成）'],
+  blocked: ['任务停下来等你回答一个问题', '（等你回答）'],
+  failed: ['任务失败', '（失败）'],
+  approval_required: ['有一步操作等你确认', '（等你确认）'],
+};
 
 function approvalText(event) {
   const args = event.args_summary || {};
@@ -163,6 +171,71 @@ function toast(text) {
   $('toast').textContent = text || '';
   $('toast').hidden = !text;
   if (text) toastTimer = setTimeout(() => { $('toast').hidden = true; }, 7000);
+}
+
+// ---- run notifications (D-108) --------------------------------------------------------
+
+const BASE_TITLE = document.title || 'Aletheia';
+const NOTIFY_TITLE = '任务完成、等你回答、失败或等你确认时通知（只在页面不在前台时）';
+const NOTIFY_UNAVAILABLE = '这个地址不能用浏览器通知，可以用 127.0.0.1 打开；页面不在前台时标签页标题仍会提示';
+let activeNotice = null;
+
+function notifyAvailable() {
+  return typeof Notification !== 'undefined' && Boolean(window.isSecureContext);
+}
+
+function notifyEnabled() {
+  return notifyAvailable() && saved(NOTIFY_KEY, false) === true && Notification.permission === 'granted';
+}
+
+function renderNotifyButton() {
+  const button = $('toggle-notify');
+  if (!button) return;
+  const available = notifyAvailable();
+  const on = notifyEnabled();
+  button.disabled = !available;
+  button.classList.toggle('on', on);
+  button.setAttribute('aria-pressed', String(on));
+  button.title = available ? NOTIFY_TITLE : NOTIFY_UNAVAILABLE;
+}
+
+function closeActiveNotice() {
+  if (!activeNotice) return;
+  try { activeNotice.close(); } catch (e) { /* ignore */ }
+  activeNotice = null;
+}
+
+function notifyRun(kind, runId) {
+  const entry = RUN_NOTICES[kind];
+  if (!entry || document.visibilityState === 'visible') return;
+  const [body, prefix] = entry;
+  document.title = prefix + BASE_TITLE;
+  if (!notifyEnabled()) return;
+  try {
+    const notice = new Notification('Aletheia', {body, tag: 'aletheia-run-' + (runId || '')});
+    notice.onclick = () => { window.focus(); notice.close(); };
+    activeNotice = notice;
+  } catch (e) { /* some browsers disallow page-level Notification */ }
+}
+
+async function toggleNotify() {
+  if (!notifyAvailable()) return;
+  if (notifyEnabled()) {
+    save(NOTIFY_KEY, false);
+    renderNotifyButton();
+    return;
+  }
+  let permission = Notification.permission;
+  if (permission === 'default') {
+    try { permission = await Notification.requestPermission(); } catch (e) { permission = 'denied'; }
+  }
+  if (permission === 'granted') {
+    save(NOTIFY_KEY, true);
+  } else {
+    save(NOTIFY_KEY, false);
+    if (permission === 'denied') toast('浏览器拒绝了通知，可以在浏览器的网站设置里重新允许。');
+  }
+  renderNotifyButton();
 }
 
 // ---- API ------------------------------------------------------------------------------
@@ -1618,6 +1691,7 @@ class LiveView {
       case 'approval_required':
         this.askApproval(event);
         this.say('等待你确认');
+        notifyRun('approval_required', this.runId);
         break;
       case 'approval_resolved': {
         const card = this.approvals.get(event.approval_id);
@@ -1694,6 +1768,7 @@ class LiveView {
                                            citations: event.citations, citationProblems: event.citation_problems}));
     if (event.type === 'blocked') { state.waiting = {task_id: event.task_id, question: event.question}; updateComposer(); }
     scrollToEnd();
+    notifyRun(event.type, this.runId);
     return true;
   }
 }
@@ -2097,5 +2172,14 @@ async function start() {
   else newSession();
 }
 
+$('toggle-notify').addEventListener('click', toggleNotify);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    document.title = BASE_TITLE;
+    closeActiveNotice();
+  }
+});
+
 state.token = saved(TOKEN_KEY, '');
+renderNotifyButton();
 start().catch((e) => { if (e.status !== 401) showLogin(e.message); });
