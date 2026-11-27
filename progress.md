@@ -43,7 +43,7 @@
 | 3.2 | 按规则的权限控制 | 7.2 | 已实施（2026-11-22，D-094，`docs/permission_rules_plan.md`，未提交）：第 8 节按推荐定，Gemini 实施、Claude 核对并改了三处；`init.ps1` 2226 passed；没有用真实模型验证 |
 | 3.3 | 接入用户自己的 MCP 服务器 | 7.1 | 已实施（2026-11-22，D-095，`docs/user_mcp_plan.md`，未提交）：第 8 节按推荐定，Gemini 实施、Claude 核对并改了一处；`init.ps1` 2269 passed；没有用真实模型验证 |
 | 3.4 | 项目说明文件 | 1.1 的另一半 | 已实施（2026-11-23，D-096，`docs/project_instructions_plan.md`，未提交）：第 8 节七条按推荐定，Gemini 实施、Claude 核对没有改动；`init.ps1` 2283 passed；没有用真实模型验证 |
-| 3.5 | 其余：批处理、引用核对、新模型角色、定时任务、更多文档格式等 | 见想法清单第 9 节 | 已重排（`docs/batch_run_plan.md` 第 1 节）。第一项批处理已实施（2026-11-23，D-097，未提交）：第 8 节七条按推荐定，Gemini 实施、Claude 核对没有改动；没有用真实模型验证。第二项引用核对已实施（2026-11-23，D-098，`docs/citation_check_plan.md`，未提交）：第 8 节八条按推荐定，连同检索链测试；Gemini 实施、Claude 核对没有改动；没有用真实模型验证。插进来一项工具按需加载（2026-11-24，D-099，`docs/tool_loading_plan.md`，用户提出，未提交）：Gemini 实施、Claude 核对没有改动；没有用真实模型验证。第 3 项改做后台摘要（2026-11-25，D-100，`docs/history_compression_plan.md`，未提交）：用户本机有 Ollama，`summarizer` 档案角色暂缓，改为网页接上历史压缩、启动检查、设置挪进 `.env`；Gemini 实施、Claude 核对改了一处；没有用真实 Ollama 验证。第 4 项定时任务已实施（2026-11-25，`docs/scheduled_tasks_plan.md`，未提交）：前置的网页计量和阻塞过期记为 D-101，定时任务记为 D-102；分两次由 Gemini 实施，Claude 核对，丙改了一处；没有用真实模型验证。插进来一项摘要档案角色（2026-11-25，D-103，`docs/summarizer_role_plan.md`，未提交）：`summarizer` 可选角色，不回落到 `main`；Gemini 实施、Claude 核对没有改动；没有用真实模型验证。随后用本机 Ollama 实测后台摘要，发现截断和语言问题，做了摘要质量（2026-11-25，D-104，`docs/summary_quality_plan.md`，未提交）：Gemini 实施、Claude 核对没有改动，已用本机 Ollama 复测；遗留两个问题见方案第 10 节，随后由摘要窗口（2026-11-26，D-105，`docs/summary_fit_plan.md`，未提交）处理：Gemini 实施、Claude 核对没有改动，已用本机 Ollama 复测。随后真实端到端测试发现内容不合格的批次会卡住后面，做了 D-106（2026-11-26，`docs/summary_stall_plan.md`，未提交）：Gemini 实施、Claude 核对没有改动，端到端复测已做（积压 7 轮全部摘要完；中转主模型两次答非所问，带模型不一致提示）。下一项只读 Git 工具和变更报告（排序第 5 项）用户说“先不做” |
+| 3.5 | 其余：批处理、引用核对、新模型角色、定时任务、更多文档格式等 | 见想法清单第 9 节 | 已重排（`docs/batch_run_plan.md` 第 1 节）。第一项批处理已实施（2026-11-23，D-097，未提交）：第 8 节七条按推荐定，Gemini 实施、Claude 核对没有改动；没有用真实模型验证。第二项引用核对已实施（2026-11-23，D-098，`docs/citation_check_plan.md`，未提交）：第 8 节八条按推荐定，连同检索链测试；Gemini 实施、Claude 核对没有改动；没有用真实模型验证。插进来一项工具按需加载（2026-11-24，D-099，`docs/tool_loading_plan.md`，用户提出，未提交）：Gemini 实施、Claude 核对没有改动；没有用真实模型验证。第 3 项改做后台摘要（2026-11-25，D-100，`docs/history_compression_plan.md`，未提交）：用户本机有 Ollama，`summarizer` 档案角色暂缓，改为网页接上历史压缩、启动检查、设置挪进 `.env`；Gemini 实施、Claude 核对改了一处；没有用真实 Ollama 验证。第 4 项定时任务已实施（2026-11-25，`docs/scheduled_tasks_plan.md`，未提交）：前置的网页计量和阻塞过期记为 D-101，定时任务记为 D-102；分两次由 Gemini 实施，Claude 核对，丙改了一处；没有用真实模型验证。插进来一项摘要档案角色（2026-11-25，D-103，`docs/summarizer_role_plan.md`，未提交）：`summarizer` 可选角色，不回落到 `main`；Gemini 实施、Claude 核对没有改动；没有用真实模型验证。随后用本机 Ollama 实测后台摘要，发现截断和语言问题，做了摘要质量（2026-11-25，D-104，`docs/summary_quality_plan.md`，未提交）：Gemini 实施、Claude 核对没有改动，已用本机 Ollama 复测；遗留两个问题见方案第 10 节，随后由摘要窗口（2026-11-26，D-105，`docs/summary_fit_plan.md`，未提交）处理：Gemini 实施、Claude 核对没有改动，已用本机 Ollama 复测。随后真实端到端测试发现内容不合格的批次会卡住后面，做了 D-106（2026-11-26，`docs/summary_stall_plan.md`，未提交）：Gemini 实施、Claude 核对没有改动，端到端复测已做（积压 7 轮全部摘要完；中转主模型两次答非所问，带模型不一致提示）。随后做了中转换模型（D-107）和摘要角色测试修正。只读 Git 工具和变更报告（排序第 5 项）用户说“先不做”；第 6 项运行通知已实施（2026-11-26，D-108，`docs/run_notifications_plan.md`，未提交）：Gemini 实施、Claude 核对没有改动，内置浏览器看过按钮和标题；下一项是跨会话搜索历史（排序第 7 项），要用户先定清空过的会话能不能搜到 |
 
 ## 已确认基线（历史，未重新测量）
 
@@ -53,6 +53,11 @@
 - 长期记忆接入代码和用户注释未提交，保留在工作区；没有默认装配，也没有完整验收结论。
 
 ## Session Record
+
+### 2026-11-26 — run-notifications-001：网页运行通知（D-108）
+
+- 三阶段收尾计划 3.5 排序第 6 项。方案 `docs/run_notifications_plan.md` 第 7 节七条按推荐定；开关改存 `sessionStorage`（D-047 不许 `localStorage`）。
+- 由 Gemini 实施，Claude 核对没有改动；`init.ps1` 2540 passed、28 skipped；黄金对照文件不变。内置浏览器（临时后端，没调用模型）看过按钮、拒绝权限时的提示和四种标题前缀；真实系统通知没验证。未提交。
 
 ### 2026-11-26 — summarizer-test-env-001：摘要角色测试不再依赖本机 `.env`
 

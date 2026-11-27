@@ -1784,6 +1784,14 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "run-notifications-001",
+      "name": "Web run notifications",
+      "description": "docs/run_notifications_plan.md, D-108. A status-bar toggle (off by default, sessionStorage) sends browser notifications with fixed text for completed, blocked, failed and approval_required while the page is hidden, and prefixes the tab title; no model text, only the followed run, frontend only.",
+      "status": "done",
+      "dependencies": [],
+      "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked by Claude without changes. init.ps1 2540 passed, 28 skipped; goldens unchanged. Built-in browser check against a temporary local backend (no model calls): toggle, denied-permission toast, four title prefixes and restore. Real system notifications not verified. Not committed."
+    },
+    {
       "id": "summarizer-test-env-001",
       "name": "Summarizer role tests independent of the local .env",
       "description": "docs/summarizer_test_env_plan.md. Three tests in tests/test_summarizer_role.py read AGENT_MODEL_API_KEY from the local .env through the profile key check; they now set a fake agent_model_api_key.",
