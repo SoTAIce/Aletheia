@@ -1784,6 +1784,14 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "session-search-001",
+      "name": "Cross-session history search",
+      "description": "docs/session_search_plan.md, D-109. Lexical on-demand scan of the user's archived turns (user message and final reply only, CJK bigrams shared with find_summaries): web sidebar search (/api/search), CLI /search, and read-only tools search_conversations / read_conversation_turn limited to the current persona, excluding the current session, gated like long-term memory. Invariant: any future session delete/hide must also hide it from search.",
+      "status": "done",
+      "dependencies": [],
+      "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked by Claude without changes. init.ps1 2549 passed, 28 skipped; goldens unchanged. Built-in browser check against a temporary local backend with hand-made archives (no model calls): search, open and highlight, Esc restore, 401. The old top-bar live filter was folded into the new box and, at the user's request, restored by Claude: typing filters the loaded list, Enter searches all history (static check only). Tool use by a real model not verified. Not committed."
+    },
+    {
       "id": "run-notifications-001",
       "name": "Web run notifications",
       "description": "docs/run_notifications_plan.md, D-108. A status-bar toggle (off by default, sessionStorage) sends browser notifications with fixed text for completed, blocked, failed and approval_required while the page is hidden, and prefixes the tab title; no model text, only the followed run, frontend only.",
