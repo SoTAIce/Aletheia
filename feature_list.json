@@ -1784,6 +1784,16 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "model-substitution-001",
+      "name": "Relay model substitution: accepted list, named notice, optional stop",
+      "description": "docs/model_substitution_plan.md, D-107. Model profiles gain accepted_models and on_model_mismatch (warn/stop; default profile from AGENT_ACCEPTED_MODELS and AGENT_ON_MODEL_MISMATCH, not inherited). The provider notice names the requested and answering models; stop raises ModelSubstitutedError after metering and before parsing, failure kind model_substituted, no retry. The single loop reminds once when a plain-text reply is only the arguments of an available tool.",
+      "status": "done",
+      "dependencies": [
+        "provider-state-001"
+      ],
+      "evidence": "Local traces: 630 calls asked for gpt-5.6-luna and all reported gpt-6.1-sol. Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked by Claude without changes. init.ps1 2535 passed, 28 skipped; request bytes and goldens unchanged. Not committed."
+    },
+    {
       "id": "summary-stall-001",
       "name": "Background summaries: failed batches no longer stop later summaries",
       "description": "docs/summary_stall_plan.md, D-106. Wrong choice count, incomplete or refused output, empty summary and missing or duplicated headings raise SummaryContentError; ConversationMemory halves the batch or skips a single turn on the second failure of the same batch. SummaryScheduler(cooldown_seconds=600) retries a batch again after a 10-minute cooldown instead of giving up for the process, and resets counts at once when the batch changes. Summary failure logs carry only the exception type.",
