@@ -34,6 +34,8 @@ class RunLimits:
     web_run_max_seconds: float | None = None
     summary_profile: str | None = None
     summary_context_tokens: int | None = None
+    accepted_models: tuple[str, ...] = ()
+    on_model_mismatch: str = 'warn'
 
     @classmethod
     def current(cls, *, loop=None, team=None, explore=None, max_executions=16,
@@ -54,13 +56,15 @@ class RunLimits:
                          else settings.summary_model.strip() or 'qwen3:4b-instruct')
         summary_context_tokens = (summarizer.context_tokens if summarizer is not None
                                   else settings.summary_model_context_tokens)
+        default_profile = settings.agent_model_profile
         return cls(loop or LoopOptions(timeout_seconds=settings.agent_task_timeout_seconds), team,
-                   explore or ExploreOptions(), max_executions, settings.agent_model_profile.timeout_seconds,
+                   explore or ExploreOptions(), max_executions, default_profile.timeout_seconds,
                    DEFAULT_TIMEOUT_SECONDS, GATE_TIMEOUT_SECONDS, max_total_tokens, max_seconds,
                    summary_model,
                    settings.blocked_task_ttl_seconds,
                    settings.web_run_max_tokens, settings.web_run_max_seconds,
-                   summary_profile, summary_context_tokens)
+                   summary_profile, summary_context_tokens,
+                   default_profile.accepted_models, default_profile.on_model_mismatch)
 
     def deadlines(self) -> dict[str, float]:
         """The task deadline of each mode that can run."""
@@ -132,6 +136,8 @@ class RunLimits:
             ('调研成员', '委派次数 / 每个成员的调用次数', f'{explore.max_delegations} / {explore.member_tool_calls}'),
             ('单次调用', '模型请求时限', seconds(self.model_request_seconds)),
             ('单次调用', '模型调用失败后的重试', retry_policy()),
+            ('单次调用', '认可的替换模型', ', '.join(self.accepted_models) if self.accepted_models else '无'),
+            ('单次调用', '换模型时', '停止' if self.on_model_mismatch == 'stop' else '提示'),
             ('单次调用', '选择执行模式的调用时限', seconds(self.route_seconds)),
             ('单次调用', '每个门控的时限', seconds(self.gate_seconds)),
             ('批处理', '每项默认令牌预算（--item-max-tokens）', f'{DEFAULT_ITEM_MAX_TOKENS:,}'),

@@ -15,7 +15,8 @@ from uuid import uuid4
 
 from loguru import logger
 
-from app.agent.runtime import AgentRunResult, FAILURE_MESSAGES, _context_overflow, _policy_denial, _int_or_none
+from app.agent.runtime import (AgentRunResult, FAILURE_MESSAGES, _context_overflow, _int_or_none,
+                               _model_substituted, _policy_denial)
 from app.agent.run_meter import RunMeter, cache_text as _cache_text, call_text as _call_text, current_meter, metering
 from app.agent.side_effects import SideEffectWatch
 from app.agent.step_runner import (RunnerDependencies, StepBlockedError, StepBudgetError, StepContractError,
@@ -323,6 +324,7 @@ class LoopRun:
                                   'hooks' if denied.hook == 'hooks_not_installed' else 'policy')
             kind = ('contract' if isinstance(exc, StepContractError)
                     else 'format' if isinstance(exc, StepFormatError)
+                    else 'model_substituted' if _model_substituted(exc)
                     else 'context' if _context_overflow(exc) else 'model')
             return self._fail(f"{type(exc).__name__}: {exc.message}", kind)
         except StepToolError as exc:

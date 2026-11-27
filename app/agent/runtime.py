@@ -22,6 +22,7 @@ FAILURE_MESSAGES = {
     'format': '模型多次没有按要求的格式给出步骤结果，任务停止。',
     'contract': '答案多次不符合要求的输出格式（Schema），任务停止。',
     'model': '调用模型失败（服务出错或请求超时），任务停止，可以稍后重试。',
+    'model_substituted': '服务商用请求之外的模型回答（只看名字），按设置停止了任务。可以在模型档案的 accepted_models 里认可这个模型，或者换一个服务商。',
     'side_effect': '一个会修改文件或运行代码的操作没有正常结束，结果不确定。为避免重复执行，任务已停止，请先检查工作区。',
     'timeout': '执行超时，任务停止。已完成的修改不会重复执行。',
     'rejected': '任务结果没有通过完成检查，任务停止。',
@@ -46,6 +47,18 @@ def _context_overflow(exc):
     seen = set()
     while exc is not None and id(exc) not in seen:
         if isinstance(exc, (ContextBudgetError, ModelContextOverflowError)):
+            return True
+        seen.add(id(exc))
+        exc = exc.__cause__ or exc.__context__
+    return False
+
+
+def _model_substituted(exc):
+    """Whether an error comes from stopping on an unaccepted provider model (D-107)."""
+    from app.agent.tool_calling_model import ModelSubstitutedError
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        if isinstance(exc, ModelSubstitutedError):
             return True
         seen.add(id(exc))
         exc = exc.__cause__ or exc.__context__

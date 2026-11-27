@@ -7,7 +7,7 @@
 #   temperature, json_mode.
 # Never taken from .env (they belong to one model and provider): enable_thinking (left out = not
 #   sent), prompt_cache_key (left out = false), input_price_per_million, output_price_per_million
-#   (left out = no cost estimate).
+#   (left out = no cost estimate), accepted_models (left out = none), on_model_mismatch (left out = "warn").
 
 [profiles.main]
 base_url = "https://relay.example.com/v1"
@@ -15,6 +15,8 @@ api_key_env = "AGENT_MODEL_API_KEY"
 model = "main-model-name"
 context_tokens = 128000
 prompt_cache_key = true
+# accepted_models = ["relay-model-name"]
+# on_model_mismatch = "warn"   # "warn" (default) or "stop"
 
 [profiles.cheap]
 base_url = "https://cheap.example.com/v1"

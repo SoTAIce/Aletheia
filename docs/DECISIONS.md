@@ -1260,3 +1260,17 @@
   - 已做端到端复测（方案第 10 节）：积压的 7 轮全部摘要完；新增的跳过和冷却在真实运行里没有被触发，只有离线测试覆盖。
 - 来源：用户 2026-11-26 “写方案”，第 8 节六条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对没有改动。
 - 记录：[方案](summary_stall_plan.md)；代码在 `app/services/summary_scheduler.py`、`app/models/conversation_memory.py`、`app/services/memory_compression/llm_compressor.py`；测试在 `tests/test_summary_stall.py`。
+
+## D-107 2026-11-26 中转服务换模型：认可列表、提示写明模型名、可选停下；工具参数当答案时提醒一次
+
+- 起因：后台摘要端到端复测（D-106）里主模型两次答非所问，任务仍判为完成，两次都带 D-079 的“模型不同”提示。查本地轨迹：630 次调用请求 `gpt-5.6-luna`，响应全部报告 `gpt-6.1-sol`，评测 11 次运行 11 次带提示，所以提示分不出好坏；第一次答错的 `{"timezone":"UTC"}` 是 `get_current_time` 的参数被当成了答案。详见 [方案](model_substitution_plan.md)。
+- 决策：
+  - 模型档案新增 `accepted_models`（认可的响应模型名，最多 20 个）和 `on_model_mismatch`（`warn` 默认 / `stop`）；默认档案用 `AGENT_ACCEPTED_MODELS`、`AGENT_ON_MODEL_MISMATCH`；文件里的档案不继承这两项。新函数 `provider_state.substituted`，在认可列表里的名字不算不同。
+  - 提示写明“请求的是 A，服务商用 B 回答”；用量的 `provider` 多 `requested_names`、`response_names`（去重，最多 3 个，每个最多 60 字符，只有名字）；评测每行多 `response_names`，汇总多 `response_model_counts`。
+  - `stop` 时，响应名不被认可就在记账后、解析前抛 `ModelSubstitutedError`，不重试、不执行工具，失败类型 `model_substituted`。
+  - 单任务循环收到的纯文字是非空 JSON 对象、全部键都是某个可用非控制工具的参数时，提醒一次再走一轮；第二次照常收下。
+  - `--show-limits` 在“单次调用”下多“认可的替换模型”“换模型时”两行。
+- 被否方案：问模型“你是谁”；读取或比对中转服务加的隐藏内容；自动换服务商或直连对照；按令牌档位提示。
+- 约束：发出的请求逐字节不变；列表为空、设置为 `warn` 时提示和原来一样。名字是服务商自己填的，认可列表只让提示在名字变化时出现，证明不了用的是哪个模型。`.env`、`models.toml` 由用户自己决定要不要写 `gpt-6.1-sol`。
+- 来源：用户 2026-11-26“写方案处理中转模型被替换的问题”，第 7 节六条“按推荐定”。由 Gemini（Antigravity 命令行，`gemini-4-neon-medium`）实施，Claude 核对没有改动。
+- 记录：[方案](model_substitution_plan.md)；代码在 `app/agent/provider_state.py`、`app/models/model_profile.py`、`app/agent/openai_compatible_tool_calling_model.py`、`app/agent/agent_loop.py`；测试在 `tests/test_model_substitution.py`。

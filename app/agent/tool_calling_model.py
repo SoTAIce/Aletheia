@@ -45,6 +45,13 @@ class ModelResponseError(ToolCallingModelError):
     pass
 
 
+class ModelSubstitutedError(ModelResponseError):
+    """The provider answered with a model outside the profile's accepted list (D-107)."""
+
+    def __init__(self) -> None:
+        super().__init__('provider answered with another model')
+
+
 class ModelOutputLimitError(ModelResponseError):
     """An incomplete provider response; partial text/calls must never execute."""
 

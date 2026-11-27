@@ -52,6 +52,25 @@ def _changed_without_passing_run(results) -> bool:
     wrote = any(r.success and effect_of_name(r.tool_name) == 'write' for r in results)
     return wrote and not has_passing_run_after_last_write(results)
 
+
+def _tool_args_match(text: str, tools) -> str | None:
+    """Name of an available non-control tool whose properties cover every key of a nonempty JSON
+    object reply, else None (D-107)."""
+    try:
+        parsed = json.loads(text)
+    except (ValueError, RecursionError):
+        return None
+    if not isinstance(parsed, dict) or not parsed:
+        return None
+    keys = set(parsed)
+    for tool in tools:
+        if tool.name in CONTROL_TOOLS:
+            continue
+        props = tool.input_schema.get('properties') if isinstance(tool.input_schema, dict) else None
+        if isinstance(props, dict) and keys.issubset(props):
+            return tool.name
+    return None
+
 # Context fields in the order sent: stable ones first, for the provider's prompt cache (D-057).
 # available_tools is left out: the same tools are sent as native tool definitions.
 CONTEXT_FIELDS = ('task_id', 'active_goal', 'constraints', 'pinned_contexts', 'resolved_questions',
@@ -378,6 +397,7 @@ class AgentLoopRunner:
         wrap_up_sent = False
         finish_rejected = False
         reminded = False
+        tool_args_reminded = False
         citation_repaired = False
         citation_pending = False
         previous_citation_answer = None
@@ -477,6 +497,15 @@ class AgentLoopRunner:
                     self.format_repair_count += 1
                     messages.append(SystemMessage('HOST: reply with the final answer as plain text, or call a tool.'))
                     continue
+                if not tool_args_reminded and not isinstance(request_tools, ToolsShownOnly):
+                    matched_tool = _tool_args_match(text, tools)
+                    if matched_tool is not None:
+                        tool_args_reminded = True
+                        messages.append(turn.to_assistant_message())
+                        messages.append(SystemMessage(
+                            f'HOST: your reply looks like the arguments of tool {matched_tool}. '
+                            'Call the tool, or reply with the final answer.'))
+                        continue
                 decision = await self._before_finish(context)
                 if not decision.allow:
                     if finish_rejected:

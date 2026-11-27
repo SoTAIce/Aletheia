@@ -22,6 +22,9 @@ from typing import Any
 
 _NAME = re.compile(r'^[A-Za-z0-9_.-]{1,64}$')
 _ENV = re.compile(r'^[A-Za-z_][A-Za-z0-9_]{0,127}$')
+MAX_ACCEPTED_MODELS = 20
+MAX_ACCEPTED_MODEL_CHARS = 128
+MISMATCH_ACTIONS = ('warn', 'stop')
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +42,8 @@ class ModelProfile:
     prompt_cache_key: bool = False        # send a per-conversation prompt_cache_key (D-057)
     input_price_per_million: float | None = None
     output_price_per_million: float | None = None
+    accepted_models: tuple[str, ...] = () # response model names accepted without warning (D-107)
+    on_model_mismatch: str = 'warn'       # 'warn' or 'stop' when response model is not accepted
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not _NAME.match(self.name):
@@ -64,6 +69,21 @@ class ModelProfile:
             value = getattr(self, field)
             if value is not None and (not _finite(value) or value < 0):
                 raise ValueError(f'{field} must be a non-negative number or None')
+        if not isinstance(self.accepted_models, (tuple, list)):
+            raise TypeError('accepted_models must be a list or tuple of strings')
+        if len(self.accepted_models) > MAX_ACCEPTED_MODELS:
+            raise ValueError(f'accepted_models must have at most {MAX_ACCEPTED_MODELS} items')
+        cleaned_accepted = []
+        for item in self.accepted_models:
+            if not isinstance(item, str):
+                raise TypeError('accepted_models entries must be strings')
+            text = item.strip()
+            if not text or len(text) > MAX_ACCEPTED_MODEL_CHARS:
+                raise ValueError(f'accepted_models entries must be 1-{MAX_ACCEPTED_MODEL_CHARS} characters')
+            cleaned_accepted.append(text)
+        object.__setattr__(self, 'accepted_models', tuple(cleaned_accepted))
+        if not isinstance(self.on_model_mismatch, str) or self.on_model_mismatch not in MISMATCH_ACTIONS:
+            raise ValueError("on_model_mismatch must be 'warn' or 'stop'")
 
     def api_key(self, settings: Any = None) -> str:
         """The key, read when needed: from the settings field of that name, else the environment."""

@@ -68,6 +68,7 @@ class RunMeter:
     # asked for; with the provider's report they give the provider state (provider-state-001).
     host_estimates: list = field(default_factory=list)
     requested_models: list = field(default_factory=list)
+    accepted_models: list = field(default_factory=list)
     # Usage per model profile (stage 4d-2): name -> counts, and name -> the ModelProfile for its
     # prices. Calls of a model built without a profile are not booked here.
     profile_usage: dict = field(default_factory=dict)
@@ -127,6 +128,7 @@ class RunMeter:
             self.response_models.append(_model_name(model))
             self.host_estimates.append(host_estimate if type(host_estimate) is int and host_estimate > 0 else None)
             self.requested_models.append(_model_name(requested_model))
+            self.accepted_models.append(tuple(getattr(profile, 'accepted_models', ()) or ()))
         booked = None
         if name is not None:
             self.profile_objects.setdefault(name, profile)
@@ -266,7 +268,8 @@ class RunMeter:
         from app.agent.provider_state import ratio, summary
         ratios = [ratio(entry.get('prompt'), estimate)
                   for entry, estimate in zip(self.call_log, self.host_estimates)]
-        return summary(ratios, self.requested_models, self.response_models)
+        return summary(ratios, self.requested_models, self.response_models,
+                       accepted=self.accepted_models)
 
 
 def cache_text(usage: dict) -> str:

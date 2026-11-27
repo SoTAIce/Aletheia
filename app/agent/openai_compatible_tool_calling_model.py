@@ -24,7 +24,7 @@ from app.agent.step_models import (
 )
 from app.agent.tool_calling_model import ModelRequestError, ModelResponseError, ModelTimeoutError
 from app.agent.tool_calling_model import ModelContextOverflowError, ModelOutputLimitError
-from app.agent.tool_calling_model import ModelToolArgumentsError
+from app.agent.tool_calling_model import ModelSubstitutedError, ModelToolArgumentsError
 from app.agent.run_meter import current_meter, record_model_call
 
 logger = logging.getLogger(__name__)
@@ -268,7 +268,8 @@ class OpenAICompatibleToolCallingModel:
                 # the request was sent; its usage is unknown (D-034)
                 record_model_call(None, shared, None, self._host_estimate, self._model, profile=self.profile)
                 raise
-            record_model_call(getattr(raw_response, 'usage', None), shared, getattr(raw_response, 'model', None),
+            reported_model = getattr(raw_response, 'model', None)
+            record_model_call(getattr(raw_response, 'usage', None), shared, reported_model,
                               self._host_estimate, self._model, profile=self.profile)
         except APIResponseValidationError as exc:
             raise _retryable(ModelResponseError("provider returned an invalid response")) from exc
@@ -288,6 +289,11 @@ class OpenAICompatibleToolCallingModel:
             status = getattr(exc, "status_code", None) if isinstance(exc, APIStatusError) else None
             transient = isinstance(status, int) and (status in _RETRYABLE_STATUS or status >= 500)
             raise _retryable(ModelRequestError("model request failed"), transient) from exc
+
+        if getattr(self.profile, 'on_model_mismatch', 'warn') == 'stop':
+            from app.agent.provider_state import substituted
+            if substituted(self._model, reported_model, getattr(self.profile, 'accepted_models', ())):
+                raise ModelSubstitutedError()
 
         try:
             return self._parse_response(raw_response)

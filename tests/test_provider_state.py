@@ -46,7 +46,7 @@ def test_summary_uses_the_first_call_and_flags_drops_and_mismatches():
     s = ps.summary([0.55], ['m'], ['m'])
     assert s['anomaly'] and '少于本机发出的内容' in s['notice'] and '模型' not in s['notice']
     s = ps.summary([7.1], ['gpt-5.6-luna'], ['gpt-6.1-sol'])
-    assert s['model_mismatch'] and '模型和请求的不同' in s['notice']
+    assert s['model_mismatch'] and '请求的是 gpt-5.6-luna，服务商用 gpt-6.1-sol 回答' in s['notice']
     empty = ps.summary([], [], [])
     assert (empty['state'], empty['anomaly'], empty['notice']) == ('unknown', False, None)
 

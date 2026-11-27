@@ -174,13 +174,15 @@ def usage_fields(record):
         if isinstance(provider, dict):
             # What the provider did to the requests (provider-state-001): first call's band, all bands,
             # reported/estimated ratio per call, and whether it named another model.
-            from app.agent.provider_state import STATES
+            from app.agent.provider_state import MAX_NAME_CHARS, MAX_REPORTED_NAMES, STATES
             state = provider.get('state')
             fields['provider_state'] = state if state in STATES else 'unknown'
             fields['provider_states'] = [x for x in provider.get('states') or () if x in STATES]
             fields['provider_ratios'] = [x if isinstance(x, (int, float)) and not isinstance(x, bool) else None
                                          for x in provider.get('ratios') or ()]
             fields['model_mismatch'] = provider.get('model_mismatch') is True
+            fields['response_names'] = [x.strip()[:MAX_NAME_CHARS] for x in provider.get('response_names') or ()
+                                        if isinstance(x, str) and x.strip()][:MAX_REPORTED_NAMES]
     steps = record.get('steps')
     if isinstance(steps, list):
         tools = [c for s in steps if isinstance(s, dict) for c in s.get('tools') or () if isinstance(c, dict)]
@@ -470,6 +472,18 @@ def provider_state_counts(rows):
     return counts
 
 
+def response_model_counts(rows):
+    """Runs per substituted response model name, over the whole report (D-107)."""
+    counts = {}
+    for row in rows:
+        names = row.get('response_names')
+        if not isinstance(names, list):
+            continue
+        for name in dict.fromkeys(x for x in names if isinstance(x, str) and x):
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
 _KEY = re.compile(r'[a-z]{1,20}/[a-z]{1,20}')
 
 
@@ -677,6 +691,7 @@ def main(argv=None):
     report = {'plan': plan, 'headline': headline(rows, by_split), 'rows': rows, 'summary': summary(rows),
               'by_split': by_split, 'by_provider_state': state_summary(rows),
               'provider_state_counts': provider_state_counts(rows),
+              'response_model_counts': response_model_counts(rows),
               'model_mismatch_runs': sum(1 for row in rows if row.get('model_mismatch')),
               'by_purpose': purpose_summary(rows)}
     text = json.dumps(report, ensure_ascii=False, indent=2)

@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     agent_model_base_url: str = ""
     agent_model_api_key: str = ""
     agent_model: str = ""
+    # Response model names accepted without warning, and action on an unaccepted name (D-107).
+    agent_accepted_models: str = ""
+    agent_on_model_mismatch: Literal["warn", "stop"] = "warn"
     rag_json_mode: bool = True
     rag_enable_thinking: bool | None = None
     rag_model_timeout_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
@@ -186,6 +189,21 @@ class Settings(BaseSettings):
             raise ValueError("AGENT_MODEL_BASE_URL and AGENT_MODEL_API_KEY must be set together")
         return self
 
+    @field_validator("agent_accepted_models", mode="after")
+    @classmethod
+    def validate_agent_accepted_models(cls, value: str) -> str:
+        from app.models.model_profile import MAX_ACCEPTED_MODEL_CHARS, MAX_ACCEPTED_MODELS
+        names = [item.strip() for item in value.split(",") if item.strip()]
+        if len(names) > MAX_ACCEPTED_MODELS:
+            raise ValueError(f"AGENT_ACCEPTED_MODELS must have at most {MAX_ACCEPTED_MODELS} items")
+        if any(len(item) > MAX_ACCEPTED_MODEL_CHARS for item in names):
+            raise ValueError(f"AGENT_ACCEPTED_MODELS entries must be at most {MAX_ACCEPTED_MODEL_CHARS} characters")
+        return value
+
+    @property
+    def agent_accepted_model_names(self) -> tuple[str, ...]:
+        return tuple(name.strip() for name in self.agent_accepted_models.split(",") if name.strip())
+
     @property
     def agent_model_profile(self) -> "ModelProfile":
         """The agent's chat model as one profile, built from the settings above (stage 4d-1).
@@ -210,6 +228,8 @@ class Settings(BaseSettings):
             prompt_cache_key=separate and self.agent_model_prompt_cache_key,
             input_price_per_million=self.model_input_price_per_million_tokens,
             output_price_per_million=self.model_output_price_per_million_tokens,
+            accepted_models=self.agent_accepted_model_names,
+            on_model_mismatch=self.agent_on_model_mismatch,
         )
 
     def model_profiles(self) -> "ModelProfiles":
