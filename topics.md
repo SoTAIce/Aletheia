@@ -22,3 +22,9 @@
 2026-11-27 | 基础 | 工具返回值给模型看的设计：精简高信号字段、response_format 开关、分页截断带下一步线索、可操作的错误信息、合并工具；Aletheia 实测两处缺陷（范围读超限文件失败、search_files 截断偏向前几个文件） | tool response design, concise/detailed, truncation hint, actionable errors | https://www.anthropic.com/research/writing-tools-for-agents
 2026-11-27 | 面试 | 多成员并行改同一工作区：丢失更新、乐观并发与 CAS、写集合不相交、语义冲突靠合并后测试 | optimistic concurrency, lost update, expected_sha256, write set | https://www.anthropic.com/research/redesigning-source-control（Scion 的 CAS 引用）；通用并发控制原理
 2026-11-27 | 面试 | Agent 崩溃恢复：检查点 vs 事件溯源、副作用对账、日志脱敏与保留 | event sourcing, checkpoint, wake, side effect reconciliation | https://www.anthropic.com/research/managed-agents
+2026-11-28 | 前沿 | 可证明推理：权重承诺 + 零知识证明回答来自被承诺模型；三层断言（自称/统计/密码学）；Aletheia 金丝雀题组统计检验 | provable inference, zkSNARK, commitment, FlashProve, 金丝雀题组, 模型替换 | https://www.anthropic.com/research/provable-inference
+2026-11-28 | 前沿 | always-on Agent：短运行+持久状态、事件收件箱、定时器（跟进/计划）、延迟工具调用、发件箱“先安静”；对照 Aletheia 定时任务 | event inbox, timers, deferred tool call, outbox, 合批 | https://claude.com/resources/articles/building-always-on-agents
+2026-11-28 | 基础 | 无状态 API 每轮重发历史：平方级重复、传输/预填充/计费三种成本、提示缓存 vs 服务端线程（message threads，5 分钟过期，TTFT 约降 35%、令牌不变） | message threads, TTFT, prefill, 重复倍数 | https://claude.com/resources/articles/message-threads
+2026-11-28 | 工具 | MCP 扩展：skills over MCP、Tasks、Elicitation、File Uploads | MCP tasks, elicitation, skills over MCP | https://claude.com/resources/articles/skills-over-mcp-tasks-and-more
+2026-11-28 | 面试 | 压缩后约束丢失：必需/可选上下文分开，放不下就报错不悄悄丢（request_fitter） | compaction, pinned context, ContextBudgetError | 通用原理；Aletheia D-082/D-096
+2026-11-28 | 面试 | 定时任务错过触发：补跑/最近一次/跳过、宽限期、持久化上次时间点、触发点作幂等键 | misfire, grace period, catch-up | 通用调度原理；Aletheia D-102
