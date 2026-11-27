@@ -54,6 +54,10 @@
 
 ## Session Record
 
+### 2026-11-26 — summarizer-test-env-001：摘要角色测试不再依赖本机 `.env`
+
+- 干净检出里 `tests/test_summarizer_role.py` 有 3 个测试失败（D-103 起就有）：档案用到 `AGENT_MODEL_API_KEY`，值来自 `.env`。方案 `docs/summarizer_test_env_plan.md` 按推荐定，Claude 在三个测试里设假密钥。工作区 `init.ps1` 通过；干净检出 2534 passed、29 skipped、0 failed。未提交。
+
 ### 2026-11-26 — model-substitution-001：中转服务换模型（D-107）
 
 - 本地轨迹 630 次调用请求 `gpt-5.6-luna`，响应全部报告 `gpt-6.1-sol`，D-079 的提示每次都出现、分不出好坏；复测里一次答错是 `get_current_time` 的参数被当成了答案。

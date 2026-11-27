@@ -1784,6 +1784,16 @@
       "evidence": "Implemented by Gemini (Antigravity CLI, gemini-4-neon-medium), checked and fixed in three places by Claude. init.ps1 2226 passed, 27 skipped; goldens unchanged. Not committed. No live model run."
     },
     {
+      "id": "summarizer-test-env-001",
+      "name": "Summarizer role tests independent of the local .env",
+      "description": "docs/summarizer_test_env_plan.md. Three tests in tests/test_summarizer_role.py read AGENT_MODEL_API_KEY from the local .env through the profile key check; they now set a fake agent_model_api_key.",
+      "status": "done",
+      "dependencies": [
+        "summarizer-role-001"
+      ],
+      "evidence": "Clean checkout without .env: 2534 passed, 29 skipped, 0 failed (3 failed before). init.ps1 passes in the working tree. Not committed."
+    },
+    {
       "id": "model-substitution-001",
       "name": "Relay model substitution: accepted list, named notice, optional stop",
       "description": "docs/model_substitution_plan.md, D-107. Model profiles gain accepted_models and on_model_mismatch (warn/stop; default profile from AGENT_ACCEPTED_MODELS and AGENT_ON_MODEL_MISMATCH, not inherited). The provider notice names the requested and answering models; stop raises ModelSubstitutedError after metering and before parsing, failure kind model_substituted, no retry. The single loop reminds once when a plain-text reply is only the arguments of an available tool.",
