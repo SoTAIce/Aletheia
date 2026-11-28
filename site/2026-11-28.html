@@ -1,100 +1,128 @@
 <title>Agent 日报 2026-11-28</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Space+Grotesk:wght@500;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
 :root{
-  /* 版式：左侧固定目录 + 右侧单栏正文；手机上目录收进折叠块 */
-  --bg:#f6f8fa; --surface:#ffffff; --fg:#1b232c; --muted:#5b6876; --line:#dde3ea;
-  --accent:#1f5f8b; --accent-soft:#e6eff6; --mark:#8a5a00; --mark-soft:#fbf3e2;
-  --code-bg:#eef2f6;
+  /* 版式：彩色导读头图 + 今日要点卡片 + 顶部吸附的栏目导航；正文按栏目分区，每个主题一张白卡 */
+  --bg:#f4f7fb; --paper:#ffffff; --ink:#18212d; --muted:#5d6b7c; --line:#e3e9f1;
+  --c1:#2f6fe4; --c1-soft:#e9f0fe;   /* 前沿 */
+  --c2:#0f9b7a; --c2-soft:#e3f6f0;   /* 基础 */
+  --c3:#d98a06; --c3-soft:#fdf3df;   /* 工具 */
+  --c4:#d9476a; --c4-soft:#fde9ee;   /* 面试 */
+  --c0:#6b7a8c; --c0-soft:#eef1f5;   /* 其他 */
+  --code:#eef2f8;
   --f-body:"Noto Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
-  --f-head:"Space Grotesk","Noto Sans SC","PingFang SC",system-ui,sans-serif;
+  --f-head:"Plus Jakarta Sans","Noto Sans SC","PingFang SC",system-ui,sans-serif;
   --f-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color-scheme:light;
 }
-@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
-  --bg:#12171d; --surface:#181f27; --fg:#e3e8ee; --muted:#93a1b0; --line:#2a3440;
-  --accent:#7db4dc; --accent-soft:#1c2c3a; --mark:#e2b65c; --mark-soft:#2c2618;
-  --code-bg:#1f2832; color-scheme:dark}}
-:root[data-theme="dark"]{
-  --bg:#12171d; --surface:#181f27; --fg:#e3e8ee; --muted:#93a1b0; --line:#2a3440;
-  --accent:#7db4dc; --accent-soft:#1c2c3a; --mark:#e2b65c; --mark-soft:#2c2618;
-  --code-bg:#1f2832; color-scheme:dark}
 *{box-sizing:border-box}
-body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:16px;line-height:1.8;
-  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-.wrap{max-width:1120px;margin:0 auto;display:grid;grid-template-columns:220px minmax(0,1fr);gap:48px;padding-block:40px 80px}
-@media (max-width:900px){.wrap{grid-template-columns:minmax(0,1fr);gap:16px;padding-block:24px 64px}}
-header.masthead{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:8px 24px;
-  border-bottom:2px solid var(--fg);padding-bottom:16px}
-.masthead h1{font-family:var(--f-head);font-size:clamp(1.6rem,3.5vw,2.3rem);line-height:1.2;margin:0;letter-spacing:-.01em;text-wrap:balance}
-.masthead .meta{font-family:var(--f-mono);font-size:.8rem;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap}
-nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 24px);align-self:start;font-size:.85rem;line-height:1.5;
-  max-height:calc(100vh - 48px);overflow:auto}
-nav.toc .label{font-family:var(--f-mono);font-size:.72rem;letter-spacing:.08em;color:var(--muted);margin-bottom:8px}
-nav.toc ul{list-style:none;margin:0;padding:0;display:grid;gap:4px}
-nav.toc li.l3{padding-left:12px}
-nav.toc a{color:var(--muted);text-decoration:none;display:block;padding:3px 8px;border-left:2px solid transparent}
-nav.toc a:hover,nav.toc a:focus-visible{color:var(--accent);border-left-color:var(--accent);outline:none}
-nav.toc li.l2>a{color:var(--fg);font-weight:600}
-@media (max-width:900px){nav.toc{position:static;max-height:none}
-  nav.toc details{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px 12px}}
-nav.toc summary{cursor:pointer;font-family:var(--f-mono);font-size:.78rem;color:var(--muted)}
-@media (min-width:901px){nav.toc summary{display:none}}
-@media (max-width:900px){nav.toc .label{display:none}}
-article{min-width:0;max-width:72ch}
-article h2{font-family:var(--f-head);font-size:1.45rem;line-height:1.3;margin:56px 0 16px;padding-top:12px;border-top:1px solid var(--line);text-wrap:balance}
-article h2 .eyebrow{display:block;font-family:var(--f-mono);font-size:.72rem;font-weight:500;letter-spacing:.1em;color:var(--accent);margin-bottom:4px}
-article h3{font-family:var(--f-head);font-size:1.18rem;line-height:1.4;margin:40px 0 12px;text-wrap:balance}
-article p,article li{text-wrap:pretty}
-article a{color:var(--accent);text-underline-offset:3px;word-break:break-all}
-article strong{font-weight:650}
-article ul,article ol{padding-left:1.4em}
-article li{margin:4px 0}
-article code{font-family:var(--f-mono);font-size:.86em;background:var(--code-bg);padding:1px 5px;border-radius:4px;word-break:break-word}
-article pre{background:var(--code-bg);padding:12px 16px;border-radius:6px;overflow-x:auto}
-article pre code{background:none;padding:0}
-article blockquote{margin:24px 0;padding:16px 20px;background:var(--surface);border:1px solid var(--line);border-radius:8px;color:var(--fg);font-size:.95rem}
-article blockquote p{margin:8px 0}
-.table-scroll{overflow-x:auto;margin:20px 0;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
-table{border-collapse:collapse;width:100%;font-size:.9rem;line-height:1.55;font-variant-numeric:tabular-nums}
-th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
-th{font-weight:650;background:var(--accent-soft)}
-tr:last-child td{border-bottom:none}
-.callout{margin:20px 0;padding:14px 18px;border-radius:8px;background:var(--mark-soft);border:1px solid color-mix(in srgb,var(--mark) 35%,transparent)}
-.callout>.tag{display:inline-block;font-family:var(--f-mono);font-size:.72rem;letter-spacing:.06em;color:var(--mark);margin-bottom:4px}
-.callout>p:last-child,.callout>ul:last-child{margin-bottom:0}
-.chip{display:inline-block;font-family:var(--f-mono);font-size:.72rem;padding:1px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent);vertical-align:middle;margin-right:6px}
-article>hr{display:none}
-@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
-</style>
-<div class="wrap">
-<header class="masthead"><h1>Agent 前沿与工程日报 · 2026-11-28</h1>
-<div class="meta"><span>约 10,834 字</span><span>阅读约 24 分钟</span></div></header>
-<nav class="toc" aria-label="目录"><details open><summary>目录</summary><div class="label">目录</div><ul>
-<li class="l2"><a href="#_1">前沿主题</a></li>
-<li class="l3"><a href="#1">主题 1 · 可证明的推理——怎样证明“回答确实来自那个模型”</a></li>
-<li class="l3"><a href="#2-agent">主题 2 · “一直在线”的 Agent 其实是“短运行 + 持久状态”</a></li>
-<li class="l2"><a href="#_2">基础知识扩展</a></li>
-<li class="l3"><a href="#api">无状态 API 下“每轮重发全部历史”：贵在哪里，服务端线程改了什么</a></li>
-<li class="l2"><a href="#_3">工具速递</a></li>
-<li class="l2"><a href="#agent">Agent 开发面试</a></li>
-<li class="l3"><a href="#1agent">题 1 · 【巩固】上下文压缩之后，Agent 为什么会“忘掉”用户的约束？怎么设计才不会？</a></li>
-<li class="l3"><a href="#2">题 2 · 【拓展】定时任务“错过了触发时间”该怎么办？补跑、跳过还是合并？</a></li>
-<li class="l2"><a href="#_4">今天没做到的</a></li>
-</ul></details></nav>
-<article>
+html{background:var(--bg)}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:16px;line-height:1.85}
+.gutter{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.inner{max-width:820px;margin:0 auto}
 
-<blockquote>
+/* 头图 */
+.hero{margin-top:calc(-1 * env(safe-area-inset-top,0px));padding-top:calc(env(safe-area-inset-top,0px) + 48px);padding-bottom:40px;
+  background:
+    radial-gradient(900px 320px at 85% -10%, #d7f3ea 0%, transparent 60%),
+    radial-gradient(800px 360px at 0% 0%, #dfe9ff 0%, transparent 60%),
+    linear-gradient(180deg,#f9fbff 0%, var(--bg) 100%);}
+.hero .date{font-family:var(--f-head);font-weight:800;font-size:clamp(2.6rem,9vw,4.2rem);line-height:1;letter-spacing:-.03em;
+  color:var(--c1);font-variant-numeric:tabular-nums}
+.hero h1{font-family:var(--f-head);font-size:clamp(1.25rem,3.4vw,1.6rem);font-weight:700;margin:12px 0 0;line-height:1.35;text-wrap:balance}
+.hero .meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:.8rem;line-height:1;padding:7px 12px;border-radius:999px;
+  background:var(--paper);border:1px solid var(--line);color:var(--muted)}
+.pill b{color:var(--ink);font-weight:600}
+.lede{margin-top:24px;background:rgba(255,255,255,.75);backdrop-filter:blur(6px);border:1px solid var(--line);border-radius:16px;
+  padding:18px 22px;font-size:.95rem;color:#2c3746}
+.lede p{margin:6px 0}
+.lede strong{color:var(--ink)}
+
+/* 今日要点卡片 */
+.picks{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;margin-top:20px}
+.pick{display:flex;flex-direction:column;gap:6px;min-width:0;text-decoration:none;color:var(--ink);background:var(--paper);
+  border:1px solid var(--line);border-radius:14px;padding:14px 16px;transition:transform .15s ease, box-shadow .15s ease}
+.pick:hover,.pick:focus-visible{transform:translateY(-2px);box-shadow:0 8px 24px rgba(30,60,110,.10);outline:none}
+.pick .k{font-size:.72rem;font-weight:600;letter-spacing:.06em;color:var(--col)}
+.pick .t{font-size:.95rem;font-weight:600;line-height:1.45}
+
+/* 栏目导航 */
+.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:rgba(244,247,251,.92);backdrop-filter:blur(8px);
+  border-bottom:1px solid var(--line)}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+.bar .inner{display:flex;gap:8px;overflow-x:auto;padding-block:10px;scrollbar-width:none}
+.bar .inner::-webkit-scrollbar{display:none}
+.bar a{flex:none;font-size:.85rem;font-weight:600;text-decoration:none;color:var(--col);background:var(--soft);
+  padding:6px 14px;border-radius:999px}
+.bar a:focus-visible{outline:2px solid var(--col);outline-offset:2px}
+
+/* 正文 */
+main{padding-block:12px 80px}
+section.col{margin-top:40px;scroll-margin-top:64px}
+.col-head{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.col-head .no{flex:none;width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:var(--col);color:#fff;
+  font-family:var(--f-head);font-weight:800;font-size:1.05rem}
+.col-head h2{margin:0;font-family:var(--f-head);font-size:1.45rem;line-height:1.3;text-wrap:balance}
+.col-head .sub{display:block;font-size:.75rem;font-weight:600;letter-spacing:.08em;color:var(--col)}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:18px;padding:24px clamp(18px,4vw,32px);margin-top:16px;
+  box-shadow:0 1px 2px rgba(20,40,80,.04);border-top:4px solid var(--col);min-width:0;scroll-margin-top:64px}
+.card>h3{font-family:var(--f-head);font-size:1.22rem;line-height:1.45;margin:0 0 12px;text-wrap:balance}
+.plain{background:var(--paper);border:1px solid var(--line);border-radius:18px;padding:20px clamp(18px,4vw,32px);margin-top:16px}
+.card>:last-child,.plain>:last-child{margin-bottom:0}
+.c1{--col:var(--c1);--soft:var(--c1-soft)} .c2{--col:var(--c2);--soft:var(--c2-soft)}
+.c3{--col:var(--c3);--soft:var(--c3-soft)} .c4{--col:var(--c4);--soft:var(--c4-soft)} .c0{--col:var(--c0);--soft:var(--c0-soft)}
+
+main p,main li,main td{text-wrap:pretty;overflow-wrap:break-word}
+main a{color:var(--c1);text-underline-offset:3px;overflow-wrap:anywhere}
+main strong{font-weight:650}
+main ul,main ol{padding-left:1.3em}
+main li{margin:4px 0}
+main li::marker{color:var(--col)}
+main code{font-family:var(--f-mono);font-size:.84em;background:var(--code);padding:1px 6px;border-radius:5px;overflow-wrap:anywhere}
+main pre{background:#f1f5fb;border:1px solid var(--line);padding:14px 16px;border-radius:12px;overflow-x:auto;font-size:.85rem;line-height:1.6}
+main pre code{background:none;padding:0;overflow-wrap:normal}
+main blockquote{margin:16px 0;padding:12px 16px;border-left:3px solid var(--col);background:var(--soft);border-radius:0 10px 10px 0}
+.table-scroll{overflow-x:auto;margin:18px 0;border:1px solid var(--line);border-radius:12px}
+table{border-collapse:collapse;width:100%;font-size:.88rem;line-height:1.6;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:650;background:var(--soft);color:var(--ink);white-space:nowrap}
+tr:last-child td{border-bottom:none}
+tbody tr:nth-child(even) td{background:#fafcfe}
+.callout{margin:18px 0;padding:14px 18px;border-radius:12px;background:var(--cb);border:1px solid var(--cl)}
+.callout>.tag{display:inline-block;font-size:.75rem;font-weight:700;letter-spacing:.04em;color:#fff;background:var(--ct);
+  padding:3px 10px;border-radius:999px;margin-bottom:6px}
+.callout>p:first-of-type{margin-top:4px}
+.callout>:last-child{margin-bottom:0}
+.k-aletheia{--cb:#e7f7f1;--cl:#bfe8d9;--ct:#0f9b7a}
+.k-opinion{--cb:#fff6e3;--cl:#f6dfae;--ct:#d98a06}
+.k-limit{--cb:#fdeef1;--cl:#f5c9d3;--ct:#d9476a}
+.chip{display:inline-block;font-size:.72rem;font-weight:700;padding:2px 9px;border-radius:999px;background:var(--soft);color:var(--col);
+  vertical-align:.15em;margin-right:4px}
+main hr{display:none}
+footer{color:var(--muted);font-size:.8rem;text-align:center;padding-bottom:40px}
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+@media (prefers-reduced-motion:reduce){.pick{transition:none}}
+</style>
+<header class="hero gutter"><div class="inner">
+<div class="date">2026-11-28</div>
+<h1>Agent 前沿与工程日报</h1>
+<div class="meta"><span class="pill">阅读约 <b>24 分钟</b></span><span class="pill">约 <b>10,834</b> 字</span>
+<span class="pill"><b>5</b> 个主题</span></div>
+<div class="lede">
 <p>日期按北京时间（本次运行在 UTC 11-27 18:55，即北京时间 11-28 凌晨）。已和 <code>topics.md</code> 里 11-24 到 11-27 的 19 条知识点去重；提问池今天为空。</p>
 <p><strong>来源说明（重要）：</strong> 本次运行的网络策略下，<code>arxiv.org</code>、<code>openreview.net</code>、<code>huggingface.co</code>、<code>openai.com</code>、<code>deepmind.google</code>、<code>thinkingmachines.ai</code> 全部连不上（域名解析失败），所以今天<strong>没有论文</strong>，<strong>具身方向只有一篇经济学报告，没有 VLA、世界模型等技术内容</strong>，也没有 Hacker News / r/LocalLLaMA 的内容。能打开并读完的是 Anthropic 的 <code>anthropic.com/research</code> 文章，以及 <code>claude.com</code> 的产品文章。下面所有数字都出自这些原文，是作者自己的说法，没有独立复现；我自己算的数字会标“估算”并写明方法。</p>
 <p>今天的主线是：<strong>“谁在回答”和“谁在醒来”。</strong> 主题 1 讲怎样用密码学证明一个回答确实来自某个固定模型（正好对着 Aletheia 的中转站换模型问题）；主题 2 讲“一直在线”的 Agent 其实是“短运行 + 持久状态”，并和 Aletheia 的定时任务逐项对照；基础栏目讲无状态 API 下“每轮重发全部历史”到底贵在哪里，以及服务端线程（message threads）改了什么、没改什么。</p>
-</blockquote>
-<hr />
-<h2 id="_1"><span class="eyebrow">栏目一</span>前沿主题</h2>
-<h3 id="1">主题 1：可证明的推理——怎样证明“回答确实来自那个模型”</h3>
+</div>
+<div class="picks"><a class="pick c1" href="#1"><span class="k">前沿主题</span><span class="t">可证明的推理——怎样证明“回答确实来自那个模型”</span></a><a class="pick c1" href="#2-agent"><span class="k">前沿主题</span><span class="t">“一直在线”的 Agent 其实是“短运行 + 持久状态”</span></a><a class="pick c2" href="#api"><span class="k">基础知识扩展</span><span class="t">无状态 API 下“每轮重发全部历史”：贵在哪里，服务端线程改了什么</span></a><a class="pick c4" href="#1agent"><span class="k">Agent 开发面试</span><span class="t">上下文压缩之后，Agent 为什么会“忘掉”用户的约束？怎么设计才不会？</span></a><a class="pick c4" href="#2"><span class="k">Agent 开发面试</span><span class="t">定时任务“错过了触发时间”该怎么办？补跑、跳过还是合并？</span></a></div>
+</div></header>
+<nav class="bar gutter" aria-label="栏目"><div class="inner"><a class="c1" href="#_1">前沿主题</a><a class="c2" href="#_2">基础知识扩展</a><a class="c3" href="#_3">工具速递</a><a class="c4" href="#agent">Agent 开发面试</a><a class="c0" href="#_4">今天没做到的</a></div></nav>
+<main class="gutter"><div class="inner">
+<section class="col c1" id="_1"><div class="col-head"><span class="no">1</span><h2><span class="sub">栏目一</span>前沿主题</h2></div><article class="card" id="1"><h3>主题 1：可证明的推理——怎样证明“回答确实来自那个模型”</h3>
 <ul>
 <li><strong>来源</strong>：Anthropic 红队（Frontier Red Team）与 EPFL、MIT 等合作，《Progress on provable inference for large language models》，2026-11-02 发布；作者含 Roy Rinberg、Alex Allain、Alessandro Chiesa 等</li>
-<li><strong>原文</strong>：https://www.anthropic.com/research/provable-inference （已读全文；技术报告、Lean 证明和代码我没有打开，所以协议细节只到博客文章披露的层次）</li>
+<li><strong>原文</strong>：<a href="https://www.anthropic.com/research/provable-inference">https://www.anthropic.com/research/provable-inference</a> （已读全文；技术报告、Lean 证明和代码我没有打开，所以协议细节只到博客文章披露的层次）</li>
 </ul>
 <p><strong>要解决的问题。</strong>
 用户拿到一个回答，通常没有办法确认它是哪个模型产生的。文章列出的场景：独立评测方想确认自己测的就是对外提供的那个模型；使用路由服务的客户；需要发现“令牌流被篡改”的防御方。验证者自己重跑模型一般太贵，而且往往也拿不到权重。靠回答内容本身判断不可靠，文章原话是：“Judging from the model's output alone is unreliable, even if it produces high-quality responses.”</p>
@@ -137,9 +165,9 @@ article>hr{display:none}
 </tr>
 </tbody>
 </table></div>
-<div class="callout"><span class="tag">局限（作者自己写的）</span><p><strong>局限（作者自己写的）：</strong> 证明的是权重的<strong>精确整数版本</strong>在<strong>贪心解码</strong>下的结果，浮点或采样输出可能在某个位置分歧；只支持不超过 1,024 令牌的上下文，远短于现代窗口；架构（MoE）是公开的，隐藏架构留给未来；侧信道不在范围内；快速代码和形式化协议之间的一致性靠审计。还有一点：证明<strong>不能</strong>说明硬件没有在旁边偷偷训练。</p></div>
-<div class="callout"><span class="tag">我的判断（个人观点，不是文章结论）</span><p><strong>我的判断（个人观点，不是文章结论）：</strong> 这篇的价值不在“你现在能用它”，而在<strong>把问题讲准了</strong>：要验证的是“回答 = 被承诺的那组权重在这个输入上的计算结果”，这和“模型自称是谁”“响应字段里的模型名”是三个不同强度的断言。现实里的商业模型你拿不到权重，也就拿不到承诺，所以今天对 Aletheia 能直接用上的只有它的威胁模型，不是这套协议。</p></div>
-<div class="callout"><span class="tag">落到 Aletheia</span><p><strong>落到 Aletheia：</strong></p>
+<div class="callout k-limit"><span class="tag">局限</span><p><strong>局限（作者自己写的）：</strong> 证明的是权重的<strong>精确整数版本</strong>在<strong>贪心解码</strong>下的结果，浮点或采样输出可能在某个位置分歧；只支持不超过 1,024 令牌的上下文，远短于现代窗口；架构（MoE）是公开的，隐藏架构留给未来；侧信道不在范围内；快速代码和形式化协议之间的一致性靠审计。还有一点：证明<strong>不能</strong>说明硬件没有在旁边偷偷训练。</p></div>
+<div class="callout k-opinion"><span class="tag">我的判断</span><p><strong>我的判断（个人观点，不是文章结论）：</strong> 这篇的价值不在“你现在能用它”，而在<strong>把问题讲准了</strong>：要验证的是“回答 = 被承诺的那组权重在这个输入上的计算结果”，这和“模型自称是谁”“响应字段里的模型名”是三个不同强度的断言。现实里的商业模型你拿不到权重，也就拿不到承诺，所以今天对 Aletheia 能直接用上的只有它的威胁模型，不是这套协议。</p></div>
+<div class="callout k-aletheia"><span class="tag">落到 Aletheia</span><p><strong>落到 Aletheia：</strong></p>
 <ul>
 <li>对应模块：<code>provider_state.py</code>（D-079）、模型档案的 <code>accepted_models</code> / <code>on_model_mismatch</code>（D-107）。D-107 的约束里已经写明：“名字是服务商自己填的，认可列表只让提示在名字变化时出现，证明不了用的是哪个模型。”也就是说，现在的检测是<strong>自称级</strong>：服务商把响应里的名字改回去就完全绕过。</li>
 <li><strong>一个现在没做、30 分钟内可原型的改动：“金丝雀题组”。</strong> 准备 10～20 道有确定答案、对模型能力敏感的小题（比如 D-035 评测集里的固定题，或者让模型对给定输入做长度很长的精确计算），每天或每次换中转配置后跑 k 次（k=5 左右，<code>temperature=0</code>），记录每题通过率；和之前已知“确实是目标模型”的基线通过率做<strong>逐题配对</strong>比较，沿用 11-24 日报里讲的配对差值置信区间。通过率显著下降，就是“可能被换成更弱的模型”的<strong>统计证据</strong>，比响应名字强，但仍然证明不了“是哪个模型”。</li>
@@ -147,10 +175,10 @@ article>hr{display:none}
 <li><strong>不要做的：</strong> 直接把这篇的证明接进来——没有权重就没有承诺；并且 Aletheia 在 D-107 已经否决了“问模型你是谁”和“自动直连对照”，金丝雀题组是不同的东西（统计检验），但仍需要用户批准后再做。</li>
 </ul></div>
 <hr />
-<h3 id="2-agent">主题 2：“一直在线”的 Agent 其实是“短运行 + 持久状态”</h3>
+</article><article class="card" id="2-agent"><h3>主题 2：“一直在线”的 Agent 其实是“短运行 + 持久状态”</h3>
 <ul>
 <li><strong>来源</strong>：Anthropic（Claude Platform 最佳实践）《Building always-on agents》，William Hu，2026-11-13；约 14 分钟阅读</li>
-<li><strong>原文</strong>：https://claude.com/resources/articles/building-always-on-agents （已读全文）。注意这是产品方的实践指南，不是论文，没有实验数据；文中“Opus 5.5 在某长程编码基准上每个解出任务便宜 78%”之类数字只针对特定基准，我不引用做结论。</li>
+<li><strong>原文</strong>：<a href="https://claude.com/resources/articles/building-always-on-agents">https://claude.com/resources/articles/building-always-on-agents</a> （已读全文）。注意这是产品方的实践指南，不是论文，没有实验数据；文中“Opus 5.5 在某长程编码基准上每个解出任务便宜 78%”之类数字只针对特定基准，我不引用做结论。</li>
 </ul>
 <p><strong>要解决的问题。</strong> 用户不在场时，Agent 要持续响应邮件、网页钩子、定时事项。朴素做法是每个事件源直接调用 Agent：事件同时到达就产生互相抢占的运行，崩溃时事件丢失，用户连发三条消息就回三次。</p>
 <p><strong>核心机制：一个运行周期加五个原语。</strong></p>
@@ -163,7 +191,7 @@ article>hr{display:none}
 <li><strong>发件箱（outbox）。</strong> 一次运行有三种结局：把消息排入发件箱、什么都不发、挂起一个需要用户输入的调用。多数 Agent 一个“发送”工具就够，只有需要控制发送节奏或错误恢复才需要“表 + 分发服务”。文章强调校准：消息太多是噪音，太少漏掉重要信息，建议“先安静，再慢慢赢得注意力”，并配评测。</li>
 </ol>
 <p><strong>结果与局限：</strong> 这是一篇模式指南，作者自己说实现细节“可能很棘手”，没有延迟、轮询间隔或吞吐数字；压缩和新开会话都会丢细节，所以要求运行中就把持久事实写进记忆；自动模式和延迟调用降低风险但不能取代对重大动作的用户批准。</p>
-<div class="callout"><span class="tag">落到 Aletheia（对照 D-101/D-102/D-108）</span><p><strong>落到 Aletheia（对照 D-101/D-102/D-108）：</strong></p></div>
+<div class="callout k-aletheia"><span class="tag">落到 Aletheia</span><p><strong>落到 Aletheia（对照 D-101/D-102/D-108）：</strong></p></div>
 <p>已经有的（不再当新知识讲）：<code>Scheduler</code> 是“计划”型定时器，睡不超过 60 秒再看时钟；醒来晚了只补 12 小时内最近一次错过的点；请求编号带时间点，重启后由归档回放而不重跑（这是幂等，比文章里的要求更具体）；阻塞任务 24 小时过期；浏览器通知。</p>
 <p>差在哪里，按价值排序：</p>
 <ol>
@@ -175,8 +203,7 @@ article>hr{display:none}
 <li><strong>“先安静”的发件箱校准。</strong> Aletheia 的通知固定四种事件（D-108），没有“这次什么都不发”这个明确结局。定时任务的结果如果没变化，也应该有“无变化，不通知”。这是一个值得加进评测的行为，不是代码改动。</li>
 </ol>
 <hr />
-<h2 id="_2"><span class="eyebrow">栏目二</span>基础知识扩展</h2>
-<h3 id="api">无状态 API 下“每轮重发全部历史”：贵在哪里，服务端线程改了什么</h3>
+</article></section><section class="col c2" id="_2"><div class="col-head"><span class="no">2</span><h2><span class="sub">栏目二</span>基础知识扩展</h2></div><article class="card" id="api"><h3>无状态 API 下“每轮重发全部历史”：贵在哪里，服务端线程改了什么</h3>
 <p>提问池今天为空，我选了一个人人都在用、很少有人算清楚的机制：Agent 循环每一轮都把完整历史再发一遍。选题依据是今天读到的 Anthropic 文章《Make long-running agents faster with message threads》（2026-11-02，公开 beta）。</p>
 <p><strong>1. 问题从哪来。</strong></p>
 <p>聊天 API 是无状态的：每次请求要带上从开头到现在的全部消息和工具结果。Agent 一个任务里常常几十到几百次工具调用，每次调用就是一次请求。</p>
@@ -237,14 +264,11 @@ article>hr{display:none}
 - 同时看 <code>provider_state</code> 里的缓存命中记录（D-054/D-056），算出命中比例。</p>
 <p>可以用 <code>python -m app.agent.trace --session NAME</code> 看轨迹，不连接任何服务。如果倍数在 5 以内，说明你的任务还太短，线程化意义不大；如果超过 20，才值得研究服务端状态。注意：Aletheia 走的是 DashScope 兼容接口，message threads 是 Anthropic 的 API 特性，这里<strong>不能直接用</strong>，实验目的只是量出你的“重复倍数”，判断这类优化值不值得。</p>
 <hr />
-<h2 id="_3"><span class="eyebrow">栏目三</span>工具速递</h2>
-<ul>
-<li>MCP 扩展（2026-11-24）：服务器可以随工具一起发布 <strong>skills</strong>（按需加载，beta）、<strong>Tasks</strong>（长任务后台跑，Claude 继续干别的，结果好了再取）、<strong>Elicitation</strong>（服务器暂停并向用户要表单/链接确认）；Aletheia 的 <code>mcp_client.py</code>（D-095）目前只覆盖工具调用，Tasks/Elicitation 是下一步可参考的接口。https://claude.com/resources/articles/skills-over-mcp-tasks-and-more</li>
-<li>Messages API 的 message threads（2026-11-02，beta）见上面的基础栏目。https://claude.com/resources/articles/message-threads</li>
+</article></section><section class="col c3" id="_3"><div class="col-head"><span class="no">3</span><h2><span class="sub">栏目三</span>工具速递</h2></div><div class="plain"><ul>
+<li>MCP 扩展（2026-11-24）：服务器可以随工具一起发布 <strong>skills</strong>（按需加载，beta）、<strong>Tasks</strong>（长任务后台跑，Claude 继续干别的，结果好了再取）、<strong>Elicitation</strong>（服务器暂停并向用户要表单/链接确认）；Aletheia 的 <code>mcp_client.py</code>（D-095）目前只覆盖工具调用，Tasks/Elicitation 是下一步可参考的接口。<a href="https://claude.com/resources/articles/skills-over-mcp-tasks-and-more">https://claude.com/resources/articles/skills-over-mcp-tasks-and-more</a></li>
+<li>Messages API 的 message threads（2026-11-02，beta）见上面的基础栏目。<a href="https://claude.com/resources/articles/message-threads">https://claude.com/resources/articles/message-threads</a></li>
 </ul>
-<hr />
-<h2 id="agent"><span class="eyebrow">栏目四</span>Agent 开发面试</h2>
-<h3 id="1agent">题 1<span class="chip">巩固</span>上下文压缩之后，Agent 为什么会“忘掉”用户的约束？怎么设计才不会？</h3>
+<hr /></div></section><section class="col c4" id="agent"><div class="col-head"><span class="no">4</span><h2><span class="sub">栏目四</span>Agent 开发面试</h2></div><article class="card" id="1agent"><h3 id="1agent">题 1<span class="chip">巩固</span>上下文压缩之后，Agent 为什么会“忘掉”用户的约束？怎么设计才不会？</h3>
 <p><strong>标准回答（递进）：</strong></p>
 <ol>
 <li>常见说法：压缩（摘要）会丢信息，约束被概括掉了。</li>
@@ -259,9 +283,9 @@ article>hr{display:none}
 <li>“怎么发现已经丢了？”要点：压缩前后各跑一组带约束的小题（比如“不许改某目录”），对比违规率；日志里记录每次压缩丢了哪些类别，不记原文。</li>
 </ul>
 <p><strong>工程取舍：</strong> 固定保留换窗口占用；全保留不压缩换成本；“报错”让任务失败，但失败比悄悄违规便宜，代价是需要有人处理失败。</p>
-<div class="callout"><span class="tag">Aletheia 里的设计</span><p><strong>Aletheia 里的设计：</strong> 实际代码已经是这个思路：<code>request_fitter.py</code> 的 <code>prepare</code> 只按固定顺序缩减<strong>可选</strong>部分（工具结果的已转存内容、长期记忆条目、最旧的会话轮次），都缩完仍然放不下就抛 <code>ContextBudgetError('Required context exceeds configured token budget')</code>，不会去动必需上下文。可以补的一点：项目说明文件（D-096）的约束作为一条消息放在任务开头，要验证它属于“必需”而不是被某个 <code>drop_*</code> 误伤——这是可以直接补一条测试的缺口，我读了 <code>request_fitter.py</code> 的缩减函数，它们只改 <code>conversation_memory</code>、<code>longterm_memory</code> 这两类 pinned context，看起来不会碰到，但我没有跑测试验证。</p></div>
+<div class="callout k-aletheia"><span class="tag">Aletheia 里的设计</span><p><strong>Aletheia 里的设计：</strong> 实际代码已经是这个思路：<code>request_fitter.py</code> 的 <code>prepare</code> 只按固定顺序缩减<strong>可选</strong>部分（工具结果的已转存内容、长期记忆条目、最旧的会话轮次），都缩完仍然放不下就抛 <code>ContextBudgetError('Required context exceeds configured token budget')</code>，不会去动必需上下文。可以补的一点：项目说明文件（D-096）的约束作为一条消息放在任务开头，要验证它属于“必需”而不是被某个 <code>drop_*</code> 误伤——这是可以直接补一条测试的缺口，我读了 <code>request_fitter.py</code> 的缩减函数，它们只改 <code>conversation_memory</code>、<code>longterm_memory</code> 这两类 pinned context，看起来不会碰到，但我没有跑测试验证。</p></div>
 <hr />
-<h3 id="2">题 2<span class="chip">拓展</span>定时任务“错过了触发时间”该怎么办？补跑、跳过还是合并？</h3>
+</article><article class="card" id="2"><h3 id="2">题 2<span class="chip">拓展</span>定时任务“错过了触发时间”该怎么办？补跑、跳过还是合并？</h3>
 <p><strong>背景（拓展）：</strong> 一直在线的 Agent 靠调度器按时间唤醒。机器睡眠、进程重启、上一次还没跑完，都会让某个触发点“错过”。这和上一题的“幂等”不同：那里讲的是同一个动作重试，这里讲的是<strong>该不该跑</strong>。</p>
 <p><strong>标准回答（递进）：</strong></p>
 <ol>
@@ -277,15 +301,12 @@ article>hr{display:none}
 <li>“至少一次还是至多一次？”要点：需要对外产生副作用的任务（发消息）倾向至多一次加人工对账；只读任务可以至少一次。</li>
 </ul>
 <p><strong>工程取舍：</strong> 补得多不会漏但可能打扰；补得少安静但可能漏。宽限期是在这两者之间取一个明确的数。</p>
-<div class="callout"><span class="tag">Aletheia 里的设计</span><p><strong>Aletheia 里的设计：</strong> D-102 已经做的：醒来晚了只补 12 小时内<strong>最近一次</strong>错过的点（“只补最近一次”加固定宽限期），请求编号带时间点（重启后由归档回放，等于用幂等键避免重跑），会话忙时每 60 秒重试最多 10 次然后记“跳过”。<strong>可以改进的是</strong>：这三个值现在是写死的，没有按任务声明；可以在 <code>schedules.toml</code> 里每个 <code>[[schedule]]</code> 加可选 <code>on_missed</code>（<code>latest</code> / <code>skip</code>）和 <code>grace_hours</code>，默认保持现状。注意：D-102 否决了 cron 表达式，这不冲突，只是补两个字段；是否要做由用户定。</p></div>
+<div class="callout k-aletheia"><span class="tag">Aletheia 里的设计</span><p><strong>Aletheia 里的设计：</strong> D-102 已经做的：醒来晚了只补 12 小时内<strong>最近一次</strong>错过的点（“只补最近一次”加固定宽限期），请求编号带时间点（重启后由归档回放，等于用幂等键避免重跑），会话忙时每 60 秒重试最多 10 次然后记“跳过”。<strong>可以改进的是</strong>：这三个值现在是写死的，没有按任务声明；可以在 <code>schedules.toml</code> 里每个 <code>[[schedule]]</code> 加可选 <code>on_missed</code>（<code>latest</code> / <code>skip</code>）和 <code>grace_hours</code>，默认保持现状。注意：D-102 否决了 cron 表达式，这不冲突，只是补两个字段；是否要做由用户定。</p></div>
 <hr />
-<h2 id="_4">今天没做到的</h2>
-<ul>
+</article></section><section class="col c0" id="_4"><div class="col-head"><span class="no">·</span><h2><span class="sub">附记</span>今天没做到的</h2></div><div class="plain"><ul>
 <li>没有论文：arXiv / OpenReview / Hugging Face 都不可访问；</li>
-<li>具身方向只有 Anthropic 经济学团队的《What work can robots do?》（2026-09-30，已读）。它按“机器人能在多不结构化的环境里完成任务”把任务分成 E0～E3 四级，估算美国约 74% 的体力任务机器人已能做，但成本上有竞争力的只有 0.3%。这是劳动力经济学的研究，不是具身技术内容，我判断对你设计 Agent 帮助不大，所以没有放进主栏目；如果想看，原文在 https://www.anthropic.com/research/what-work-can-robots-do 。</li>
+<li>具身方向只有 Anthropic 经济学团队的《What work can robots do?》（2026-09-30，已读）。它按“机器人能在多不结构化的环境里完成任务”把任务分成 E0～E3 四级，估算美国约 74% 的体力任务机器人已能做，但成本上有竞争力的只有 0.3%。这是劳动力经济学的研究，不是具身技术内容，我判断对你设计 Agent 帮助不大，所以没有放进主栏目；如果想看，原文在 <a href="https://www.anthropic.com/research/what-work-can-robots-do">https://www.anthropic.com/research/what-work-can-robots-do</a> 。</li>
 <li>需要放开的域名：<code>arxiv.org</code>、<code>openreview.net</code>、<code>huggingface.co</code>、<code>openai.com</code>、<code>deepmind.google</code>、<code>thinkingmachines.ai</code>。</li>
-</ul>
-</article>
-</div>
-<script>try{if(matchMedia('(max-width:900px)').matches)document.querySelector('nav.toc details').removeAttribute('open');
-document.querySelectorAll('nav.toc a').forEach(a=>a.addEventListener('click',()=>{if(matchMedia('(max-width:900px)').matches)a.closest('details').removeAttribute('open')}))}catch(e){}</script>
+</ul></div></section>
+</div></main>
+<footer class="gutter"><div class="inner">Agent 前沿与工程日报 · 2026-11-28</div></footer>
